@@ -1,0 +1,9 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+pydantic-settings==2.8.1
+psycopg[binary]==3.2.6
+redis==5.2.1
+orjson==3.10.16
+SQLAlchemy==2.0.39
+alembic==1.15.2
+requests==2.32.3
