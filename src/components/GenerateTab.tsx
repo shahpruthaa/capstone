@@ -144,6 +144,19 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                 {portfolio && (
                     <>
+                        {portfolio.backendNotes && portfolio.backendNotes.length > 0 && (
+                            <div className="card p-5">
+                                <h3 className="font-bold text-sm mb-3 text-slate-900">Backend Model Notes</h3>
+                                <div className="space-y-2">
+                                    {portfolio.backendNotes.map((note, index) => (
+                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">
+                                            {note}
+                                        </p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <AIInsightPanel portfolio={portfolio} />
 
                         <div className="card p-5">

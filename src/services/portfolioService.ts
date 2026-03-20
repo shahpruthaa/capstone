@@ -14,6 +14,7 @@ export interface Portfolio {
   totalInvested: number;
   riskProfile: RiskProfile;
   metrics: PortfolioMetrics;
+  backendNotes?: string[];
 }
 
 export interface PortfolioMetrics {

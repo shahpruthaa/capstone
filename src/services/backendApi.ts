@@ -22,6 +22,7 @@ interface ApiGeneratePortfolioResponse {
     beta: number;
     diversification_score: number;
   };
+  notes?: string[];
 }
 
 interface ApiAnalyzePortfolioResponse {
@@ -139,6 +140,7 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile)
     allocations,
     totalInvested,
     riskProfile: fromApiRiskMode(response.risk_mode),
+    backendNotes: response.notes ?? [],
     metrics: {
       avgBeta: response.metrics.beta,
       estimatedAnnualReturn: response.metrics.estimated_return_pct,

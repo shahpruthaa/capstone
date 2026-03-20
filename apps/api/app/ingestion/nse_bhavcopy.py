@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from zipfile import ZipFile
 
 import requests
@@ -68,8 +68,11 @@ def ingest_nse_bhavcopy_range(
     end_date: date | None = None,
     include_series: Iterable[str] = ("EQ",),
     dry_run: bool = False,
+    progress_callback: Callable[[dict[str, object]], None] | None = None,
 ) -> BhavcopyIngestionSummary:
     effective_end = end_date or start_date
+    trading_days = get_trading_days(start_date, effective_end)
+    total_days = len(trading_days)
     started_at = datetime.now(timezone.utc)
     run = IngestionRun(
         source="nse",
@@ -90,16 +93,12 @@ def ingest_nse_bhavcopy_range(
     updated = 0
     status = "completed"
 
-    current = start_date
-    while current <= effective_end:
-        if current.weekday() >= 5:
-            current += timedelta(days=1)
-            continue
-
+    for day_index, current in enumerate(trading_days, start=1):
         try:
             raw_zip_path = fetch_bhavcopy_archive(current)
             rows = parse_bhavcopy_zip(raw_zip_path)
-            result = upsert_bhavcopy_rows(db, rows, current, include_series=set(include_series), dry_run=dry_run)
+            with db.begin_nested():
+                result = upsert_bhavcopy_rows(db, rows, current, include_series=set(include_series), dry_run=dry_run)
             processed += result["processed"]
             inserted += result["inserted"]
             updated += result["updated"]
@@ -108,11 +107,22 @@ def ingest_nse_bhavcopy_range(
             status = "partial"
             notes.append(f"{current.isoformat()}: skipped, {exc}.")
         except Exception as exc:  # noqa: BLE001
-            status = "failed"
+            status = "partial"
             notes.append(f"{current.isoformat()}: failed, {exc}.")
-            break
-
-        current += timedelta(days=1)
+        finally:
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "current_date": current,
+                        "completed_days": day_index,
+                        "total_days": total_days,
+                        "status": status,
+                        "records_processed": processed,
+                        "records_inserted": inserted,
+                        "records_updated": updated,
+                        "latest_note": notes[-1] if notes else "",
+                    }
+                )
 
     completed_at = datetime.now(timezone.utc)
     run.status = status
@@ -192,12 +202,12 @@ def upsert_bhavcopy_rows(
 
         processed += 1
 
-        instrument = db.execute(
-            select(Instrument).where(
-                Instrument.symbol == normalized["symbol"],
-                Instrument.series == normalized["series"],
-            )
-        ).scalar_one_or_none()
+        instrument = resolve_instrument(
+            db=db,
+            symbol=normalized["symbol"],
+            series=normalized["series"],
+            isin=normalized["isin"],
+        )
 
         if instrument is None:
             instrument = Instrument(
@@ -213,6 +223,12 @@ def upsert_bhavcopy_rows(
             db.add(instrument)
             db.flush()
         else:
+            maybe_update_instrument_identity(
+                db=db,
+                instrument=instrument,
+                symbol=normalized["symbol"],
+                series=normalized["series"],
+            )
             if normalized["name"] and not instrument.name:
                 instrument.name = normalized["name"]
             if normalized["isin"] and not instrument.isin:
@@ -282,6 +298,54 @@ def normalize_bhavcopy_row(row: dict[str, str]) -> dict | None:
     }
 
 
+def resolve_instrument(
+    db: Session,
+    *,
+    symbol: str,
+    series: str,
+    isin: str | None,
+) -> Instrument | None:
+    instrument = db.execute(
+        select(Instrument).where(
+            Instrument.symbol == symbol,
+            Instrument.series == series,
+        )
+    ).scalar_one_or_none()
+    if instrument is not None:
+        return instrument
+
+    if isin:
+        instrument = db.execute(select(Instrument).where(Instrument.isin == isin)).scalar_one_or_none()
+        if instrument is not None:
+            return instrument
+
+    return None
+
+
+def maybe_update_instrument_identity(
+    db: Session,
+    *,
+    instrument: Instrument,
+    symbol: str,
+    series: str,
+) -> None:
+    if instrument.symbol == symbol and instrument.series == series:
+        return
+
+    conflicting = db.execute(
+        select(Instrument).where(
+            Instrument.symbol == symbol,
+            Instrument.series == series,
+            Instrument.id != instrument.id,
+        )
+    ).scalar_one_or_none()
+    if conflicting is not None:
+        return
+
+    instrument.symbol = symbol
+    instrument.series = series
+
+
 def get_first_value(row: dict[str, str], logical_name: str) -> str | None:
     for alias in COLUMN_ALIASES[logical_name]:
         if alias in row and row[alias] not in (None, "", "-"):
@@ -318,3 +382,13 @@ def get_raw_storage_dir(trade_date: date) -> Path:
     if not configured.is_absolute():
         configured = (Path(__file__).resolve().parents[4] / configured).resolve()
     return configured / "nse" / "cm" / trade_date.strftime("%Y") / trade_date.strftime("%m") / trade_date.strftime("%d")
+
+
+def get_trading_days(start_date: date, end_date: date) -> list[date]:
+    current = start_date
+    trading_days: list[date] = []
+    while current <= end_date:
+        if current.weekday() < 5:
+            trading_days.append(current)
+        current += timedelta(days=1)
+    return trading_days

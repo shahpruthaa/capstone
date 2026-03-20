@@ -65,6 +65,12 @@ BENCHMARK_UNIVERSES = [
     ("AMC Multi Factor", "AMC_STYLE", "Balanced factor sleeve blending momentum, quality proxy, and lower volatility."),
 ]
 
+RISK_MODEL_CONFIG = {
+    "ULTRA_LOW": {"candidate_count": 10, "max_weight": 0.35, "sector_cap": 0.42, "risk_aversion": 18.0, "shrinkage": 0.55, "turnover_penalty": 0.10},
+    "MODERATE": {"candidate_count": 12, "max_weight": 0.16, "sector_cap": 0.28, "risk_aversion": 8.5, "shrinkage": 0.40, "turnover_penalty": 0.06},
+    "HIGH": {"candidate_count": 12, "max_weight": 0.12, "sector_cap": 0.24, "risk_aversion": 4.25, "shrinkage": 0.30, "turnover_penalty": 0.04},
+}
+
 
 @dataclass
 class Snapshot:
@@ -96,8 +102,8 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     weighted_stats = build_weighted_statistics(selected)
     notes = [
         f"Portfolio built from {len(selected)} instruments using prices through {as_of_date.isoformat()}.",
-        "Weights are derived from trailing return, volatility, liquidity, and sector-diversification heuristics stored in PostgreSQL.",
-        "This backend flow is now data-backed, but still a first-pass heuristic optimizer rather than a full covariance-constrained solver.",
+        "Weights are produced by a constrained allocator over a shrinkage covariance risk model estimated from aligned daily returns.",
+        "The optimizer enforces long-only, fully-invested, per-asset, and per-sector caps tuned to the selected risk mode.",
     ]
 
     run = GeneratedPortfolioRun(
@@ -493,36 +499,26 @@ def get_effective_trade_date(db: Session, as_of_date: date | None = None) -> dat
 
 
 def select_portfolio_candidates(risk_mode: str, snapshots: list[Snapshot]) -> list[tuple[Snapshot, float]]:
-    target_count = {"ULTRA_LOW": 7, "MODERATE": 10, "HIGH": 10}[risk_mode]
-    preference_order = {symbol: index for index, symbol in enumerate(RISK_MODE_UNIVERSES[risk_mode])}
-    scored = sorted(
-        snapshots,
-        key=lambda snapshot: candidate_score(snapshot, risk_mode, preference_order.get(snapshot.symbol, 999)),
-        reverse=True,
-    )
-    selected: list[Snapshot] = []
-    seen_sectors: set[str] = set()
-    for snapshot in scored:
-        if snapshot.sector not in seen_sectors or len(selected) >= max(3, target_count // 2):
-            selected.append(snapshot)
-            seen_sectors.add(snapshot.sector)
-        if len(selected) >= target_count:
-            break
-    if len(selected) < min(4, target_count):
+    config = RISK_MODEL_CONFIG[risk_mode]
+    screened = shortlist_candidates(risk_mode, snapshots, config["candidate_count"])
+    if len(screened) < 4:
         return []
 
-    raw_weights = []
-    for snapshot in selected:
-        inv_vol = 1 / max(snapshot.annual_volatility_pct, 3.0)
-        if risk_mode == "ULTRA_LOW":
-            factor = inv_vol * (1.25 if snapshot.instrument_type == "ETF" else 1.0)
-        elif risk_mode == "MODERATE":
-            factor = inv_vol * max(0.5, 1 + (snapshot.annual_return_pct / 100.0))
-        else:
-            factor = max(0.25, 0.6 + (snapshot.momentum_pct / 100.0) + (snapshot.beta_proxy / 4.0))
-        raw_weights.append(factor)
-    weights = normalize_weights(raw_weights, max_weight={"ULTRA_LOW": 35.0, "MODERATE": 14.0, "HIGH": 12.0}[risk_mode])
-    return list(zip(selected, weights))
+    aligned_snapshots, return_matrix = align_return_matrix(screened)
+    if len(aligned_snapshots) < 4 or len(return_matrix[0]) < 20:
+        return []
+
+    expected_returns = estimate_expected_returns(aligned_snapshots, return_matrix, risk_mode)
+    covariance_matrix = build_shrunk_covariance(return_matrix, config["shrinkage"])
+    optimized_weights = optimize_constrained_allocator(
+        aligned_snapshots,
+        expected_returns,
+        covariance_matrix,
+        risk_mode,
+    )
+    if not optimized_weights:
+        return []
+    return list(zip(aligned_snapshots, [round(weight * 100, 2) for weight in optimized_weights]))
 
 
 def build_weighted_statistics(selected: list[tuple[Snapshot, float]]) -> PortfolioMetricsModel:
@@ -721,6 +717,184 @@ def select_benchmark_symbol(db: Session) -> str:
     if "GOLDBEES" in symbols:
         return "GOLDBEES"
     return next(iter(symbols), "NIFTYBEES")
+
+
+def shortlist_candidates(risk_mode: str, snapshots: list[Snapshot], candidate_count: int) -> list[Snapshot]:
+    preference_order = {symbol: index for index, symbol in enumerate(RISK_MODE_UNIVERSES[risk_mode])}
+    scored = sorted(
+        snapshots,
+        key=lambda snapshot: candidate_score(snapshot, risk_mode, preference_order.get(snapshot.symbol, 999)),
+        reverse=True,
+    )
+    shortlisted: list[Snapshot] = []
+    sector_counts: dict[str, int] = defaultdict(int)
+    for snapshot in scored:
+        sector_limit = 1 if len(shortlisted) < max(4, candidate_count // 2) else 2
+        if sector_counts[snapshot.sector] >= sector_limit:
+            continue
+        shortlisted.append(snapshot)
+        sector_counts[snapshot.sector] += 1
+        if len(shortlisted) >= candidate_count:
+            break
+    return shortlisted
+
+
+def align_return_matrix(snapshots: list[Snapshot]) -> tuple[list[Snapshot], list[list[float]]]:
+    common_dates = None
+    return_maps = {}
+    for snapshot in snapshots:
+        date_map = {trade_date: value for trade_date, value in snapshot.returns}
+        return_maps[snapshot.symbol] = date_map
+        dates = set(date_map.keys())
+        common_dates = dates if common_dates is None else common_dates & dates
+    ordered_dates = sorted(common_dates or [])
+    if len(ordered_dates) < 20:
+        return [], [[]]
+    matrix = [[return_maps[snapshot.symbol][trade_date] for trade_date in ordered_dates] for snapshot in snapshots]
+    return snapshots, matrix
+
+
+def estimate_expected_returns(snapshots: list[Snapshot], return_matrix: list[list[float]], risk_mode: str) -> list[float]:
+    expected_returns = []
+    config = RISK_MODEL_CONFIG[risk_mode]
+    for index, snapshot in enumerate(snapshots):
+        series = return_matrix[index]
+        daily_mean = sum(series) / max(len(series), 1)
+        annual_mean = daily_mean * 252
+        momentum_component = snapshot.momentum_pct / 100.0
+        quality_component = snapshot.annual_return_pct / 100.0
+        volatility_penalty = snapshot.annual_volatility_pct / 100.0
+        etf_bonus = 0.02 if snapshot.instrument_type == "ETF" and risk_mode == "ULTRA_LOW" else 0.0
+        market_cap_bonus = 0.01 if snapshot.market_cap_bucket == "Large" and risk_mode != "HIGH" else 0.0
+        if risk_mode == "ULTRA_LOW":
+            expected = (0.25 * annual_mean) + (0.20 * quality_component) + etf_bonus + market_cap_bonus - (0.35 * volatility_penalty)
+        elif risk_mode == "HIGH":
+            expected = (0.40 * annual_mean) + (0.40 * momentum_component) + (0.20 * quality_component) - (0.08 * volatility_penalty)
+        else:
+            expected = (0.35 * annual_mean) + (0.30 * momentum_component) + (0.25 * quality_component) + market_cap_bonus - (0.15 * volatility_penalty)
+        expected_returns.append(expected - config["turnover_penalty"] * abs(snapshot.beta_proxy - 1.0) * 0.01)
+    return expected_returns
+
+
+def build_shrunk_covariance(return_matrix: list[list[float]], shrinkage: float) -> list[list[float]]:
+    asset_count = len(return_matrix)
+    if asset_count == 0:
+        return []
+    sample = [[0.0 for _ in range(asset_count)] for _ in range(asset_count)]
+    for row in range(asset_count):
+        for col in range(asset_count):
+            sample[row][col] = covariance(return_matrix[row], return_matrix[col]) * 252
+    diagonal = [[0.0 for _ in range(asset_count)] for _ in range(asset_count)]
+    for index in range(asset_count):
+        diagonal[index][index] = sample[index][index]
+    return [
+        [
+            ((1 - shrinkage) * sample[row][col]) + (shrinkage * diagonal[row][col])
+            for col in range(asset_count)
+        ]
+        for row in range(asset_count)
+    ]
+
+
+def optimize_constrained_allocator(
+    snapshots: list[Snapshot],
+    expected_returns: list[float],
+    covariance_matrix: list[list[float]],
+    risk_mode: str,
+) -> list[float]:
+    config = RISK_MODEL_CONFIG[risk_mode]
+    asset_count = len(snapshots)
+    if asset_count == 0:
+        return []
+
+    prior = build_prior_weights(snapshots, risk_mode)
+    weights = prior[:]
+    for iteration in range(220):
+        sigma_w = matrix_vector_product(covariance_matrix, weights)
+        gradient = []
+        for index, snapshot in enumerate(snapshots):
+            diversification_bonus = 0.01 if snapshot.instrument_type == "ETF" and risk_mode == "ULTRA_LOW" else 0.0
+            gradient.append(expected_returns[index] + diversification_bonus - (config["risk_aversion"] * sigma_w[index]))
+        step_size = 0.18 / (1 + (iteration / 30))
+        proposal = [(weight + (step_size * grad)) for weight, grad in zip(weights, gradient)]
+        weights = project_weights(proposal, snapshots, risk_mode, prior)
+
+    cleaned = [weight if weight >= 0.005 else 0.0 for weight in weights]
+    return renormalize(cleaned)
+
+
+def build_prior_weights(snapshots: list[Snapshot], risk_mode: str) -> list[float]:
+    raw = []
+    for snapshot in snapshots:
+        inverse_vol = 1 / max(snapshot.annual_volatility_pct, 3.0)
+        if risk_mode == "ULTRA_LOW":
+            score = inverse_vol * (1.35 if snapshot.instrument_type == "ETF" else 1.0)
+        elif risk_mode == "HIGH":
+            score = max(0.1, (snapshot.momentum_pct / 20.0) + (snapshot.beta_proxy / 2.5))
+        else:
+            score = max(0.1, inverse_vol * (1 + max(snapshot.annual_return_pct, 0) / 100.0))
+        raw.append(score)
+    total = sum(raw)
+    return [value / max(total, 1e-9) for value in raw]
+
+
+def project_weights(weights: list[float], snapshots: list[Snapshot], risk_mode: str, prior: list[float]) -> list[float]:
+    config = RISK_MODEL_CONFIG[risk_mode]
+    projected = [min(config["max_weight"], max(0.0, weight)) for weight in weights]
+    projected = renormalize(projected)
+    for _ in range(6):
+        sector_totals = compute_sector_totals(projected, snapshots)
+        excess_pool = 0.0
+        for sector, total in sector_totals.items():
+            if total <= config["sector_cap"]:
+                continue
+            scale = config["sector_cap"] / max(total, 1e-9)
+            for index, snapshot in enumerate(snapshots):
+                if snapshot.sector == sector:
+                    reduced = projected[index] * (1 - scale)
+                    projected[index] *= scale
+                    excess_pool += reduced
+        if excess_pool <= 1e-9:
+            break
+        projected = redistribute_weight(projected, snapshots, risk_mode, prior, excess_pool)
+    return renormalize([min(config["max_weight"], max(0.0, weight)) for weight in projected])
+
+
+def redistribute_weight(weights: list[float], snapshots: list[Snapshot], risk_mode: str, prior: list[float], excess_pool: float) -> list[float]:
+    config = RISK_MODEL_CONFIG[risk_mode]
+    sector_totals = compute_sector_totals(weights, snapshots)
+    headroom = []
+    for index, snapshot in enumerate(snapshots):
+        asset_headroom = max(0.0, config["max_weight"] - weights[index])
+        sector_headroom = max(0.0, config["sector_cap"] - sector_totals[snapshot.sector])
+        score = min(asset_headroom, sector_headroom) * max(prior[index], 0.001)
+        headroom.append(score)
+    total_headroom = sum(headroom)
+    if total_headroom <= 1e-9:
+        return weights
+    redistributed = weights[:]
+    for index, score in enumerate(headroom):
+        redistributed[index] += excess_pool * (score / total_headroom)
+    return redistributed
+
+
+def compute_sector_totals(weights: list[float], snapshots: list[Snapshot]) -> dict[str, float]:
+    totals: dict[str, float] = defaultdict(float)
+    for index, snapshot in enumerate(snapshots):
+        totals[snapshot.sector] += weights[index]
+    return totals
+
+
+def renormalize(weights: list[float]) -> list[float]:
+    total = sum(weights)
+    if total <= 1e-9:
+        equal = 1 / max(len(weights), 1)
+        return [equal for _ in weights]
+    return [weight / total for weight in weights]
+
+
+def matrix_vector_product(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    return [sum(cell * vector[column] for column, cell in enumerate(row)) for row in matrix]
 
 
 def candidate_score(snapshot: Snapshot, risk_mode: str, preference_rank: int) -> float:
