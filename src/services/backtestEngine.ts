@@ -25,6 +25,7 @@ export interface BacktestResult {
     costBreakdown: CostBreakdown;
     config: BacktestConfig;
     initialInvestment: number;
+    notes?: string[];
 }
 
 export interface TaxBreakdown {
@@ -32,6 +33,7 @@ export interface TaxBreakdown {
     ltcgGain: number;
     stcgTax: number;
     ltcgTax: number;
+    cessTax: number;
     totalTax: number;
 }
 
@@ -39,6 +41,8 @@ export interface CostBreakdown {
     totalBrokerage: number;
     totalSTT: number;
     totalStampDuty: number;
+    totalExchangeTxn: number;
+    totalSebiFees: number;
     totalGST: number;
     totalSlippage: number;
     totalCosts: number;
@@ -108,10 +112,10 @@ export function runBacktest(portfolio: Portfolio, config: BacktestConfig): Backt
 
     // Track costs and taxes
     const costs: CostBreakdown = {
-        totalBrokerage: 0, totalSTT: 0, totalStampDuty: 0, totalGST: 0, totalSlippage: 0, totalCosts: 0
+        totalBrokerage: 0, totalSTT: 0, totalStampDuty: 0, totalExchangeTxn: 0, totalSebiFees: 0, totalGST: 0, totalSlippage: 0, totalCosts: 0
     };
     const taxes: TaxBreakdown = {
-        stcgGain: 0, ltcgGain: 0, stcgTax: 0, ltcgTax: 0, totalTax: 0
+        stcgGain: 0, ltcgGain: 0, stcgTax: 0, ltcgTax: 0, cessTax: 0, totalTax: 0
     };
 
     let totalTrades = 0;
@@ -248,7 +252,8 @@ export function runBacktest(portfolio: Portfolio, config: BacktestConfig): Backt
     const ltcgTaxable = Math.max(0, taxes.ltcgGain - LTCG_EXEMPTION);
     taxes.ltcgTax = ltcgTaxable * LTCG_RATE;
     taxes.stcgTax = Math.max(0, taxes.stcgGain) * STCG_RATE;
-    taxes.totalTax = taxes.ltcgTax + taxes.stcgTax;
+    taxes.cessTax = (taxes.ltcgTax + taxes.stcgTax) * 0.04;
+    taxes.totalTax = taxes.ltcgTax + taxes.stcgTax + taxes.cessTax;
 
     return {
         equityCurve,
@@ -265,5 +270,6 @@ export function runBacktest(portfolio: Portfolio, config: BacktestConfig): Backt
         costBreakdown: costs,
         config,
         initialInvestment,
+        notes: ['Local fallback uses GBM simulation and simplified tax/fee assumptions.'],
     };
 }

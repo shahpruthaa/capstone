@@ -144,7 +144,7 @@ function answerDiversificationQuestion(portfolio: Portfolio | null): string {
 }
 
 function answerBacktestQuestion(): string {
-  return 'A credible Indian backtest needs corporate actions, realistic fill logic, stop-loss and take-profit triggers, slippage by liquidity bucket, and dated tax rules for STT, STCG, LTCG, and stamp duty. The current repo has the shell of that engine, but it still uses simulated GBM paths instead of exchange-grade historical bars.';
+  return 'A credible Indian backtest needs corporate actions, realistic fill logic, stop-loss and take-profit triggers, slippage by liquidity bucket, and dated tax rules for STT, STCG, LTCG, and stamp duty. The current backend now replays stored daily OHLC bars with dated fee and tax logic, but it is still a daily-bar simulator rather than a full intraday execution engine.';
 }
 
 function answerBenchmarkQuestion(): string {

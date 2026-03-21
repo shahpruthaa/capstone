@@ -151,6 +151,9 @@ export function AnalyzeTab() {
     const sectorChartData = result
         ? Object.entries(result.sectorWeights).map(([name, value]) => ({ name, value: +value.toFixed(1) }))
         : [];
+    const factorChartData = result?.factorExposures
+        ? Object.entries(result.factorExposures).slice(0, 6).map(([name, value]) => ({ name, value: +value.toFixed(2) }))
+        : [];
 
     const uniqueSectors = [...new Set(
         holdings.map(h => ALL_STOCKS.find(s => s.symbol === h.symbol)?.sector).filter(Boolean)
@@ -309,6 +312,31 @@ export function AnalyzeTab() {
                                 </ResponsiveContainer>
                             </div>
                         </div>
+
+                        {factorChartData.length > 0 && (
+                            <div className="card p-5">
+                                <p className="section-title">Factor Exposures</p>
+                                <div className="space-y-3">
+                                    {factorChartData.map((item) => (
+                                        <div key={item.name}>
+                                            <div className="flex items-center justify-between text-xs mb-1">
+                                                <span className="font-semibold text-slate-600 uppercase tracking-wide">{item.name.replace('_', ' ')}</span>
+                                                <span className={`font-mono ${item.value >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}</span>
+                                            </div>
+                                            <div className="progress-bar-track">
+                                                <div
+                                                    className="progress-bar-fill"
+                                                    style={{
+                                                        width: `${Math.min(100, Math.abs(item.value) * 35)}%`,
+                                                        background: item.value >= 0 ? '#14b8a6' : '#ef4444',
+                                                    }}
+                                                />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         <CorrelationMatrix sectors={uniqueSectors} />
 

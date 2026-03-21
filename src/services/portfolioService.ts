@@ -33,8 +33,10 @@ export interface AnalysisResult {
   suggestions: string[];
   rebalancingActions: RebalancingAction[];
   sectorWeights: { [key: string]: number };
+  factorExposures?: { [key: string]: number };
   correlationWarnings: string[];
   totalValue: number;
+  backendNotes?: string[];
 }
 
 export interface RebalancingAction {

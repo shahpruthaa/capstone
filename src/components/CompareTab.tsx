@@ -88,7 +88,7 @@ export function CompareTab() {
 
     const growthCurve = cmp.projectedGrowth.filter(r => r.year % 2 === 0 || r.year === 1 || r.year === 10);
 
-    const KEY_STRATEGIES = ['NSE AI Portfolio', 'Nifty 50 Index', 'Markowitz MVO', 'Momentum Factor'];
+    const KEY_STRATEGIES = ['NSE AI Portfolio', 'Nifty 50 Proxy', 'Nifty 500 Proxy', 'Momentum Factor'];
     const LINE_COLORS = ['#14b8a6', '#94a3b8', '#8b5cf6', '#f59e0b'];
 
     return (
@@ -105,11 +105,18 @@ export function CompareTab() {
                     </div>
                 </div>
                 <div className="alert-info mt-3 text-xs">
-                    <strong>Disclaimer:</strong> Results are simulated using factor-model estimates, not live historical data. Actual returns will vary. Past performance does not guarantee future results. Consult a SEBI-registered advisor.
+                    <strong>Disclaimer:</strong> Results are based on locally computed proxy benchmarks from ingested market data, not official index constituent files. Actual returns will vary. Past performance does not guarantee future results. Consult a SEBI-registered advisor.
                 </div>
                 {compareNotice && (
                     <div className={`${compareNotice.tone === 'info' ? 'alert-info' : 'alert-warning'} mt-3 text-xs`}>
                         {compareNotice.text}
+                    </div>
+                )}
+                {cmp.notes && cmp.notes.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                        {cmp.notes.map((note, index) => (
+                            <div key={index} className="alert-info text-xs">{note}</div>
+                        ))}
                     </div>
                 )}
             </div>

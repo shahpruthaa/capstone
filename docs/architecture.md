@@ -2,535 +2,412 @@
 
 ## Objective
 
-Define the target architecture for evolving the current React/Vite prototype into a production-grade, local-first NSE portfolio platform with:
-- AI portfolio generation
-- user portfolio analysis and rebalancing
-- realistic Indian backtesting
-- benchmark comparison
-- fully local development without Google AI Studio
+Define the current local-first architecture of the NSE AI Portfolio Manager, with explicit implementation detail for:
 
-## Architecture Principles
+- expected return model
+- tax model detail
+- fee table detail by effective date
+- rebalance policy
 
-- Quant decisions must be deterministic, auditable, and reproducible.
-- LLMs are explanation layers, not portfolio decision engines.
-- Raw market data must be preserved before transformations.
-- Research and production workloads must be separated.
-- Historical simulation must use dated fees, taxes, and corporate actions.
-- The frontend should remain thin; heavy analytics should live in Python services.
+This document describes the system as it exists now, not just the target future state.
 
-## Current-to-Target Transition
-
-Current repo state:
-- React + Vite frontend
-- static NSE stock universe
-- prototype portfolio generation
-- prototype backtest engine
-- simulated benchmark comparisons
-- local advisory layer for UI explanations
-
-Target state:
-- React frontend stays in place
-- Python FastAPI backend serves quant APIs
-- PostgreSQL + TimescaleDB store user state and market time series
-- DuckDB + Parquet support research, training, and feature backfills
-- Redis supports cache, queues, and short-lived job state
-- Docker Compose supports full local development
-- Optional Ollama supports local explainability only
-
-## Logical Architecture
+## Runtime Architecture
 
 ```mermaid
 flowchart LR
-    U["User"] --> W["React/Vite Web App"]
+    U["User Browser"] --> WEB["React / Vite UI"]
+    WEB --> API["FastAPI Backend"]
 
-    W --> API["FastAPI Backend"]
-    W --> OLLAMA["Ollama (Optional Explainability)"]
-
-    API --> PORT["Portfolio Service"]
-    API --> RISK["Risk & Analyzer Service"]
-    API --> SIM["Backtest Service"]
-    API --> BENCH["Benchmark Service"]
-    API --> AUTH["Auth / User Settings"]
-
-    PORT --> PG["PostgreSQL + TimescaleDB"]
-    RISK --> PG
-    SIM --> PG
-    BENCH --> PG
-    AUTH --> PG
-
+    API --> QE["Quant Engine"]
+    API --> ING["NSE Ingestion"]
+    API --> PG["PostgreSQL + TimescaleDB"]
     API --> REDIS["Redis"]
-    API --> WORKER["Background Workers"]
 
-    WORKER --> RAW["Raw Market Data Storage"]
-    WORKER --> FEAT["Feature Pipeline"]
-    WORKER --> DUCK["DuckDB + Parquet Research Store"]
-    WORKER --> PG
-
-    NSE["NSE EOD / Historical Data"] --> RAW
-    BROKER["Broker / Licensed Real-time Feed"] --> RAW
-    CORP["Corporate Actions / Instrument Master"] --> RAW
+    NSE["NSE Bhavcopy Archives"] --> ING
+    CA["Corporate Actions CSV Import"] --> API
+    ING --> RAW["Local Raw Archive Cache"]
+    ING --> PG
+    QE --> PG
 ```
 
-## Recommended Tech Stack
+## Core Principles
+
+- Portfolio construction is deterministic and auditable.
+- LLM-style assistance is explanatory only.
+- Raw files are preserved before transformation.
+- Historical replay uses dated rules rather than one timeless cost/tax assumption.
+- The frontend is presentation-oriented; portfolio math lives in Python services.
+
+## Main Components
 
 ### Frontend
 
-- React 19
-- Vite
-- TypeScript
-- Recharts for analytics visualization
-- Future additions:
-  - TanStack Query for API state
-  - React Router for route-level workspaces
-  - Zod for request/response validation
+Responsibilities:
 
-Reason:
-- The current UI is already a strong shell and should be preserved.
+- portfolio generation workflow
+- holdings analysis
+- backtest controls and result visualization
+- benchmark comparison
+- backend notes, loading, and fallback handling
 
-### Backend
+Status:
 
-- Python 3.12+
-- FastAPI
-- Pydantic
-- Uvicorn / Gunicorn
-- Polars, NumPy, Pandas
-- scikit-learn
-- PyPortfolioOpt or custom optimizer layer
-- statsmodels / hmmlearn for regime detection
+- Complete
 
-Reason:
-- Python is a much better fit than TypeScript for portfolio optimization, risk modeling, and market simulation.
-
-### Storage
-
-- PostgreSQL
-- TimescaleDB extension
-- DuckDB
-- Parquet
-- MinIO locally, S3 in production
-
-Reason:
-- PostgreSQL handles users, holdings, jobs, audit records, and normalized metadata.
-- TimescaleDB handles daily/intraday bars, benchmark series, factor histories, and covariances.
-- DuckDB + Parquet keep research runs cheap, reproducible, and fast.
-
-### Cache and Jobs
-
-- Redis
-- Celery or Dramatiq worker layer
-
-Reason:
-- Backtests, factor materialization, rebalancing jobs, and benchmark recomputations are asynchronous workloads.
-
-### Local Explainability
-
-- Optional Ollama container
-
-Scope:
-- Explain portfolio rationale
-- Summarize analyzer outputs
-- Answer user questions over computed metrics
-
-Non-scope:
-- Picking stocks
-- Optimizing weights
-- generating tax calculations
-
-## Service Boundaries
-
-### 1. Web App
+### FastAPI Backend
 
 Responsibilities:
-- portfolio generation wizard
-- holdings analyzer UI
-- benchmark dashboards
-- backtest configuration and result screens
-- local explainability/chat shell
 
-Should not do:
-- optimizer math
-- covariance estimation
-- production tax-lot computation
-- heavy historical replay
+- generate portfolio
+- analyze holdings
+- run backtests
+- summarize benchmarks
+- trigger market-data ingestion
 
-### 2. Portfolio Service
+Status:
 
-Responsibilities:
-- eligible universe selection
-- risk-mode constraints
-- factor score aggregation
-- optimizer execution
-- target weights and rebalance plan generation
+- Complete for local development
 
-Core flow:
-1. load latest universe snapshot
-2. filter by liquidity and risk mode
-3. compute factor exposures
-4. build covariance matrix
-5. optimize with constraints
-6. return target weights and rationale
-
-### 3. Risk & Analyzer Service
+### Quant Engine
 
 Responsibilities:
-- portfolio beta and volatility
-- correlation matrix
-- sector concentration
-- factor exposure decomposition
-- gap-to-target analysis
-- buy/sell recommendations against chosen risk mode
 
-### 4. Backtest Service
-
-Responsibilities:
-- historical replay using adjusted OHLCV
-- stop-loss / take-profit execution logic
-- slippage and fee model
-- FIFO tax-lot realization
-- walk-forward testing
-- scenario stress tests
-
-### 5. Benchmark Service
-
-Responsibilities:
-- Nifty 50 / Nifty 500 comparison
-- equal-weight baseline
-- minimum variance baseline
-- momentum / quality / multifactor baselines
-- AMC-style comparison packs
-
-### 6. Market Data Pipeline
-
-Responsibilities:
-- raw ingestion
-- normalization
-- symbol mapping
-- corporate-action adjustment
-- feature generation
-- benchmark materialization
-
-## Data Pipeline Architecture
-
-## Source Layer
-
-Primary sources:
-- NSE historical / EOD data
-- licensed or broker real-time quote feed
-- corporate actions and instrument master
-- benchmark / index constituent references
-
-## Raw Layer
-
-Store every fetched file before processing:
-- source
-- file date
-- checksum
-- ingestion timestamp
-- processing version
-
-Reason:
-- enables replay
-- supports debugging
-- preserves lineage
-
-## Standardized Layer
-
-Transformations:
-- normalize tickers and symbol changes
-- standardize timestamp/timezone
-- align to NSE trading calendar
-- deduplicate records
-- enforce instrument identity mapping
-
-## Adjusted Layer
-
-Apply:
-- splits
-- bonuses
-- dividends where needed
-- symbol migrations
-- delisting handling
-
-Keep:
-- raw series
-- adjusted series
-
-## Feature Layer
-
-Materialize:
-- returns
-- rolling volatility
-- downside volatility
-- beta vs benchmark
-- momentum windows
-- quality score
-- value score
-- dividend score
-- liquidity score
-- covariance snapshots
-- regime features
-
-## Serving Layer
-
-Expose to services:
-- latest portfolio input features
-- historical features for backtests
-- benchmark series
-- covariance/risk snapshots
-
-## Storage Model
-
-### PostgreSQL / TimescaleDB tables
-
-User and portfolio domain:
-- `users`
-- `user_preferences`
-- `risk_profiles`
-- `portfolios`
-- `portfolio_holdings`
-- `rebalance_plans`
-- `orders`
-- `fills`
-- `tax_lots`
-- `backtest_runs`
-- `benchmark_runs`
-
-Market domain:
-- `instruments`
-- `instrument_aliases`
-- `daily_bars`
-- `intraday_bars`
-- `corporate_actions`
-- `fundamentals_snapshot`
-- `factor_scores`
-- `covariance_snapshot`
-- `benchmark_series`
-- `trading_calendar`
-
-Pipeline domain:
-- `ingestion_runs`
-- `raw_file_registry`
-- `feature_materialization_runs`
-- `data_quality_alerts`
-
-### DuckDB + Parquet datasets
-
-Research datasets:
-- rolling feature panels
-- optimizer experiments
-- walk-forward slices
-- stress-test scenarios
-- model evaluation outputs
-
-## API Architecture
-
-Suggested backend routes:
-
-- `POST /api/v1/portfolio/generate`
-- `POST /api/v1/portfolio/analyze`
-- `POST /api/v1/portfolio/rebalance`
-- `POST /api/v1/backtests/run`
-- `GET /api/v1/backtests/{id}`
-- `GET /api/v1/benchmarks/summary`
-- `GET /api/v1/benchmarks/series`
-- `GET /api/v1/market/universe`
-- `GET /api/v1/market/instruments/{symbol}`
-- `POST /api/v1/explain/portfolio`
-
-Pattern:
-- frontend sends config only
-- backend computes everything authoritative
-- frontend renders and explains results
-
-## AI/ML Decision Stack
-
-The target decision stack should be:
-
-1. Universe filter
-   - liquidity thresholds
-   - price sanity checks
-   - corporate-action exclusions
-   - market-cap/risk-mode eligibility
-
-2. Factor scoring
-   - momentum
-   - quality
-   - value
-   - dividend/defensiveness
-   - liquidity
-
-3. Risk estimation
-   - empirical covariance
-   - shrinkage covariance
-   - beta and volatility
-   - concentration penalties
-
-4. Optimization
-   - HRP or mean-CVaR
-   - sector caps
-   - single-name caps
-   - turnover constraints
-   - hedge floor for lower-risk modes
-
-5. Regime overlay
-   - volatility/trend states first
-   - HMM / boosted classifier later
-   - adjusts exposure ceilings, hedge sleeve, and rebalance cadence
-
-6. Explanation layer
-   - deterministic narrative from computed outputs
-   - optional Ollama for polished natural-language summaries
-
-## Simulation Architecture
-
-### Historical replay engine
-
-Replace simulated GBM with:
-- adjusted daily or intraday historical bars
-- benchmark-aligned historical periods
-- corporate-action aware holdings valuation
-
-### Execution model
-
-For every rebalance or triggered exit:
-- determine reference price
-- apply slippage based on liquidity bucket and volatility
-- compute brokerage and charges using dated tables
-- update holdings, cash, and tax lots
-
-### Tax-lot model
-
-Use FIFO lots:
-- every buy creates a lot
-- sells consume oldest lots first
-- realized gains split into STCG and LTCG
-- annual LTCG exemption applied at portfolio/account level
-
-### Output metrics
-
-- CAGR
-- volatility
-- Sharpe
-- Sortino
-- Calmar
-- max drawdown
-- turnover
-- benchmark alpha
-- information ratio
-- tax drag
-- cost drag
-
-## Local Development Architecture
-
-Use Docker Compose with:
-- `web`
-- `api`
-- `worker`
-- `postgres`
-- `redis`
-- `minio`
-- `ollama` optional
-
-Suggested target repo layout:
-
-```text
-apps/
-  web/
-  api/
-workers/
-  market_data/
-  simulation/
-packages/
-  quant/
-  schemas/
-infra/
-  docker/
-  migrations/
-data/
-  raw/
-  curated/
-docs/
-```
-
-Practical migration note:
-- keep the current frontend in place first
-- introduce `apps/api` and `packages/quant`
-- move frontend later only if the repo becomes crowded
-
-## Production Deployment Architecture
-
-Recommended region:
-- AWS `ap-south-1`
-
-Suggested production layout:
-- CloudFront for frontend delivery
-- ECS/Fargate for API and workers
-- RDS PostgreSQL
-- ElastiCache Redis
-- S3 for raw files and Parquet
-- CloudWatch for logs/metrics
-- Secrets Manager for credentials
-
-## Security and Governance
-
-- portfolio decisions must be versioned by model config
-- every backtest must record:
-  - data version
-  - fee table version
-  - tax rule version
-  - optimizer version
-  - benchmark version
-- keep audit trails for:
-  - holdings uploads
-  - rebalance recommendations
-  - backtest executions
-  - user overrides
-
-## Phase Mapping
-
-### Phase 1: Stabilize frontend
-- preserve existing React shell
-- keep local advisor
-- clean contracts and shared types
-
-### Phase 2: Backend foundation
-- add FastAPI
-- add PostgreSQL + TimescaleDB
-- add Docker Compose
-- add typed API contracts
-
-### Phase 3: Real market data
-- ingest historical NSE data
-- add corporate actions
-- add normalized instrument master
-
-### Phase 4: Quant engine
+- adjusted return construction
 - factor scoring
-- covariance model
-- optimizer
-- regime overlay
+- expected return estimation
+- shrinkage covariance
+- constrained optimization
+- rebalance recommendation generation
+- dated fee/tax replay
 
-### Phase 5: Analyzer and rebalance engine
-- user holdings import
-- empirical correlation analytics
-- rebalance recommendation engine
+Status:
 
-### Phase 6: Benchmark and research console
-- real benchmark histories
-- factor baselines
-- attribution and scenario testing
+- Complete for the current supported local research scope
 
-### Phase 7: Production hardening
-- auth
-- auditability
-- observability
-- compliance/disclaimer workflow
+## Expected Return Model Architecture
 
-## Immediate Build Path From This Repo
+### Input Layer
 
-1. Keep the current frontend as the presentation layer.
-2. Create a FastAPI backend beside it.
-3. Replace static stock data with ingested market snapshots.
-4. Replace simulated backtesting with historical replay.
-5. Move optimization, benchmarking, and analyzer logic to Python services.
-6. Keep local LLM support optional and explanation-only.
+The expected return model consumes:
+
+- adjusted total-return history
+- aligned cross-sectional return matrix
+- risk-mode configuration
+- factor z-scores
+- simple market regime classification
+
+### Factor Layer
+
+Current factors:
+
+- `momentum`
+- `quality`
+- `low_vol`
+- `liquidity`
+- `sector_strength`
+- `size`
+- `beta`
+
+Definitions:
+
+- `momentum = 0.20 * 1M + 0.35 * 3M + 0.45 * 6M`
+- `quality = annual_return - 0.70 * downside_vol - 0.40 * max_drawdown + beta_discipline`
+- `low_vol = -annual_volatility`
+- `liquidity = sqrt(avg_traded_value)`
+- `sector_strength = stock_momentum - sector_average_momentum`
+- `size = {Large: 1, Mid: 0, Small: -1, Unknown: -0.25}`
+- `beta = beta_proxy - 1`
+
+### Regime Layer
+
+Current regime logic is rule-based:
+
+- `risk_off`
+  - if 3M benchmark return is weak or benchmark volatility is stressed
+- `neutral`
+  - otherwise
+- `risk_on`
+  - if 3M benchmark trend is strong and benchmark volatility is contained
+
+Outputs:
+
+- `base_return`
+- `risk_on_bonus`
+
+### Risk-Mode Return Blend
+
+#### Ultra-Low Risk
+
+- regime base return
+- `0.30 * annual_mean`
+- `0.028 * factor_alpha`
+- defensive / ETF bonus
+
+#### Moderate Risk
+
+- regime base return
+- `0.36 * annual_mean`
+- `0.030 * factor_alpha`
+
+#### High Risk
+
+- regime base return
+- regime risk-on bonus
+- `0.42 * annual_mean`
+- `0.035 * factor_alpha`
+- cyclical-sector bonus
+
+### Stability Controls
+
+- beta drift penalty around `1.0`
+- bounded engineering clamp on expected return before optimization
+
+Status:
+
+- Complete for current scope
+
+Known boundary:
+
+- quality is still a price/risk proxy, not a fundamentals-derived quality factor
+
+## Risk Model and Allocator Architecture
+
+Current flow:
+
+1. shortlist candidates by risk mode
+2. align total-return series
+3. estimate expected returns
+4. compute annualized shrinkage covariance
+5. optimize under constraints
+6. renormalize and persist allocations
+
+Constraints:
+
+- long-only
+- fully invested
+- per-asset caps
+- per-sector caps
+- risk-mode-specific risk aversion
+
+## Rebalance Policy Architecture
+
+Rebalancing is built around optimizer-target drift, not simple equal-sector budgeting.
+
+### Review Cadence
+
+- monthly: `21` trading days
+- quarterly: `63` trading days
+- annually: `252` trading days
+- none: disabled
+
+### Risk-Mode Rules
+
+| Risk Mode | Drift Threshold | Minimum Trade Weight | Cooldown After Exit |
+| --- | --- | --- | --- |
+| `ULTRA_LOW` | `6.0%` | `3.0%` | `5 days` |
+| `MODERATE` | `4.0%` | `2.5%` | `7 days` |
+| `HIGH` | `3.0%` | `2.0%` | `10 days` |
+
+### Execution Logic
+
+- compare live holdings against current optimizer target
+- rebalance only when:
+  - drift exceeds threshold
+  - trade size exceeds minimum trade budget
+- sell overweights first
+- buy underweights only if:
+  - cash exists
+  - cooldown has expired
+
+Status:
+
+- Complete for current scope
+
+Known boundary:
+
+- no persisted rebalance-plan approval workflow yet
+
+## Simulation and Cost Architecture
+
+### Historical Replay
+
+Current simulator uses:
+
+- stored daily OHLC bars
+- gap-aware stop/take-profit evaluation
+- benchmark comparison
+- drift-threshold rebalancing
+- dividend cash credits when corporate actions are loaded
+
+### Live-Market Behavior Approximation
+
+Implemented:
+
+- if the open crosses a stop/target, fill at the open
+- otherwise fill at the trigger level
+- liquidity-loaded slippage
+- volatility-loaded slippage
+
+Status:
+
+- Partial
+
+Known boundary:
+
+- no intraday or order-book execution model
+
+## Tax Model Architecture
+
+### Scope
+
+Supported scope:
+
+- listed delivery-equity research simulation
+
+### Lot Accounting
+
+- FIFO lots per symbol
+- realized gains bucketed by:
+  - financial year
+  - holding period
+  - effective tax schedule
+
+### Holding Period Rules
+
+- `STCG`: holding period `< 365 days`
+- `LTCG`: holding period `>= 365 days`
+
+### Effective-Date Tax Schedules
+
+| Effective From | STCG | LTCG | LTCG Exemption | Cess |
+| --- | --- | --- | --- | --- |
+| `2020-07-01` | `15%` | `10%` | `Rs 1,00,000` | `4%` |
+| `2024-07-23` | `20%` | `12.5%` | `Rs 1,25,000` | `4%` |
+
+### Computation Flow
+
+1. bucket realized gains by financial year and schedule
+2. tax positive STCG only
+3. net LTCG positive and negative within fiscal-year schedule buckets
+4. apply LTCG exemption once per financial year
+5. compute cess on base tax
+
+Output fields:
+
+- `stcg_gain`
+- `ltcg_gain`
+- `stcg_tax`
+- `ltcg_tax`
+- `cess_tax`
+- `total_tax`
+
+Status:
+
+- Complete for the current supported delivery-equity scope
+
+Known boundary:
+
+- no surcharge modeling
+- no derivatives tax model
+
+## Fee Model Architecture
+
+### Per-Trade Formula
+
+- `brokerage = min(turnover * brokerage_rate, max_brokerage_per_order)`
+- `stt = turnover * stt_rate(side)`
+- `stamp_duty = turnover * stamp_duty_buy_rate` on buy only
+- `exchange_txn = turnover * exchange_txn_rate`
+- `sebi_fee = turnover * sebi_fee_rate`
+- `gst = (brokerage + exchange_txn + sebi_fee) * gst_rate`
+- `slippage = turnover * liquidity_adjusted_slippage_rate`
+- `total_costs = sum(all components)`
+
+### Effective-Date Fee Schedules
+
+| Effective From | Brokerage | Max Brokerage | STT Buy | STT Sell | Exchange Txn | SEBI | Stamp Duty Buy | GST |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `2020-07-01` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
+| `2024-07-23` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
+
+### Slippage Layer
+
+- participation-based
+- volatility-loaded
+- capped to avoid unrealistic daily-bar execution assumptions
+
+Status:
+
+- Complete for the current supported delivery-equity scope
+
+Known boundary:
+
+- no broker-plan-specific schedules yet
+
+## Market Data Architecture
+
+### Historical Data
+
+Implemented:
+
+- NSE CM bhavcopy download
+- raw zip caching
+- normalized instrument + daily-bar upsert
+- Timescale hypertable on `daily_bars`
+- instrument enrichment hooks
+
+Status:
+
+- Complete
+
+### Corporate Actions
+
+Implemented:
+
+- `corporate_actions` table
+- CSV import script
+- split / bonus adjustments
+- dividend cash credits
+
+Status:
+
+- Partial
+
+Known boundary:
+
+- no automated upstream corporate-actions feed yet
+
+### Live Data
+
+Implemented:
+
+- none
+
+Status:
+
+- Not started
+
+## Persistence Layer
+
+Current persisted entities:
+
+- `instruments`
+- `daily_bars`
+- `corporate_actions`
+- `ingestion_runs`
+- `generated_portfolio_runs`
+- `generated_portfolio_allocations`
+- `backtest_runs`
+
+## Phase Map
+
+| Phase | Area | Status | Notes |
+| --- | --- | --- | --- |
+| 0 | Frontend shell | Complete | browser UX is live |
+| 1 | Backend foundation | Complete | FastAPI, Docker, Postgres, Redis |
+| 2 | Historical data | Complete | bhavcopy ingestion + Timescale daily bars |
+| 3 | Quant allocator | Complete for current scope | factor-aware expected returns + shrinkage covariance + constraints |
+| 4 | Analyzer / rebalance | Complete for current scope | target-diff rebalance logic and factor exposures are live |
+| 5 | Simulation realism | Partial | daily OHLC replay + tax/fee realism + corp-action support |
+| 6 | Benchmark engine | Partial | proxy benchmarks only |
+| 7 | Live / product hardening | Not started | live feeds, broker connectivity, auth, compliance |

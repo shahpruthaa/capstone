@@ -18,6 +18,7 @@ export interface ComparisonResult {
     strategies: BenchmarkStrategy[];
     winner: string;  // name of best risk-adjusted strategy
     projectedGrowth: { year: number;[key: string]: number }[]; // for chart
+    notes?: string[];
 }
 
 // ─── Simulated benchmark results (research-grade approximations) ──────────────
@@ -35,8 +36,8 @@ const STRATEGIES: BenchmarkStrategy[] = [
         type: 'AI',
     },
     {
-        name: 'Nifty 50 Index',
-        description: 'Market-cap weighted index of top 50 NSE companies. Standard passive benchmark.',
+        name: 'Nifty 50 Proxy',
+        description: 'Large-cap proxy basket for the top end of the NSE universe.',
         annualReturn: 12.8,
         volatility: 16.5,
         maxDrawdown: 15.4,
@@ -47,8 +48,8 @@ const STRATEGIES: BenchmarkStrategy[] = [
         type: 'INDEX',
     },
     {
-        name: 'Nifty 500',
-        description: 'Broader market index including mid & small caps. Higher return potential with more risk.',
+        name: 'Nifty 500 Proxy',
+        description: 'Broad-market proxy including large, mid, and smaller listed companies.',
         annualReturn: 14.2,
         volatility: 18.8,
         maxDrawdown: 18.2,

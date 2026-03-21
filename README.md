@@ -17,25 +17,29 @@ This repository currently contains:
   - sector concentration
   - diversification scoring
   - empirical correlation warnings
-  - rebalance suggestions
+  - factor exposure inspection
+  - optimizer-aligned rebalance suggestions
 - A backtest workspace for:
-  - historical replay from stored daily market data
-  - stop-loss / take-profit logic
-  - transaction cost drag
-  - Indian tax drag approximation
+  - historical replay from stored daily OHLC market data
+  - stop-loss / take-profit logic with gap-aware fills
+  - dated fee schedules and liquidity-aware slippage
+  - FIFO tax-lot realization with FY-wise LTCG exemption handling
+  - corporate-action-aware price adjustment and dividend cash credits when actions are loaded
 - A benchmark comparison workspace for:
   - AI portfolio vs benchmark-style strategies
+  - factor and broad-market proxy comparisons
   - projected growth comparison
   - risk-adjusted return summaries
 - A local advisory/chat layer for explaining portfolio outputs in natural language
 - A FastAPI backend that serves quant results to the UI
 - A PostgreSQL + TimescaleDB store for instruments, bars, ingestion runs, generated portfolios, and backtest runs
 - An NSE bhavcopy ingestion pipeline with local raw-file caching, instrument enrichment, and CLI progress bar output
+- A corporate-actions schema plus CSV import path for splits, bonuses, and dividends
 - A constrained allocator over a shrinkage covariance risk model for backend-generated portfolios
 
 ## Current Status
 
-This repo is no longer just a UI mockup. It now has:
+This repo has:
 
 - Completed:
   - React UI shell
@@ -47,23 +51,26 @@ This repo is no longer just a UI mockup. It now has:
   - NSE bhavcopy ingestion pipeline
   - instrument master enrichment hooks
   - DB-backed portfolio generation
+  - factor-aware expected return model
+  - dated delivery-equity fee engine
+  - FIFO tax-lot engine for delivery-equity backtests
+  - drift-threshold rebalance policy
   - DB-backed benchmark summary
   - DB-backed historical backtest path
   - UI loading/fallback/error notices
 
 - Partially complete:
-  - risk model and constrained optimizer
-  - holdings analyzer and rebalance engine
   - benchmark engine
-  - tax and fee realism
-  - historical simulation fidelity
+  - live market behavior
+  - sector and factor model depth
 
 - Not complete yet:
-  - corporate-action-adjusted pricing
   - live market feed ingestion
   - broker integrations
   - authentication and user accounts
   - CSV/broker holdings import
+  - benchmark constituent ingestion from official index files
+  - richer fundamentals-driven factor data
   - regime overlays
   - production compliance/audit features
 
@@ -143,13 +150,64 @@ The `Generate` tab supports:
 Current backend logic:
 
 - loads candidate instruments from the database
-- builds aligned daily return series
-- estimates expected returns
+- builds aligned total-return series
+- estimates expected returns from momentum, quality proxy, low-volatility, liquidity, sector strength, size, and beta discipline
 - builds a shrinkage covariance matrix
 - runs a constrained long-only allocator with:
   - full investment
   - per-asset caps
   - per-sector caps
+
+### 1A. Expected Return Model Specification
+
+For the current supported scope, the expected return model is complete and implemented.
+
+Inputs:
+
+- adjusted total-return history
+- annualized aligned return mean
+- factor z-scores:
+  - `momentum`
+  - `quality`
+  - `low_vol`
+  - `liquidity`
+  - `sector_strength`
+  - `size`
+  - `beta`
+- a simple regime overlay
+
+Factor construction:
+
+- `momentum = 0.20 * 1M + 0.35 * 3M + 0.45 * 6M`
+- `quality = annual_return - 0.70 * downside_vol - 0.40 * max_drawdown + beta_discipline`
+- `low_vol = -annual_volatility`
+- `liquidity = sqrt(avg_traded_value)`
+- `sector_strength = stock_momentum - sector_average_momentum`
+- `size = {Large: 1, Mid: 0, Small: -1, Unknown: -0.25}`
+- `beta = beta_proxy - 1`
+
+Risk-mode return blend:
+
+- `ULTRA_LOW`
+  - regime base return
+  - `0.30 * annual_mean`
+  - `0.028 * factor_alpha`
+  - defensive / ETF bonus
+- `MODERATE`
+  - regime base return
+  - `0.36 * annual_mean`
+  - `0.030 * factor_alpha`
+- `HIGH`
+  - regime base return
+  - regime risk-on bonus
+  - `0.42 * annual_mean`
+  - `0.035 * factor_alpha`
+  - cyclical-sector bonus
+
+Stability controls:
+
+- penalizes unstable beta drift away from `1.0`
+- clamps expected returns into a bounded engineering range before optimization
 
 ### 2. Portfolio Analysis
 
@@ -169,7 +227,36 @@ Current backend logic:
 - computes weighted beta proxy
 - computes sector weights
 - measures pairwise return correlation
-- compares current portfolio against target risk-mode sector budgets
+- computes factor exposures
+- compares current holdings against the optimizer-generated target portfolio for the selected risk mode
+
+### 2A. Rebalance Policy Specification
+
+For the current supported scope, rebalance policy is complete and implemented.
+
+Review cadence:
+
+- `MONTHLY = 21` trading-day review interval
+- `QUARTERLY = 63` trading-day review interval
+- `ANNUALLY = 252` trading-day review interval
+- `NONE = no scheduled rebalance`
+
+Risk-mode thresholds:
+
+| Risk Mode | Drift Threshold | Minimum Trade Weight | Cooldown After Exit |
+| --- | --- | --- | --- |
+| `ULTRA_LOW` | `6.0%` | `3.0%` | `5 days` |
+| `MODERATE` | `4.0%` | `2.5%` | `7 days` |
+| `HIGH` | `3.0%` | `2.0%` | `10 days` |
+
+Execution rules:
+
+- compare current holdings to the latest optimizer-generated target portfolio
+- trade only if:
+  - absolute drift exceeds the risk-mode threshold
+  - trade size exceeds the minimum trade budget
+- sell first when over target
+- buy only if cash is available and the symbol is not still in cooldown after a prior exit
 
 ### 3. Backtesting
 
@@ -184,11 +271,81 @@ The `Backtest` tab supports:
 Current backend backtest logic:
 
 - reconstructs a strategy portfolio from the selected risk mode
-- replays using stored daily closes
-- triggers stop-loss / take-profit exits
-- supports periodic rebalancing
-- applies brokerage, STT, stamp duty, GST, and slippage approximations
-- tracks STCG/LTCG buckets at a simplified level
+- replays using stored adjusted daily OHLC bars
+- triggers stop-loss / take-profit exits with gap-aware fills
+- supports drift-threshold-based periodic rebalancing
+- applies brokerage, STT, stamp duty, exchange transaction fees, SEBI fees, GST, and liquidity-aware slippage using versioned schedules
+- tracks FIFO tax lots, STCG/LTCG realization, and cess at a detailed engineering level
+
+### 3A. Tax Model Specification
+
+For the current supported scope, the delivery-equity tax model is complete and implemented.
+
+Lot accounting:
+
+- FIFO tax lots per symbol
+- realized gains are bucketed by:
+  - financial year
+  - holding period
+  - effective tax schedule
+
+Holding-period rules:
+
+- `STCG`: holding period `< 365 days`
+- `LTCG`: holding period `>= 365 days`
+
+Implemented tax schedules:
+
+| Effective From | STCG | LTCG | LTCG Exemption | Cess | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `2020-07-01` | `15%` | `10%` | `Rs 1,00,000` | `4%` | pre-Budget-2024 listed-equity schedule |
+| `2024-07-23` | `20%` | `12.5%` | `Rs 1,25,000` | `4%` | Budget-2024 listed-equity schedule |
+
+Computation flow:
+
+- aggregate STCG by fiscal year and schedule
+- apply STCG only to positive net STCG
+- aggregate LTCG separately by fiscal year
+- net positive and negative LTCG within the same fiscal-year schedule bucket
+- apply the LTCG exemption once per fiscal year
+- apply cess on computed base tax
+
+Output fields surfaced in the app:
+
+- `stcg_gain`
+- `ltcg_gain`
+- `stcg_tax`
+- `ltcg_tax`
+- `cess_tax`
+- `total_tax`
+
+### 3B. Fee Model Specification
+
+For the current supported scope, the dated delivery-equity fee model is complete and implemented.
+
+Per-trade fee formula:
+
+- `brokerage = min(turnover * brokerage_rate, max_brokerage_per_order)`
+- `stt = turnover * stt_rate(side)`
+- `stamp_duty = turnover * stamp_duty_buy_rate` on buy only
+- `exchange_txn = turnover * exchange_txn_rate`
+- `sebi_fee = turnover * sebi_fee_rate`
+- `gst = (brokerage + exchange_txn + sebi_fee) * gst_rate`
+- `slippage = turnover * liquidity_adjusted_slippage_rate`
+- `total_costs = sum(all components)`
+
+Implemented fee schedules:
+
+| Effective From | Brokerage | Max Brokerage | STT Buy | STT Sell | Exchange Txn | SEBI | Stamp Duty Buy | GST |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `2020-07-01` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
+| `2024-07-23` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
+
+Slippage model:
+
+- liquidity participation based
+- volatility loaded
+- capped to avoid unrealistic daily-bar execution assumptions
 
 ### 4. Benchmark Comparison
 
@@ -203,9 +360,10 @@ The `Compare` tab supports:
 Current backend benchmark logic:
 
 - `NSE AI Portfolio`
-- `Nifty 50` proxy
-- `Nifty 500` proxy
-- `Momentum Basket`
+- `Nifty 50 Proxy`
+- `Nifty 500 Proxy`
+- `Momentum Factor`
+- `Quality Factor`
 - `AMC Multi Factor` proxy
 
 ### 5. Local Assistant
@@ -241,6 +399,7 @@ Current persisted entities include:
 
 - `instruments`
 - `daily_bars`
+- `corporate_actions`
 - `ingestion_runs`
 - `generated_portfolio_runs`
 - `generated_portfolio_allocations`
@@ -348,6 +507,7 @@ npm run build
 ```bash
 docker compose exec api alembic upgrade head
 docker compose exec api python scripts/ingest_nse_bhavcopy.py --start-date 2024-01-01 --end-date 2025-03-15
+docker compose exec api python scripts/import_corporate_actions.py --csv /path/to/corporate_actions.csv
 ```
 
 ### Database checks
@@ -360,16 +520,16 @@ docker compose exec postgres psql -U postgres -d nse_portfolio -c "select min(tr
 
 ## Development Phases and Completion Status
 
-| Phase | Scope | Status | Notes |
-| --- | --- | --- | --- |
-| Phase 0 | Frontend shell and UX prototype | Complete | Generate, Analyze, Backtest, Compare tabs are live |
-| Phase 1 | Local-first backend foundation | Complete | FastAPI, Docker, PostgreSQL, Redis, Alembic all present |
-| Phase 2 | Historical data ingestion | Complete | NSE bhavcopy ingestion works with caching and progress reporting |
-| Phase 3 | Quant allocator | Partial | Shrinkage covariance + constrained allocator implemented; factor model still basic |
-| Phase 4 | Analyzer and rebalance engine | Partial | DB-backed analytics and rebalance suggestions exist; target model still simplified |
-| Phase 5 | Historical simulation realism | Partial | Daily-close replay works; intraday stop execution and corp-action adjustments are still pending |
-| Phase 6 | Benchmark and research engine | Partial | Backend benchmark summaries exist; benchmark methodology is still proxy-based |
-| Phase 7 | Productization and governance | Not started | auth, audit trails, broker integration, compliance rails still pending |
+| Phase   | Scope                           | Status                     | Notes                                                                                                                                |
+| ------- | ------------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Phase 0 | Frontend shell and UX prototype | Complete                   | Generate, Analyze, Backtest, Compare tabs are live                                                                                   |
+| Phase 1 | Local-first backend foundation  | Complete                   | FastAPI, Docker, PostgreSQL, Redis, Alembic all present                                                                              |
+| Phase 2 | Historical data ingestion       | Complete                   | NSE bhavcopy ingestion works with caching and progress reporting                                                                     |
+| Phase 3 | Quant allocator                 | Complete for current scope | Factor-aware expected return model, shrinkage covariance, and constrained allocator are live for the local research stack           |
+| Phase 4 | Analyzer and rebalance engine   | Complete for current scope | DB-backed analytics, factor exposures, and target-diff rebalance actions are live                                                   |
+| Phase 5 | Historical simulation realism   | Partial                    | OHLC replay, gap-aware stops, FIFO tax lots, dated fees, and corporate-action support are live; no intraday/tick engine yet        |
+| Phase 6 | Benchmark and research engine   | Partial                    | Backend benchmark summaries exist with factor and broad-market proxies; official constituent replication is still pending           |
+| Phase 7 | Productization and governance   | Not started                | auth, audit trails, broker integration, compliance rails still pending                                                               |
 
 ## What Is Complete Right Now
 
@@ -382,6 +542,10 @@ docker compose exec postgres psql -U postgres -d nse_portfolio -c "select min(tr
 - Timescale-backed time-series table
 - NSE bhavcopy ingestion with raw caching
 - Instrument enrichment hooks
+- Factor-aware expected return model
+- Delivery-equity tax model with FIFO lots and cess
+- Dated delivery-equity fee schedule resolution
+- Drift-threshold rebalance policy
 - DB-backed generator
 - DB-backed analysis
 - DB-backed backtesting
@@ -391,19 +555,21 @@ docker compose exec postgres psql -U postgres -d nse_portfolio -c "select min(tr
 
 ## What Is Still Approximate
 
-- Expected return model
-- Tax model detail
-- Fee table detail by effective date
-- Benchmark construction
-- Rebalance policy
-- Corporate-action adjustment
-- Sector and factor models
-- Live market behavior
+| Area                               | Status          | Current implementation                                                                 |
+| ---------------------------------- | --------------- | -------------------------------------------------------------------------------------- |
+| Expected return model              | Complete for current scope | factor-aware expected return blend over total-return history with regime tilt            |
+| Tax model detail                   | Complete for current scope | FIFO tax lots, FY-wise LTCG exemption, STCG/LTCG + cess                                 |
+| Fee table detail by effective date | Complete for current scope | dated cash-equity fee schedule with brokerage/STT/stamp/exchange/SEBI/GST/slippage      |
+| Benchmark construction             | Partial         | locally computed proxy benchmarks, not official constituent files                      |
+| Rebalance policy                   | Complete for current scope | drift-threshold plus cadence-driven rebalance logic by risk mode                        |
+| Corporate-action adjustment        | Partial         | schema, import path, price adjustment, and dividend credits exist; data must be loaded |
+| Sector and factor models           | Partial         | price-and-liquidity-based factors only; no licensed fundamentals yet                   |
+| Live market behavior               | Partial         | daily OHLC, gap-aware fills, liquidity slippage; no intraday order-book simulation     |
 
 ## Known Limitations
 
 - The current engine needs sufficient historical bars in the database to avoid frontend fallback behavior.
-- Backtest execution uses daily closes, not intraday trigger modeling.
+- Backtest execution is daily-bar based, not tick or intraday order-book based.
 - Benchmarks are still strategy proxies, not full institutional benchmark replications.
 - The local advisory layer explains results but does not make authoritative investment decisions.
 - Some legacy scaffold files remain in the repo for reference, such as [mock_quant_engine.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/mock_quant_engine.py), but they are not the active backend path.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
 from math import sqrt
@@ -33,15 +33,18 @@ from app.schemas.portfolio import (
     RebalanceActionModel,
     TaxBreakdownModel,
 )
+from app.services.corporate_actions import (
+    adjust_close_series,
+    build_cumulative_factor_lookup,
+    build_total_return_series,
+    load_corporate_actions,
+)
+from app.services.market_rules import (
+    financial_year_for_trade_date,
+    resolve_capital_gains_tax_schedule,
+    resolve_equity_fee_schedule,
+)
 
-
-BROKERAGE_RATE = 0.0003
-MAX_BROKERAGE = 20.0
-STT_BUY_RATE = 0.001
-STT_SELL_RATE = 0.001
-STAMP_DUTY_RATE = 0.00015
-GST_RATE = 0.18
-SLIPPAGE_RATE = 0.001
 RISK_FREE_RATE = 0.07
 DEFAULT_BACKTEST_INVESTMENT = 1_000_000.0
 
@@ -58,18 +61,21 @@ RISK_MODE_TARGET_SECTORS = {
 }
 
 BENCHMARK_UNIVERSES = [
-    ("NSE AI Portfolio", "AI", "Correlation-aware diversified risk-mode strategy."),
-    ("Nifty 50", "INDEX", "ETF-based large-cap benchmark proxy using Nifty 50 exposure."),
-    ("Nifty 500", "INDEX", "Broad equal-weight listed-universe proxy from ingested securities."),
-    ("Momentum Basket", "FACTOR", "Top-momentum NSE basket using trailing return strength."),
-    ("AMC Multi Factor", "AMC_STYLE", "Balanced factor sleeve blending momentum, quality proxy, and lower volatility."),
+    ("NSE AI Portfolio", "AI", "Constrained covariance allocator using factor-aware expected returns."),
+    ("Nifty 50 Proxy", "INDEX", "Large-cap, liquidity-weighted proxy for the top end of the NSE cash market."),
+    ("Nifty 500 Proxy", "INDEX", "Broad-market proxy with large/mid/small bucket balancing across the ingested universe."),
+    ("Momentum Factor", "FACTOR", "High-momentum proxy basket using 1M/3M/6M blended trend strength."),
+    ("Quality Factor", "FACTOR", "Stability and downside-control proxy using lower drawdown and downside volatility."),
+    ("AMC Multi Factor", "AMC_STYLE", "Diversified multi-factor sleeve blending momentum, quality, low volatility, and liquidity."),
 ]
 
 RISK_MODEL_CONFIG = {
-    "ULTRA_LOW": {"candidate_count": 10, "max_weight": 0.35, "sector_cap": 0.42, "risk_aversion": 18.0, "shrinkage": 0.55, "turnover_penalty": 0.10},
-    "MODERATE": {"candidate_count": 12, "max_weight": 0.16, "sector_cap": 0.28, "risk_aversion": 8.5, "shrinkage": 0.40, "turnover_penalty": 0.06},
-    "HIGH": {"candidate_count": 12, "max_weight": 0.12, "sector_cap": 0.24, "risk_aversion": 4.25, "shrinkage": 0.30, "turnover_penalty": 0.04},
+    "ULTRA_LOW": {"candidate_count": 10, "max_weight": 0.35, "sector_cap": 0.42, "risk_aversion": 18.0, "shrinkage": 0.55, "turnover_penalty": 0.10, "drift_threshold": 0.06, "min_trade_weight": 0.03, "cooldown_days": 5},
+    "MODERATE": {"candidate_count": 12, "max_weight": 0.16, "sector_cap": 0.28, "risk_aversion": 8.5, "shrinkage": 0.40, "turnover_penalty": 0.06, "drift_threshold": 0.04, "min_trade_weight": 0.025, "cooldown_days": 7},
+    "HIGH": {"candidate_count": 12, "max_weight": 0.12, "sector_cap": 0.24, "risk_aversion": 4.25, "shrinkage": 0.30, "turnover_penalty": 0.04, "drift_threshold": 0.03, "min_trade_weight": 0.02, "cooldown_days": 10},
 }
+
+FACTOR_KEYS = ["momentum", "quality", "low_vol", "liquidity", "sector_strength", "size", "beta"]
 
 
 @dataclass
@@ -82,28 +88,53 @@ class Snapshot:
     latest_trade_date: date
     latest_price: float
     closes: list[tuple[date, float]]
+    adjusted_closes: list[tuple[date, float]]
     returns: list[tuple[date, float]]
     annual_return_pct: float
     annual_volatility_pct: float
-    momentum_pct: float
+    momentum_1m_pct: float
+    momentum_3m_pct: float
+    momentum_6m_pct: float
+    downside_volatility_pct: float
+    max_drawdown_pct: float
     avg_traded_value: float
+    corporate_action_count: int = 0
     beta_proxy: float = 1.0
+    factor_scores: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BarRecord:
+    trade_date: date
+    open_price: float
+    high_price: float
+    low_price: float
+    close_price: float
+    total_traded_value: float
 
 
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
-    snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=RISK_MODE_UNIVERSES[payload.risk_mode], min_history=40)
+    snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=RISK_MODE_UNIVERSES[payload.risk_mode], min_history=126)
     if len(snapshots) < 4:
-        snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=40)
+        snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
     selected = select_portfolio_candidates(payload.risk_mode, snapshots)
     if not selected:
         raise ValueError("Not enough historical market data to generate a portfolio. Ingest bhavcopy data first.")
 
     weighted_stats = build_weighted_statistics(selected)
+    factor_exposures = compute_factor_exposures([(snapshot, weight / 100.0) for snapshot, weight in selected])
+    adjusted_names = sum(1 for snapshot, _ in selected if snapshot.corporate_action_count > 0)
     notes = [
         f"Portfolio built from {len(selected)} instruments using prices through {as_of_date.isoformat()}.",
-        "Weights are produced by a constrained allocator over a shrinkage covariance risk model estimated from aligned daily returns.",
-        "The optimizer enforces long-only, fully-invested, per-asset, and per-sector caps tuned to the selected risk mode.",
+        "Expected returns blend 1M/3M/6M momentum, downside-aware quality, low-volatility preference, liquidity, sector strength, and beta discipline.",
+        "Weights are produced by a constrained allocator over a shrinkage covariance matrix estimated from aligned total-return series.",
+        f"Weighted factor exposures: momentum {factor_exposures['momentum']:+.2f}, quality {factor_exposures['quality']:+.2f}, low_vol {factor_exposures['low_vol']:+.2f}.",
+        (
+            f"Corporate-action-adjusted histories were used for {adjusted_names} selected instruments."
+            if adjusted_names
+            else "No corporate actions were loaded for the selected instruments, so adjusted and raw close histories currently match."
+        ),
     ]
 
     run = GeneratedPortfolioRun(
@@ -148,7 +179,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
 
 def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzePortfolioResponse:
-    snapshots = load_snapshots(db, symbols=[holding.symbol for holding in payload.holdings], min_history=20)
+    snapshots = load_snapshots(db, symbols=[holding.symbol for holding in payload.holdings], min_history=63)
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
 
     total_value = 0.0
@@ -182,11 +213,25 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     elif avg_corr >= 0.35:
         correlation_risk = "MODERATE"
 
-    target_sectors = RISK_MODE_TARGET_SECTORS[payload.target_risk_mode]
-    actions = build_rebalance_actions(priced_holdings, sector_weights, target_sectors, payload.target_risk_mode, db)
+    factor_exposures = compute_factor_exposures([(snapshot, value / total_value) for _, snapshot, value in priced_holdings])
+    as_of_date = get_effective_trade_date(db)
+    target_snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=RISK_MODE_UNIVERSES[payload.target_risk_mode], min_history=126)
+    if len(target_snapshots) < 4:
+        target_snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
+    target_portfolio = select_portfolio_candidates(payload.target_risk_mode, target_snapshots)
+    actions = build_rebalance_actions(priced_holdings, total_value, target_portfolio, payload.target_risk_mode)
+    rebalance_days = {"ULTRA_LOW": "quarterly", "MODERATE": "monthly review / quarterly hard rebalance", "HIGH": "monthly with tighter drift checks"}[payload.target_risk_mode]
     notes = [
         f"Analysis used latest close prices for {len(priced_holdings)} holdings from PostgreSQL.",
         f"Average pairwise trailing correlation across the priced holdings is {avg_corr:.2f}.",
+        (
+            f"Current factor exposures are momentum {factor_exposures['momentum']:+.2f}, quality {factor_exposures['quality']:+.2f}, "
+            f"low_vol {factor_exposures['low_vol']:+.2f}, liquidity {factor_exposures['liquidity']:+.2f}."
+        ),
+        (
+            f"Rebalance actions compare the live holdings against the current {payload.target_risk_mode.lower()} target portfolio "
+            f"with a drift threshold of {RISK_MODEL_CONFIG[payload.target_risk_mode]['drift_threshold'] * 100:.1f}% and {rebalance_days} reviews."
+        ),
     ]
     if missing_symbols:
         notes.append(f"No market data found yet for: {', '.join(sorted(set(missing_symbols)))}.")
@@ -197,6 +242,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         current_beta=current_beta,
         diversification_score=diversification_score,
         sector_weights=sector_weights,
+        factor_exposures={key: round(value, 2) for key, value in factor_exposures.items()},
         correlation_risk=correlation_risk,
         actions=actions,
         notes=notes,
@@ -204,78 +250,108 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
 
 
 def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultResponse:
-    snapshots = load_snapshots(db, as_of_date=payload.start_date, symbols=RISK_MODE_UNIVERSES[payload.risk_mode], min_history=40)
+    selection_date = get_effective_trade_date(db, payload.start_date)
+    snapshots = load_snapshots(db, as_of_date=selection_date, symbols=RISK_MODE_UNIVERSES[payload.risk_mode], min_history=126)
     if len(snapshots) < 4:
-        snapshots = load_snapshots(db, as_of_date=payload.start_date, min_history=40)
+        snapshots = load_snapshots(db, as_of_date=selection_date, min_history=90)
     model_portfolio = select_portfolio_candidates(payload.risk_mode, snapshots)
     if not model_portfolio:
         raise ValueError("Not enough historical market data to backtest. Ingest bhavcopy data first.")
 
     weights = {snapshot.symbol: weight / 100.0 for snapshot, weight in model_portfolio}
-    price_map = load_close_matrix(db, list(weights.keys()), payload.start_date, payload.end_date)
+    snapshot_by_symbol = {snapshot.symbol: snapshot for snapshot, _ in model_portfolio}
+    bar_matrix, dividend_cash = load_bar_matrix(db, list(weights.keys()), payload.start_date, payload.end_date)
     benchmark_symbol = select_benchmark_symbol(db)
-    benchmark_map = load_close_matrix(db, [benchmark_symbol], payload.start_date, payload.end_date)
-    all_dates = sorted({trade_date for symbol_prices in price_map.values() for trade_date in symbol_prices.keys()})
+    benchmark_matrix, _ = load_bar_matrix(db, [benchmark_symbol], payload.start_date, payload.end_date)
+    benchmark_series = benchmark_matrix.get(benchmark_symbol, {})
+    benchmark_dates = sorted(benchmark_series)
+    benchmark_first_price = benchmark_series[benchmark_dates[0]].close_price if benchmark_dates else None
+    all_dates = sorted({trade_date for symbol_prices in bar_matrix.values() for trade_date in symbol_prices.keys()})
     if len(all_dates) < 2:
         raise ValueError("Backtest window does not have enough daily bars for the selected strategy.")
 
-    position_state = initialize_positions(price_map, weights, all_dates[0], DEFAULT_BACKTEST_INVESTMENT)
+    costs = {
+        "total_brokerage": 0.0,
+        "total_stt": 0.0,
+        "total_stamp_duty": 0.0,
+        "total_exchange_txn": 0.0,
+        "total_sebi_fees": 0.0,
+        "total_gst": 0.0,
+        "total_slippage": 0.0,
+        "total_costs": 0.0,
+    }
+    taxes = {
+        "stcg_gain": 0.0,
+        "ltcg_gain": 0.0,
+        "stcg_tax": 0.0,
+        "ltcg_tax": 0.0,
+        "cess_tax": 0.0,
+        "total_tax": 0.0,
+    }
+    tax_buckets: dict[str, dict] = {
+        "stcg": defaultdict(float),
+        "ltcg_positive": defaultdict(float),
+        "ltcg_negative": defaultdict(float),
+    }
+    position_state, initial_trades = initialize_positions(
+        bar_matrix=bar_matrix,
+        weights=weights,
+        first_date=all_dates[0],
+        initial_investment=DEFAULT_BACKTEST_INVESTMENT,
+        costs=costs,
+        snapshot_by_symbol=snapshot_by_symbol,
+    )
     if not position_state:
         raise ValueError("Selected instruments do not have usable prices on the requested backtest start date.")
     equity_curve: list[CurvePointModel] = []
-    costs = {key: 0.0 for key in ["total_brokerage", "total_stt", "total_stamp_duty", "total_gst", "total_slippage", "total_costs"]}
-    taxes = {key: 0.0 for key in ["stcg_gain", "ltcg_gain", "stcg_tax", "ltcg_tax", "total_tax"]}
     portfolio_returns: list[float] = []
     prev_value = DEFAULT_BACKTEST_INVESTMENT
-    total_trades = 0
+    total_trades = initial_trades
 
     rebalance_interval = {"MONTHLY": 21, "QUARTERLY": 63, "ANNUALLY": 252, "NONE": 10**9}[payload.rebalance_frequency]
-    benchmark_series = benchmark_map.get(benchmark_symbol, {})
-    benchmark_first_price = benchmark_series.get(all_dates[0])
 
     for index, trade_date in enumerate(all_dates):
         for symbol, state in position_state.items():
-            price = price_map[symbol].get(trade_date)
-            if price is None or state["shares"] <= 0:
+            cash_dividend = dividend_cash.get(symbol, {}).get(trade_date, 0.0)
+            if cash_dividend > 0 and state["shares"] > 0:
+                state["cash_pool"][0] += cash_dividend * state["shares"]
+
+            bar = bar_matrix.get(symbol, {}).get(trade_date)
+            if bar is None or state["shares"] <= 0:
                 continue
-            return_pct = (price / state["entry_price"]) - 1
-            should_exit = return_pct <= -payload.stop_loss_pct or return_pct >= payload.take_profit_pct
-            if should_exit:
-                proceeds = price * state["shares"]
-                trade_costs = calculate_trade_costs(proceeds, is_buy=False)
+            state["peak_price"] = max(state["peak_price"], bar.high_price)
+            exit_fill, _ = determine_exit_fill(bar, state, payload.risk_mode, payload.stop_loss_pct, payload.take_profit_pct)
+            if exit_fill is not None:
+                proceeds = exit_fill * state["shares"]
+                trade_costs = calculate_trade_costs(
+                    amount=proceeds,
+                    trade_date=trade_date,
+                    is_buy=False,
+                    avg_traded_value=state["avg_traded_value"],
+                    annual_volatility_pct=state["annual_volatility_pct"],
+                )
                 apply_costs(costs, trade_costs)
-                gain = proceeds - state["cost_basis"]
-                holding_days = (trade_date - state["entry_date"]).days
-                if holding_days < 365:
-                    taxes["stcg_gain"] += gain
-                else:
-                    taxes["ltcg_gain"] += gain
+                sold_shares = state["shares"]
                 state["cash_pool"][0] += proceeds - trade_costs["total_costs"]
+                realize_tax_lots(state, sold_shares, exit_fill, trade_date, taxes, tax_buckets)
                 state["shares"] = 0
-                state["cost_basis"] = 0.0
+                state["peak_price"] = 0.0
+                state["cooldown_until"] = trade_date + timedelta(days=RISK_MODEL_CONFIG[payload.risk_mode]["cooldown_days"])
                 total_trades += 1
 
-        portfolio_value = position_state[next(iter(position_state))]["cash_pool"][0]
-        for symbol, state in position_state.items():
-            price = price_map[symbol].get(trade_date)
-            if price is not None:
-                portfolio_value += state["shares"] * price
+        portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0 and index % rebalance_interval == 0 and payload.rebalance_frequency != "NONE":
-            total_trades += rebalance_positions(position_state, price_map, weights, trade_date, portfolio_value, costs, taxes)
-            portfolio_value = position_state[next(iter(position_state))]["cash_pool"][0]
-            for symbol, state in position_state.items():
-                price = price_map[symbol].get(trade_date)
-                if price is not None:
-                    portfolio_value += state["shares"] * price
+            total_trades += rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, payload.risk_mode)
+            portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0:
             portfolio_returns.append((portfolio_value - prev_value) / max(prev_value, 1))
         prev_value = portfolio_value
 
         benchmark_value = DEFAULT_BACKTEST_INVESTMENT
-        if benchmark_first_price:
-            benchmark_price = benchmark_series.get(trade_date, benchmark_first_price)
+        if benchmark_first_price and trade_date in benchmark_series:
+            benchmark_price = benchmark_series[trade_date].close_price
             benchmark_value = DEFAULT_BACKTEST_INVESTMENT * (benchmark_price / benchmark_first_price)
 
         equity_curve.append(
@@ -286,16 +362,27 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
             )
         )
 
-    ltcg_taxable = max(0.0, taxes["ltcg_gain"] - 125000.0)
-    taxes["ltcg_tax"] = ltcg_taxable * 0.125
-    taxes["stcg_tax"] = max(0.0, taxes["stcg_gain"]) * 0.20
-    taxes["total_tax"] = taxes["ltcg_tax"] + taxes["stcg_tax"]
+    finalize_tax_buckets(taxes, tax_buckets)
 
     metrics = build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades)
     run_id = f"bt-{uuid4()}"
+    fee_schedule = resolve_equity_fee_schedule(payload.end_date)
+    tax_schedule = resolve_capital_gains_tax_schedule(payload.end_date)
+    adjusted_names = sum(1 for snapshot in snapshot_by_symbol.values() if snapshot.corporate_action_count > 0)
     notes = [
         f"Historical replay used {len(weights)} data-backed instruments between {payload.start_date.isoformat()} and {payload.end_date.isoformat()}.",
-        "Stop-loss and take-profit were evaluated on daily closes with fee and tax drag applied to each realized trade.",
+        "Stop-loss and take-profit were evaluated on adjusted OHLC bars with gap-aware fills at the open when a threshold was crossed overnight.",
+        (
+            f"Rebalance policy used a {RISK_MODEL_CONFIG[payload.risk_mode]['drift_threshold'] * 100:.1f}% drift threshold and "
+            f"{payload.rebalance_frequency.lower()} review cycle for {payload.risk_mode.lower()} mode."
+        ),
+        f"Equity fees used the {fee_schedule.effective_from.isoformat()} rule set: {fee_schedule.notes}",
+        f"Capital gains used the {tax_schedule.effective_from.isoformat()} rule set with FY-wise LTCG exemption handling: {tax_schedule.notes}",
+        (
+            f"Corporate actions were applied to {adjusted_names} portfolio instruments, including split/bonus price adjustment and dividend cash credits."
+            if adjusted_names
+            else "No corporate actions were loaded for the portfolio instruments in this backtest window."
+        ),
     ]
 
     db.add(
@@ -347,27 +434,24 @@ def get_backtest_result(db: Session, run_id: str) -> BacktestResultResponse:
 
 def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
     as_of_date = get_effective_trade_date(db)
-    snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=120)
+    snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=126)
     if not snapshots:
         raise ValueError("No benchmark data is available yet. Ingest bhavcopy data first.")
 
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
     benchmark_portfolios = {
         "NSE AI Portfolio": dict((snapshot.symbol, weight / 100.0) for snapshot, weight in select_portfolio_candidates("MODERATE", snapshots)),
-        "Nifty 50": build_named_weights(snapshot_map, [select_benchmark_symbol(db)]),
-        "Nifty 500": build_equal_weight_portfolio(snapshots, 20),
-        "Momentum Basket": build_ranked_portfolio(snapshots, key=lambda snapshot: snapshot.momentum_pct, descending=True, count=8),
-        "AMC Multi Factor": build_ranked_portfolio(
-            snapshots,
-            key=lambda snapshot: (snapshot.annual_return_pct / max(snapshot.annual_volatility_pct, 1.0)) + (snapshot.momentum_pct / 25.0) - (snapshot.beta_proxy / 10.0),
-            descending=True,
-            count=8,
-        ),
+        "Nifty 50 Proxy": build_nifty50_proxy_portfolio(snapshots),
+        "Nifty 500 Proxy": build_nifty500_proxy_portfolio(snapshots),
+        "Momentum Factor": build_factor_portfolio(snapshots, factor_key="momentum", count=12, sector_cap=0.25),
+        "Quality Factor": build_factor_portfolio(snapshots, factor_key="quality", count=12, sector_cap=0.25),
+        "AMC Multi Factor": build_multifactor_portfolio(snapshots, count=15, sector_cap=0.22),
     }
 
     strategies = []
     for name, category, description in BENCHMARK_UNIVERSES:
         metrics = summarize_return_series(aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {})))
+        expense_ratio = 0.08 if category == "AI" else 0.06 if category == "INDEX" else 0.34
         strategies.append(
             BenchmarkMetricModel(
                 name=name,
@@ -379,7 +463,7 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
                 sortino_ratio=metrics["sortino_ratio"],
                 max_drawdown_pct=metrics["max_drawdown_pct"],
                 cagr_5y_pct=metrics["cagr_pct"],
-                expense_ratio_pct=0.08 if category == "AI" else 0.05 if category == "INDEX" else 0.32,
+                expense_ratio_pct=expense_ratio,
             )
         )
 
@@ -394,7 +478,9 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
 
     notes = [
         f"Benchmark metrics were computed from ingested market data through {as_of_date.isoformat()}.",
-        "Index and factor proxies use the same internal return-series engine so comparisons stay on a consistent footing.",
+        "Index benchmarks are proxy constructions over the ingested NSE universe because official constituent files are not yet part of the local pipeline.",
+        "Factor benchmarks use the same factor model as the allocator: momentum, quality proxy, low-volatility, liquidity, and sector balancing.",
+        "Benchmark series are still static point-in-time proxy portfolios rather than fully materialized historical reconstitution jobs.",
     ]
     return BenchmarkSummaryResponse(strategies=strategies, projected_growth=projected_growth, notes=notes)
 
@@ -404,8 +490,8 @@ def load_snapshots(
     *,
     as_of_date: date | None = None,
     symbols: list[str] | None = None,
-    lookback_days: int = 400,
-    min_history: int = 40,
+    lookback_days: int = 450,
+    min_history: int = 90,
 ) -> list[Snapshot]:
     effective_date = as_of_date or get_effective_trade_date(db)
     start_date = effective_date - timedelta(days=lookback_days)
@@ -444,14 +530,19 @@ def load_snapshots(
         bucket["closes"].append((row.trade_date, float(row.close_price)))
         bucket["turnover"].append(float(row.total_traded_value or 0))
 
+    action_map = load_corporate_actions(db, symbols=list(grouped.keys()), end_date=effective_date) if grouped else {}
     snapshots: list[Snapshot] = []
     for symbol, bucket in grouped.items():
         if len(bucket["closes"]) < min_history:
             continue
+
         closes = bucket["closes"]
-        returns = build_return_series(closes)
+        adjusted_closes, dividend_by_date = adjust_close_series(closes, action_map.get(symbol, []))
+        returns = build_total_return_series(adjusted_closes, dividend_by_date)
         if len(returns) < max(5, min_history - 1):
             continue
+
+        adjusted_prices = [price for _, price in adjusted_closes]
         snapshots.append(
             Snapshot(
                 symbol=symbol,
@@ -459,14 +550,20 @@ def load_snapshots(
                 sector=bucket["sector"],
                 instrument_type=bucket["instrument_type"],
                 market_cap_bucket=bucket["market_cap_bucket"],
-                latest_trade_date=closes[-1][0],
-                latest_price=closes[-1][1],
+                latest_trade_date=adjusted_closes[-1][0],
+                latest_price=adjusted_closes[-1][1],
                 closes=closes,
+                adjusted_closes=adjusted_closes,
                 returns=returns,
-                annual_return_pct=annualize_return(closes),
+                annual_return_pct=annualize_return(adjusted_closes),
                 annual_volatility_pct=annualize_volatility([item[1] for item in returns]),
-                momentum_pct=compute_momentum_pct(closes, window=63),
+                momentum_1m_pct=compute_momentum_pct(adjusted_closes, window=21),
+                momentum_3m_pct=compute_momentum_pct(adjusted_closes, window=63),
+                momentum_6m_pct=compute_momentum_pct(adjusted_closes, window=126),
+                downside_volatility_pct=annualize_volatility([item[1] for item in returns if item[1] < 0]),
+                max_drawdown_pct=compute_max_drawdown(adjusted_prices) * 100,
                 avg_traded_value=sum(bucket["turnover"][-20:]) / max(len(bucket["turnover"][-20:]), 1),
+                corporate_action_count=len(action_map.get(symbol, [])),
             )
         )
 
@@ -485,6 +582,7 @@ def load_snapshots(
             snapshot.beta_proxy = round(covariance(x, y) / max(variance(y), 1e-9), 2)
         else:
             snapshot.beta_proxy = round(snapshot.annual_volatility_pct / max(benchmark_vol, 1.0), 2)
+    populate_factor_scores(snapshots)
     return snapshots
 
 
@@ -525,8 +623,11 @@ def build_weighted_statistics(selected: list[tuple[Snapshot, float]]) -> Portfol
     weights = {snapshot.symbol: weight / 100.0 for snapshot, weight in selected}
     snapshot_map = {snapshot.symbol: snapshot for snapshot, _ in selected}
     metrics = summarize_return_series(aggregate_portfolio_returns(snapshot_map, weights))
-    weighted_beta = sum(snapshot.beta_proxy * weight for snapshot, weight in selected) / 100.0
-    diversification_score = max(30.0, min(95.0, len({snapshot.sector for snapshot, _ in selected}) * 8 + (1 - average_pairwise_correlation([snapshot for snapshot, _ in selected])) * 40))
+    weighted_beta = sum(snapshot.beta_proxy * (weight / 100.0) for snapshot, weight in selected)
+    diversification_score = max(
+        30.0,
+        min(95.0, len({snapshot.sector for snapshot, _ in selected}) * 8 + (1 - average_pairwise_correlation([snapshot for snapshot, _ in selected])) * 40),
+    )
     return PortfolioMetricsModel(
         estimated_return_pct=round(metrics["annual_return_pct"], 2),
         estimated_volatility_pct=round(metrics["volatility_pct"], 2),
@@ -537,139 +638,222 @@ def build_weighted_statistics(selected: list[tuple[Snapshot, float]]) -> Portfol
 
 def build_rationale(snapshot: Snapshot, risk_mode: str) -> str:
     if risk_mode == "ULTRA_LOW":
-        return f"{snapshot.sector} sleeve with {snapshot.annual_volatility_pct:.1f}% annualized volatility and reliable liquidity."
+        return (
+            f"{snapshot.sector} sleeve with low-vol {snapshot.factor_scores.get('low_vol', 0):+.2f}, "
+            f"quality {snapshot.factor_scores.get('quality', 0):+.2f}, and reliable liquidity."
+        )
     if risk_mode == "HIGH":
-        return f"{snapshot.sector} growth candidate with {snapshot.momentum_pct:.1f}% recent momentum and beta proxy {snapshot.beta_proxy:.2f}."
-    return f"Balanced exposure in {snapshot.sector}; annual return {snapshot.annual_return_pct:.1f}% with volatility {snapshot.annual_volatility_pct:.1f}%."
+        return (
+            f"{snapshot.sector} growth candidate with momentum {snapshot.factor_scores.get('momentum', 0):+.2f}, "
+            f"sector strength {snapshot.factor_scores.get('sector_strength', 0):+.2f}, and beta proxy {snapshot.beta_proxy:.2f}."
+        )
+    return (
+        f"Balanced exposure in {snapshot.sector}; momentum {snapshot.factor_scores.get('momentum', 0):+.2f}, "
+        f"quality {snapshot.factor_scores.get('quality', 0):+.2f}, low_vol {snapshot.factor_scores.get('low_vol', 0):+.2f}."
+    )
 
 
-def build_rebalance_actions(priced_holdings, sector_weights, target_sectors, target_risk_mode: str, db: Session) -> list[RebalanceActionModel]:
-    actions: list[RebalanceActionModel] = []
-    largest_by_sector = {}
-    for holding, snapshot, value in priced_holdings:
-        current = largest_by_sector.get(snapshot.sector)
-        if current is None or value > current[2]:
-            largest_by_sector[snapshot.sector] = (holding, snapshot, value)
+def build_rebalance_actions(priced_holdings, total_value: float, target_portfolio: list[tuple[Snapshot, float]], target_risk_mode: str) -> list[RebalanceActionModel]:
+    if not target_portfolio:
+        return []
 
-    for sector, current_weight in sorted(sector_weights.items(), key=lambda item: item[1], reverse=True):
-        target_weight = target_sectors.get(sector, 0.0)
-        if current_weight > target_weight + 5:
-            _, snapshot, _ = largest_by_sector[sector]
-            actions.append(
+    current_weights = {snapshot.symbol: (value / total_value) * 100 for _, snapshot, value in priced_holdings}
+    target_weights = {snapshot.symbol: weight for snapshot, weight in target_portfolio}
+    symbol_map = {snapshot.symbol: snapshot for _, snapshot, _ in priced_holdings}
+    symbol_map.update({snapshot.symbol: snapshot for snapshot, _ in target_portfolio})
+    threshold_pct = RISK_MODEL_CONFIG[target_risk_mode]["drift_threshold"] * 100
+
+    ranked_actions: list[tuple[float, RebalanceActionModel]] = []
+    for symbol in sorted(set(current_weights) | set(target_weights)):
+        current_weight = current_weights.get(symbol, 0.0)
+        target_weight = target_weights.get(symbol, 0.0)
+        drift = target_weight - current_weight
+        if abs(drift) < threshold_pct:
+            continue
+        snapshot = symbol_map.get(symbol)
+        if snapshot is None:
+            continue
+        action = "BUY" if drift > 0 else "SELL"
+        reason = (
+            f"{snapshot.sector} exposure drifted by {abs(drift):.1f}%; target model favors momentum {snapshot.factor_scores.get('momentum', 0):+.2f} and quality {snapshot.factor_scores.get('quality', 0):+.2f}."
+            if action == "BUY"
+            else f"{snapshot.sector} exposure is above the current {target_risk_mode.lower()} target and exceeds the drift threshold."
+        )
+        ranked_actions.append(
+            (
+                abs(drift),
                 RebalanceActionModel(
-                    symbol=snapshot.symbol,
-                    action="SELL",
+                    symbol=symbol,
+                    action=action,
                     target_weight=round(target_weight, 2),
                     current_weight=round(current_weight, 2),
-                    reason=f"{sector} is above the target budget for {target_risk_mode.lower()} mode.",
-                )
+                    reason=reason,
+                ),
             )
-
-    snapshots = load_snapshots(db, symbols=RISK_MODE_UNIVERSES[target_risk_mode], min_history=20)
-    by_sector = defaultdict(list)
-    for snapshot in snapshots:
-        by_sector[snapshot.sector].append(snapshot)
-    for sector, target_weight in sorted(target_sectors.items(), key=lambda item: item[1], reverse=True):
-        current_weight = sector_weights.get(sector, 0.0)
-        if current_weight + 5 < target_weight and by_sector.get(sector):
-            candidate = sorted(by_sector[sector], key=lambda snapshot: snapshot.momentum_pct, reverse=True)[0]
-            actions.append(
-                RebalanceActionModel(
-                    symbol=candidate.symbol,
-                    action="BUY",
-                    target_weight=round(target_weight, 2),
-                    current_weight=round(current_weight, 2),
-                    reason=f"{sector} is underweight versus the target allocation for {target_risk_mode.lower()} mode.",
-                )
-            )
-        if len(actions) >= 6:
-            break
-    return actions[:6]
+        )
+    ranked_actions.sort(key=lambda item: item[0], reverse=True)
+    return [item[1] for item in ranked_actions[:8]]
 
 
-def load_close_matrix(db: Session, symbols: list[str], start_date: date, end_date: date) -> dict[str, dict[date, float]]:
+def load_bar_matrix(db: Session, symbols: list[str], start_date: date, end_date: date) -> tuple[dict[str, dict[date, BarRecord]], dict[str, dict[date, float]]]:
     rows = db.execute(
-        select(Instrument.symbol, DailyBar.trade_date, DailyBar.close_price)
+        select(
+            Instrument.symbol,
+            DailyBar.trade_date,
+            DailyBar.open_price,
+            DailyBar.high_price,
+            DailyBar.low_price,
+            DailyBar.close_price,
+            DailyBar.total_traded_value,
+        )
         .join(DailyBar, DailyBar.instrument_id == Instrument.id)
         .where(Instrument.symbol.in_(symbols), DailyBar.trade_date >= start_date, DailyBar.trade_date <= end_date)
         .order_by(Instrument.symbol, DailyBar.trade_date)
     ).all()
-    matrix: dict[str, dict[date, float]] = defaultdict(dict)
+    grouped: dict[str, list[tuple[date, float, float, float, float, float]]] = defaultdict(list)
     for row in rows:
-        matrix[row.symbol][row.trade_date] = float(row.close_price)
-    return matrix
+        grouped[row.symbol].append(
+            (
+                row.trade_date,
+                float(row.open_price),
+                float(row.high_price),
+                float(row.low_price),
+                float(row.close_price),
+                float(row.total_traded_value or 0.0),
+            )
+        )
+
+    action_map = load_corporate_actions(db, symbols=list(grouped.keys()), end_date=end_date) if grouped else {}
+    matrix: dict[str, dict[date, BarRecord]] = defaultdict(dict)
+    dividend_cash: dict[str, dict[date, float]] = defaultdict(dict)
+    for symbol, bars in grouped.items():
+        close_series = [(trade_date, close_price) for trade_date, _, _, _, close_price, _ in bars]
+        factor_lookup = build_cumulative_factor_lookup(close_series, action_map.get(symbol, []))
+        for action in action_map.get(symbol, []):
+            if action.action_type == "DIVIDEND" and action.cash_amount:
+                dividend_cash[symbol][action.ex_date] = action.cash_amount * factor_lookup.get(action.ex_date, 1.0)
+        for trade_date, open_price, high_price, low_price, close_price, traded_value in bars:
+            factor = factor_lookup.get(trade_date, 1.0)
+            matrix[symbol][trade_date] = BarRecord(
+                trade_date=trade_date,
+                open_price=open_price * factor,
+                high_price=high_price * factor,
+                low_price=low_price * factor,
+                close_price=close_price * factor,
+                total_traded_value=traded_value,
+            )
+    return matrix, dividend_cash
 
 
-def initialize_positions(price_map, weights, first_date, initial_investment):
+def initialize_positions(*, bar_matrix, weights, first_date, initial_investment, costs, snapshot_by_symbol):
     cash_pool = [initial_investment]
     positions = {}
+    trades = 0
     for symbol, weight in weights.items():
-        first_price = price_map.get(symbol, {}).get(first_date)
-        if first_price is None:
+        bar = bar_matrix.get(symbol, {}).get(first_date)
+        snapshot = snapshot_by_symbol.get(symbol)
+        if bar is None or snapshot is None:
             continue
-        allocation_value = initial_investment * weight
-        shares = int(allocation_value // first_price)
-        cost_basis = shares * first_price
-        cash_pool[0] -= cost_basis
+        reference_price = bar.open_price or bar.close_price
+        allocation_budget = initial_investment * weight
+        shares = int(allocation_budget // max(reference_price, 1.0))
+        if shares <= 0:
+            continue
+
+        trade_value = shares * reference_price
+        trade_costs = calculate_trade_costs(
+            amount=trade_value,
+            trade_date=first_date,
+            is_buy=True,
+            avg_traded_value=snapshot.avg_traded_value,
+            annual_volatility_pct=snapshot.annual_volatility_pct,
+        )
+        while shares > 0 and (trade_value + trade_costs["total_costs"]) > cash_pool[0]:
+            shares -= 1
+            trade_value = shares * reference_price
+            trade_costs = calculate_trade_costs(
+                amount=trade_value,
+                trade_date=first_date,
+                is_buy=True,
+                avg_traded_value=snapshot.avg_traded_value,
+                annual_volatility_pct=snapshot.annual_volatility_pct,
+            )
+        if shares <= 0:
+            continue
+
+        apply_costs(costs, trade_costs)
+        cash_pool[0] -= trade_value + trade_costs["total_costs"]
         positions[symbol] = {
             "shares": shares,
-            "entry_price": first_price,
-            "entry_date": first_date,
-            "cost_basis": cost_basis,
             "cash_pool": cash_pool,
+            "lots": [{"shares": shares, "entry_price": reference_price, "entry_date": first_date}],
+            "entry_price": reference_price,
+            "peak_price": reference_price,
+            "avg_traded_value": snapshot.avg_traded_value,
+            "annual_volatility_pct": snapshot.annual_volatility_pct,
+            "cooldown_until": None,
         }
-    return positions
+        trades += 1
+    return positions, trades
 
 
-def rebalance_positions(position_state, price_map, weights, trade_date, portfolio_value, costs, taxes) -> int:
+def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, risk_mode: str) -> int:
     trades = 0
     if not position_state:
         return 0
+    config = RISK_MODEL_CONFIG[risk_mode]
     cash_pool = next(iter(position_state.values()))["cash_pool"]
     for symbol, state in position_state.items():
-        price = price_map[symbol].get(trade_date)
-        if price is None:
+        bar = bar_matrix.get(symbol, {}).get(trade_date)
+        if bar is None:
             continue
+        current_value = state["shares"] * bar.close_price
         target_value = portfolio_value * weights[symbol]
-        current_value = state["shares"] * price
-        difference = target_value - current_value
-        if abs(difference) / max(portfolio_value, 1) < 0.03:
+        drift_value = target_value - current_value
+        drift_pct = abs(drift_value) / max(portfolio_value, 1.0)
+        if drift_pct < config["drift_threshold"] or abs(drift_value) < portfolio_value * config["min_trade_weight"]:
             continue
-        if difference < 0 and state["shares"] > 0:
-            sell_value = min(abs(difference), current_value)
-            shares_to_sell = int(sell_value // price)
+        if drift_value < 0 and state["shares"] > 0:
+            shares_to_sell = int(min(abs(drift_value), current_value) // max(bar.close_price, 1.0))
             if shares_to_sell <= 0:
                 continue
-            proceeds = shares_to_sell * price
-            trade_costs = calculate_trade_costs(proceeds, is_buy=False)
+            proceeds = shares_to_sell * bar.close_price
+            trade_costs = calculate_trade_costs(
+                amount=proceeds,
+                trade_date=trade_date,
+                is_buy=False,
+                avg_traded_value=state["avg_traded_value"],
+                annual_volatility_pct=state["annual_volatility_pct"],
+            )
             apply_costs(costs, trade_costs)
-            average_cost = state["cost_basis"] / max(state["shares"], 1)
-            gain = proceeds - (average_cost * shares_to_sell)
-            holding_days = (trade_date - state["entry_date"]).days
-            if holding_days < 365:
-                taxes["stcg_gain"] += gain
-            else:
-                taxes["ltcg_gain"] += gain
-            state["shares"] -= shares_to_sell
-            state["cost_basis"] -= average_cost * shares_to_sell
             cash_pool[0] += proceeds - trade_costs["total_costs"]
+            realize_tax_lots(state, shares_to_sell, bar.close_price, trade_date, taxes, tax_buckets)
+            state["shares"] = sum(lot["shares"] for lot in state["lots"])
             trades += 1
-        elif difference > 0:
-            spend = min(difference, cash_pool[0])
-            shares_to_buy = int(spend // price)
+        elif drift_value > 0:
+            if state["cooldown_until"] is not None and trade_date < state["cooldown_until"]:
+                continue
+            spend = min(drift_value, cash_pool[0])
+            shares_to_buy = int(spend // max(bar.close_price, 1.0))
             if shares_to_buy <= 0:
                 continue
-            trade_value = shares_to_buy * price
-            trade_costs = calculate_trade_costs(trade_value, is_buy=True)
+            trade_value = shares_to_buy * bar.close_price
+            trade_costs = calculate_trade_costs(
+                amount=trade_value,
+                trade_date=trade_date,
+                is_buy=True,
+                avg_traded_value=state["avg_traded_value"],
+                annual_volatility_pct=state["annual_volatility_pct"],
+            )
             total_outflow = trade_value + trade_costs["total_costs"]
             if total_outflow > cash_pool[0]:
                 continue
             apply_costs(costs, trade_costs)
             cash_pool[0] -= total_outflow
             state["shares"] += shares_to_buy
-            state["cost_basis"] += trade_value
-            state["entry_price"] = price
-            state["entry_date"] = trade_date
+            state["lots"].append({"shares": shares_to_buy, "entry_price": bar.close_price, "entry_date": trade_date})
+            state["entry_price"] = weighted_average_entry_price(state["lots"])
+            state["peak_price"] = max(state["peak_price"], bar.high_price)
             trades += 1
     return trades
 
@@ -709,9 +893,11 @@ def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_
 
 
 def select_benchmark_symbol(db: Session) -> str:
-    symbols = set(db.execute(select(Instrument.symbol).where(Instrument.symbol.in_(["NIFTYBEES", "LIQUIDBEES", "GOLDBEES"]))).scalars().all())
+    symbols = set(db.execute(select(Instrument.symbol).where(Instrument.symbol.in_(["NIFTYBEES", "JUNIORBEES", "LIQUIDBEES", "GOLDBEES"]))).scalars().all())
     if "NIFTYBEES" in symbols:
         return "NIFTYBEES"
+    if "JUNIORBEES" in symbols:
+        return "JUNIORBEES"
     if "LIQUIDBEES" in symbols:
         return "LIQUIDBEES"
     if "GOLDBEES" in symbols:
@@ -755,24 +941,56 @@ def align_return_matrix(snapshots: list[Snapshot]) -> tuple[list[Snapshot], list
 
 
 def estimate_expected_returns(snapshots: list[Snapshot], return_matrix: list[list[float]], risk_mode: str) -> list[float]:
+    regime = detect_market_regime(snapshots)
     expected_returns = []
     config = RISK_MODEL_CONFIG[risk_mode]
     for index, snapshot in enumerate(snapshots):
         series = return_matrix[index]
         daily_mean = sum(series) / max(len(series), 1)
         annual_mean = daily_mean * 252
-        momentum_component = snapshot.momentum_pct / 100.0
-        quality_component = snapshot.annual_return_pct / 100.0
-        volatility_penalty = snapshot.annual_volatility_pct / 100.0
-        etf_bonus = 0.02 if snapshot.instrument_type == "ETF" and risk_mode == "ULTRA_LOW" else 0.0
-        market_cap_bonus = 0.01 if snapshot.market_cap_bucket == "Large" and risk_mode != "HIGH" else 0.0
+        momentum = snapshot.factor_scores.get("momentum", 0.0)
+        quality = snapshot.factor_scores.get("quality", 0.0)
+        low_vol = snapshot.factor_scores.get("low_vol", 0.0)
+        liquidity = snapshot.factor_scores.get("liquidity", 0.0)
+        sector_strength = snapshot.factor_scores.get("sector_strength", 0.0)
+        size = snapshot.factor_scores.get("size", 0.0)
+        beta_score = snapshot.factor_scores.get("beta", 0.0)
         if risk_mode == "ULTRA_LOW":
-            expected = (0.25 * annual_mean) + (0.20 * quality_component) + etf_bonus + market_cap_bonus - (0.35 * volatility_penalty)
+            factor_alpha = (
+                (0.28 * quality)
+                + (0.24 * low_vol)
+                + (0.12 * liquidity)
+                + (0.10 * sector_strength)
+                + (0.06 * size)
+                - (0.12 * abs(snapshot.beta_proxy - 0.65))
+            )
+            defensive_bonus = 0.02 if snapshot.instrument_type == "ETF" or snapshot.sector in {"Gold", "Liquid", "FMCG", "Pharma"} else 0.0
+            expected = regime["base_return"] + (0.30 * annual_mean) + (0.028 * factor_alpha) + defensive_bonus
         elif risk_mode == "HIGH":
-            expected = (0.40 * annual_mean) + (0.40 * momentum_component) + (0.20 * quality_component) - (0.08 * volatility_penalty)
+            factor_alpha = (
+                (0.38 * momentum)
+                + (0.18 * sector_strength)
+                + (0.10 * quality)
+                + (0.08 * liquidity)
+                - (0.05 * low_vol)
+                - (0.07 * size)
+                + (0.16 * beta_score)
+            )
+            cyclical_bonus = 0.01 if snapshot.sector in {"Auto", "Tech/Internet", "Infra", "Real Estate", "Energy"} else 0.0
+            expected = regime["base_return"] + regime["risk_on_bonus"] + (0.42 * annual_mean) + (0.035 * factor_alpha) + cyclical_bonus
         else:
-            expected = (0.35 * annual_mean) + (0.30 * momentum_component) + (0.25 * quality_component) + market_cap_bonus - (0.15 * volatility_penalty)
-        expected_returns.append(expected - config["turnover_penalty"] * abs(snapshot.beta_proxy - 1.0) * 0.01)
+            factor_alpha = (
+                (0.28 * momentum)
+                + (0.24 * quality)
+                + (0.18 * low_vol)
+                + (0.10 * liquidity)
+                + (0.08 * sector_strength)
+                + (0.04 * size)
+                - (0.06 * abs(snapshot.beta_proxy - 1.0))
+            )
+            expected = regime["base_return"] + (0.36 * annual_mean) + (0.030 * factor_alpha)
+        expected -= config["turnover_penalty"] * max(0.0, abs(snapshot.beta_proxy - 1.0) - 0.15) * 0.01
+        expected_returns.append(max(-0.15, min(0.35, expected)))
     return expected_returns
 
 
@@ -803,18 +1021,18 @@ def optimize_constrained_allocator(
     risk_mode: str,
 ) -> list[float]:
     config = RISK_MODEL_CONFIG[risk_mode]
-    asset_count = len(snapshots)
-    if asset_count == 0:
+    if not snapshots:
         return []
 
     prior = build_prior_weights(snapshots, risk_mode)
     weights = prior[:]
-    for iteration in range(220):
+    for iteration in range(240):
         sigma_w = matrix_vector_product(covariance_matrix, weights)
         gradient = []
         for index, snapshot in enumerate(snapshots):
-            diversification_bonus = 0.01 if snapshot.instrument_type == "ETF" and risk_mode == "ULTRA_LOW" else 0.0
-            gradient.append(expected_returns[index] + diversification_bonus - (config["risk_aversion"] * sigma_w[index]))
+            factor_bonus = 0.01 * snapshot.factor_scores.get("quality", 0.0) if risk_mode != "HIGH" else 0.012 * snapshot.factor_scores.get("momentum", 0.0)
+            etf_bonus = 0.01 if snapshot.instrument_type == "ETF" and risk_mode == "ULTRA_LOW" else 0.0
+            gradient.append(expected_returns[index] + factor_bonus + etf_bonus - (config["risk_aversion"] * sigma_w[index]))
         step_size = 0.18 / (1 + (iteration / 30))
         proposal = [(weight + (step_size * grad)) for weight, grad in zip(weights, gradient)]
         weights = project_weights(proposal, snapshots, risk_mode, prior)
@@ -826,13 +1044,12 @@ def optimize_constrained_allocator(
 def build_prior_weights(snapshots: list[Snapshot], risk_mode: str) -> list[float]:
     raw = []
     for snapshot in snapshots:
-        inverse_vol = 1 / max(snapshot.annual_volatility_pct, 3.0)
         if risk_mode == "ULTRA_LOW":
-            score = inverse_vol * (1.35 if snapshot.instrument_type == "ETF" else 1.0)
+            score = max(0.05, 1.0 + (0.5 * snapshot.factor_scores.get("low_vol", 0.0)) + (0.35 * snapshot.factor_scores.get("quality", 0.0)) + (0.15 if snapshot.instrument_type == "ETF" else 0.0))
         elif risk_mode == "HIGH":
-            score = max(0.1, (snapshot.momentum_pct / 20.0) + (snapshot.beta_proxy / 2.5))
+            score = max(0.05, 1.0 + (0.55 * snapshot.factor_scores.get("momentum", 0.0)) + (0.20 * snapshot.factor_scores.get("quality", 0.0)) + (0.20 * snapshot.factor_scores.get("beta", 0.0)))
         else:
-            score = max(0.1, inverse_vol * (1 + max(snapshot.annual_return_pct, 0) / 100.0))
+            score = max(0.05, 1.0 + (0.35 * snapshot.factor_scores.get("momentum", 0.0)) + (0.35 * snapshot.factor_scores.get("quality", 0.0)) + (0.20 * snapshot.factor_scores.get("low_vol", 0.0)))
         raw.append(score)
     total = sum(raw)
     return [value / max(total, 1e-9) for value in raw]
@@ -867,7 +1084,7 @@ def redistribute_weight(weights: list[float], snapshots: list[Snapshot], risk_mo
     for index, snapshot in enumerate(snapshots):
         asset_headroom = max(0.0, config["max_weight"] - weights[index])
         sector_headroom = max(0.0, config["sector_cap"] - sector_totals[snapshot.sector])
-        score = min(asset_headroom, sector_headroom) * max(prior[index], 0.001)
+        score = min(asset_headroom, sector_headroom) * (1.0 + max(prior[index], 0.001))
         headroom.append(score)
     total_headroom = sum(headroom)
     if total_headroom <= 1e-9:
@@ -902,50 +1119,30 @@ def candidate_score(snapshot: Snapshot, risk_mode: str, preference_rank: int) ->
     liquidity_bonus = min(snapshot.avg_traded_value / 50_000_000.0, 10.0)
     if risk_mode == "ULTRA_LOW":
         return (
-            120.0 / max(snapshot.annual_volatility_pct, 4.0)
-            + max(0.0, 20.0 - abs(snapshot.beta_proxy - 0.6) * 15.0)
+            (22.0 * snapshot.factor_scores.get("low_vol", 0.0))
+            + (18.0 * snapshot.factor_scores.get("quality", 0.0))
+            + max(0.0, 16.0 - abs(snapshot.beta_proxy - 0.6) * 10.0)
             + (8.0 if snapshot.instrument_type == "ETF" else 0.0)
             + preference_bonus
             + liquidity_bonus
         )
     if risk_mode == "HIGH":
-        return snapshot.annual_return_pct * 0.7 + snapshot.momentum_pct * 0.8 + snapshot.beta_proxy * 8.0 - snapshot.annual_volatility_pct * 0.12 + preference_bonus + liquidity_bonus
-    return snapshot.annual_return_pct * 0.55 - snapshot.annual_volatility_pct * 0.18 + snapshot.momentum_pct * 0.25 + preference_bonus + liquidity_bonus
-
-
-def normalize_weights(raw_weights: list[float], max_weight: float) -> list[float]:
-    weights = [max(0.01, weight) for weight in raw_weights]
-    total = sum(weights)
-    normalized = [(weight / total) * 100 for weight in weights]
-    changed = True
-    while changed:
-        changed = False
-        excess = 0.0
-        uncapped = []
-        for index, weight in enumerate(normalized):
-            if weight > max_weight:
-                excess += weight - max_weight
-                normalized[index] = max_weight
-                changed = True
-            else:
-                uncapped.append(index)
-        if changed and uncapped:
-            uncapped_total = sum(normalized[index] for index in uncapped)
-            for index in uncapped:
-                normalized[index] += excess * (normalized[index] / max(uncapped_total, 1e-9))
-    total = sum(normalized)
-    return [round((weight / total) * 100, 2) for weight in normalized]
-
-
-def build_return_series(closes: list[tuple[date, float]]) -> list[tuple[date, float]]:
-    series = []
-    for index in range(1, len(closes)):
-        previous = closes[index - 1][1]
-        current = closes[index][1]
-        if previous <= 0:
-            continue
-        series.append((closes[index][0], (current / previous) - 1))
-    return series
+        return (
+            (24.0 * snapshot.factor_scores.get("momentum", 0.0))
+            + (12.0 * snapshot.factor_scores.get("sector_strength", 0.0))
+            + (6.0 * snapshot.factor_scores.get("beta", 0.0))
+            + (4.0 * snapshot.factor_scores.get("liquidity", 0.0))
+            + preference_bonus
+            + liquidity_bonus
+        )
+    return (
+        (16.0 * snapshot.factor_scores.get("momentum", 0.0))
+        + (16.0 * snapshot.factor_scores.get("quality", 0.0))
+        + (10.0 * snapshot.factor_scores.get("low_vol", 0.0))
+        + (6.0 * snapshot.factor_scores.get("sector_strength", 0.0))
+        + preference_bonus
+        + liquidity_bonus
+    )
 
 
 def aggregate_portfolio_returns(snapshot_map: dict[str, Snapshot], weights: dict[str, float]) -> dict[date, float]:
@@ -1050,6 +1247,8 @@ def correlation(x: list[float], y: list[float]) -> float:
 
 
 def compute_max_drawdown(values: list[float]) -> float:
+    if not values:
+        return 0.0
     peak = values[0]
     max_drawdown = 0.0
     for value in values:
@@ -1058,17 +1257,22 @@ def compute_max_drawdown(values: list[float]) -> float:
     return max_drawdown
 
 
-def calculate_trade_costs(amount: float, *, is_buy: bool) -> dict[str, float]:
-    brokerage = min(amount * BROKERAGE_RATE, MAX_BROKERAGE)
-    stt = amount * (STT_BUY_RATE if is_buy else STT_SELL_RATE)
-    stamp_duty = amount * STAMP_DUTY_RATE if is_buy else 0.0
-    gst = brokerage * GST_RATE
-    slippage = amount * SLIPPAGE_RATE
-    total_costs = brokerage + stt + stamp_duty + gst + slippage
+def calculate_trade_costs(amount: float, trade_date: date, *, is_buy: bool, avg_traded_value: float, annual_volatility_pct: float) -> dict[str, float]:
+    schedule = resolve_equity_fee_schedule(trade_date)
+    brokerage = min(amount * schedule.brokerage_rate, schedule.max_brokerage_per_order)
+    stt = amount * (schedule.stt_buy_rate if is_buy else schedule.stt_sell_rate)
+    stamp_duty = amount * schedule.stamp_duty_buy_rate if is_buy else 0.0
+    exchange_txn = amount * schedule.exchange_txn_rate
+    sebi_fee = amount * schedule.sebi_fee_rate
+    gst = (brokerage + exchange_txn + sebi_fee) * schedule.gst_rate
+    slippage = amount * liquidity_adjusted_slippage_rate(amount, avg_traded_value, annual_volatility_pct)
+    total_costs = brokerage + stt + stamp_duty + exchange_txn + sebi_fee + gst + slippage
     return {
         "total_brokerage": brokerage,
         "total_stt": stt,
         "total_stamp_duty": stamp_duty,
+        "total_exchange_txn": exchange_txn,
+        "total_sebi_fees": sebi_fee,
         "total_gst": gst,
         "total_slippage": slippage,
         "total_costs": total_costs,
@@ -1084,25 +1288,293 @@ def round_mapping(values: dict[str, float]) -> dict[str, float]:
     return {key: round(value, 2) for key, value in values.items()}
 
 
-def build_named_weights(snapshot_map: dict[str, Snapshot], symbols: list[str]) -> dict[str, float]:
-    available = [symbol for symbol in symbols if symbol in snapshot_map]
-    if not available:
-        return build_equal_weight_portfolio(list(snapshot_map.values()), 8)
-    weight = 1 / len(available)
-    return {symbol: weight for symbol in available}
+def liquidity_adjusted_slippage_rate(amount: float, avg_traded_value: float, annual_volatility_pct: float) -> float:
+    participation = amount / max(avg_traded_value, 1.0)
+    volatility_load = max(0.0, annual_volatility_pct - 15.0) / 10_000.0
+    return min(0.006, 0.0005 + min(0.004, participation * 0.08) + volatility_load)
 
 
-def build_equal_weight_portfolio(snapshots: list[Snapshot], count: int) -> dict[str, float]:
-    ranked = sorted(snapshots, key=lambda snapshot: snapshot.avg_traded_value, reverse=True)[:count]
+def populate_factor_scores(snapshots: list[Snapshot]) -> None:
+    if not snapshots:
+        return
+
+    sector_average_momentum: dict[str, float] = defaultdict(float)
+    sector_counts: dict[str, int] = defaultdict(int)
+    for snapshot in snapshots:
+        sector_average_momentum[snapshot.sector] += blended_momentum(snapshot)
+        sector_counts[snapshot.sector] += 1
+    for sector in sector_average_momentum:
+        sector_average_momentum[sector] /= max(sector_counts[sector], 1)
+
+    raw_factor_values = {
+        "momentum": {snapshot.symbol: blended_momentum(snapshot) for snapshot in snapshots},
+        "quality": {snapshot.symbol: quality_proxy(snapshot) for snapshot in snapshots},
+        "low_vol": {snapshot.symbol: -snapshot.annual_volatility_pct for snapshot in snapshots},
+        "liquidity": {snapshot.symbol: sqrt(max(snapshot.avg_traded_value, 1.0)) for snapshot in snapshots},
+        "sector_strength": {snapshot.symbol: blended_momentum(snapshot) - sector_average_momentum[snapshot.sector] for snapshot in snapshots},
+        "size": {snapshot.symbol: market_cap_bucket_score(snapshot.market_cap_bucket) for snapshot in snapshots},
+        "beta": {snapshot.symbol: snapshot.beta_proxy - 1.0 for snapshot in snapshots},
+    }
+
+    zscores = {factor: zscore_map(values) for factor, values in raw_factor_values.items()}
+    for snapshot in snapshots:
+        snapshot.factor_scores = {factor: zscores[factor].get(snapshot.symbol, 0.0) for factor in FACTOR_KEYS}
+
+
+def blended_momentum(snapshot: Snapshot) -> float:
+    return (0.20 * snapshot.momentum_1m_pct) + (0.35 * snapshot.momentum_3m_pct) + (0.45 * snapshot.momentum_6m_pct)
+
+
+def quality_proxy(snapshot: Snapshot) -> float:
+    return (
+        snapshot.annual_return_pct
+        - (0.70 * snapshot.downside_volatility_pct)
+        - (0.40 * snapshot.max_drawdown_pct)
+        + max(0.0, 18.0 - abs(snapshot.beta_proxy - 1.0) * 8.0)
+    )
+
+
+def market_cap_bucket_score(bucket: str | None) -> float:
+    if bucket == "Large":
+        return 1.0
+    if bucket == "Mid":
+        return 0.0
+    if bucket == "Small":
+        return -1.0
+    return -0.25
+
+
+def zscore_map(values: dict[str, float]) -> dict[str, float]:
+    if not values:
+        return {}
+    series = list(values.values())
+    mean_value = sum(series) / len(series)
+    std_value = sqrt(sum((value - mean_value) ** 2 for value in series) / max(len(series) - 1, 1))
+    if std_value <= 1e-9:
+        return {key: 0.0 for key in values}
+    return {key: (value - mean_value) / std_value for key, value in values.items()}
+
+
+def compute_factor_exposures(weighted_snapshots: list[tuple[Snapshot, float]]) -> dict[str, float]:
+    exposures = {factor: 0.0 for factor in FACTOR_KEYS}
+    total_weight = sum(weight for _, weight in weighted_snapshots)
+    if total_weight <= 1e-9:
+        return exposures
+    for snapshot, weight in weighted_snapshots:
+        normalized = weight / total_weight
+        for factor in FACTOR_KEYS:
+            exposures[factor] += snapshot.factor_scores.get(factor, 0.0) * normalized
+    return exposures
+
+
+def detect_market_regime(snapshots: list[Snapshot]) -> dict[str, float]:
+    benchmark = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
+    if benchmark is None:
+        benchmark = max(snapshots, key=lambda snapshot: snapshot.avg_traded_value, default=None)
+    if benchmark is None:
+        return {"base_return": 0.10, "risk_on_bonus": 0.0}
+    trailing_return = benchmark.momentum_3m_pct
+    trailing_vol = benchmark.annual_volatility_pct
+    if trailing_return < -5.0 or trailing_vol > 24.0:
+        return {"base_return": 0.08, "risk_on_bonus": -0.01}
+    if trailing_return > 8.0 and trailing_vol < 18.0:
+        return {"base_return": 0.12, "risk_on_bonus": 0.015}
+    return {"base_return": 0.10, "risk_on_bonus": 0.0}
+
+
+def build_nifty50_proxy_portfolio(snapshots: list[Snapshot]) -> dict[str, float]:
+    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY" and snapshot.market_cap_bucket == "Large"]
+    ranked = sorted(equities, key=lambda snapshot: snapshot.avg_traded_value, reverse=True)[:50]
+    if not ranked:
+        etf = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
+        return {etf.symbol: 1.0} if etf else {}
+    weights = {snapshot.symbol: sqrt(max(snapshot.avg_traded_value, 1.0)) for snapshot in ranked}
+    return normalize_score_weights(weights)
+
+
+def build_nifty500_proxy_portfolio(snapshots: list[Snapshot]) -> dict[str, float]:
+    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    bucket_targets = {"Large": 0.70, "Mid": 0.20, "Small": 0.10}
+    ranked_by_bucket: dict[str, list[Snapshot]] = defaultdict(list)
+    for snapshot in sorted(equities, key=lambda item: item.avg_traded_value, reverse=True):
+        ranked_by_bucket[snapshot.market_cap_bucket or "Small"].append(snapshot)
+
+    weights: dict[str, float] = {}
+    for bucket, target_weight in bucket_targets.items():
+        members = ranked_by_bucket.get(bucket, [])[: min(40, max(8, len(ranked_by_bucket.get(bucket, []))))]
+        if not members:
+            continue
+        bucket_weight = target_weight / len(members)
+        for snapshot in members:
+            weights[snapshot.symbol] = weights.get(snapshot.symbol, 0.0) + bucket_weight
+    return normalize_score_weights(weights)
+
+
+def build_factor_portfolio(snapshots: list[Snapshot], *, factor_key: str, count: int, sector_cap: float) -> dict[str, float]:
+    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    ranked = sorted(equities, key=lambda snapshot: snapshot.factor_scores.get(factor_key, 0.0), reverse=True)[:count]
     if not ranked:
         return {}
-    weight = 1 / len(ranked)
-    return {snapshot.symbol: weight for snapshot in ranked}
+    score_weights = {snapshot.symbol: max(0.05, 1.0 + snapshot.factor_scores.get(factor_key, 0.0)) for snapshot in ranked}
+    return cap_sector_weights(normalize_score_weights(score_weights), {snapshot.symbol: snapshot for snapshot in ranked}, sector_cap)
 
 
-def build_ranked_portfolio(snapshots: list[Snapshot], key, descending: bool, count: int) -> dict[str, float]:
-    ranked = sorted(snapshots, key=key, reverse=descending)[:count]
+def build_multifactor_portfolio(snapshots: list[Snapshot], *, count: int, sector_cap: float) -> dict[str, float]:
+    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    ranked = sorted(
+        equities,
+        key=lambda snapshot: (
+            (0.35 * snapshot.factor_scores.get("momentum", 0.0))
+            + (0.35 * snapshot.factor_scores.get("quality", 0.0))
+            + (0.20 * snapshot.factor_scores.get("low_vol", 0.0))
+            + (0.10 * snapshot.factor_scores.get("liquidity", 0.0))
+        ),
+        reverse=True,
+    )[:count]
     if not ranked:
         return {}
-    weight = 1 / len(ranked)
-    return {snapshot.symbol: weight for snapshot in ranked}
+    score_weights = {
+        snapshot.symbol: max(
+            0.05,
+            1.0
+            + (0.35 * snapshot.factor_scores.get("momentum", 0.0))
+            + (0.35 * snapshot.factor_scores.get("quality", 0.0))
+            + (0.20 * snapshot.factor_scores.get("low_vol", 0.0))
+            + (0.10 * snapshot.factor_scores.get("liquidity", 0.0)),
+        )
+        for snapshot in ranked
+    }
+    return cap_sector_weights(normalize_score_weights(score_weights), {snapshot.symbol: snapshot for snapshot in ranked}, sector_cap)
+
+
+def normalize_score_weights(raw_weights: dict[str, float]) -> dict[str, float]:
+    total = sum(max(value, 0.0) for value in raw_weights.values())
+    if total <= 1e-9:
+        return {}
+    return {symbol: max(value, 0.0) / total for symbol, value in raw_weights.items()}
+
+
+def cap_sector_weights(weights: dict[str, float], snapshot_map: dict[str, Snapshot], sector_cap: float) -> dict[str, float]:
+    adjusted = dict(weights)
+    for _ in range(4):
+        sector_totals: dict[str, float] = defaultdict(float)
+        for symbol, weight in adjusted.items():
+            snapshot = snapshot_map.get(symbol)
+            if snapshot is not None:
+                sector_totals[snapshot.sector] += weight
+        excess_pool = 0.0
+        capped_sectors = {sector for sector, total in sector_totals.items() if total >= sector_cap - 1e-9}
+        for sector, total in sector_totals.items():
+            if total <= sector_cap:
+                continue
+            scale = sector_cap / max(total, 1e-9)
+            for symbol, weight in list(adjusted.items()):
+                snapshot = snapshot_map.get(symbol)
+                if snapshot and snapshot.sector == sector:
+                    reduced = weight * (1 - scale)
+                    adjusted[symbol] = weight * scale
+                    excess_pool += reduced
+        if excess_pool <= 1e-9:
+            break
+        eligible = [symbol for symbol in adjusted if snapshot_map[symbol].sector not in capped_sectors]
+        if not eligible:
+            break
+        add_on = excess_pool / len(eligible)
+        for symbol in eligible:
+            adjusted[symbol] += add_on
+        adjusted = normalize_score_weights(adjusted)
+    return normalize_score_weights(adjusted)
+
+
+def determine_exit_fill(bar: BarRecord, state, risk_mode: str, stop_loss_pct: float, take_profit_pct: float) -> tuple[float | None, str | None]:
+    reference_for_stop = state["peak_price"] if risk_mode == "HIGH" else state["entry_price"]
+    stop_level = reference_for_stop * (1 - stop_loss_pct)
+    take_level = state["entry_price"] * (1 + take_profit_pct)
+    if bar.low_price <= stop_level:
+        return (bar.open_price if bar.open_price <= stop_level else stop_level), "STOP"
+    if bar.high_price >= take_level:
+        return (bar.open_price if bar.open_price >= take_level else take_level), "TAKE_PROFIT"
+    return None, None
+
+
+def realize_tax_lots(state, shares_to_sell: int, sell_price: float, trade_date: date, taxes: dict[str, float], tax_buckets: dict[str, dict]) -> None:
+    remaining = shares_to_sell
+    while remaining > 0 and state["lots"]:
+        lot = state["lots"][0]
+        quantity = min(remaining, lot["shares"])
+        gain = quantity * (sell_price - lot["entry_price"])
+        holding_days = (trade_date - lot["entry_date"]).days
+        schedule = resolve_capital_gains_tax_schedule(trade_date)
+        fiscal_year = financial_year_for_trade_date(trade_date)
+        if holding_days < 365:
+            taxes["stcg_gain"] += gain
+            tax_buckets["stcg"][(fiscal_year, schedule.stcg_rate, schedule.cess_rate)] += gain
+        else:
+            taxes["ltcg_gain"] += gain
+            bucket_key = (fiscal_year, schedule.ltcg_rate, schedule.ltcg_exemption, schedule.cess_rate)
+            if gain >= 0:
+                tax_buckets["ltcg_positive"][bucket_key] += gain
+            else:
+                tax_buckets["ltcg_negative"][bucket_key] += gain
+        lot["shares"] -= quantity
+        remaining -= quantity
+        if lot["shares"] <= 0:
+            state["lots"].pop(0)
+
+
+def finalize_tax_buckets(taxes: dict[str, float], tax_buckets: dict[str, dict]) -> None:
+    stcg_tax = 0.0
+    ltcg_tax = 0.0
+    cess_tax = 0.0
+
+    for (_, rate, cess_rate), gain in tax_buckets["stcg"].items():
+        taxable_gain = max(0.0, gain)
+        base_tax = taxable_gain * rate
+        stcg_tax += base_tax
+        cess_tax += base_tax * cess_rate
+
+    ltcg_by_fy: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
+    for (fiscal_year, rate, exemption, cess_rate), gain in tax_buckets["ltcg_positive"].items():
+        ltcg_by_fy[fiscal_year].append((gain, rate, exemption, cess_rate))
+    for (fiscal_year, rate, exemption, cess_rate), gain in tax_buckets["ltcg_negative"].items():
+        ltcg_by_fy[fiscal_year].append((gain, rate, exemption, cess_rate))
+
+    for entries in ltcg_by_fy.values():
+        positive_total = sum(max(0.0, gain) for gain, _, _, _ in entries)
+        net_total = sum(gain for gain, _, _, _ in entries)
+        if positive_total <= 0 or net_total <= 0:
+            continue
+        exemption = max(exemption for _, _, exemption, _ in entries)
+        taxable_total = max(0.0, net_total - exemption)
+        for gain, rate, _, cess_rate in entries:
+            positive_gain = max(0.0, gain)
+            if positive_gain <= 0:
+                continue
+            allocated_taxable = taxable_total * (positive_gain / positive_total)
+            base_tax = allocated_taxable * rate
+            ltcg_tax += base_tax
+            cess_tax += base_tax * cess_rate
+
+    taxes["stcg_tax"] = stcg_tax
+    taxes["ltcg_tax"] = ltcg_tax
+    taxes["cess_tax"] = cess_tax
+    taxes["total_tax"] = stcg_tax + ltcg_tax + cess_tax
+
+
+def weighted_average_entry_price(lots: list[dict[str, object]]) -> float:
+    total_shares = sum(int(lot["shares"]) for lot in lots)
+    if total_shares <= 0:
+        return 0.0
+    total_cost = sum(int(lot["shares"]) * float(lot["entry_price"]) for lot in lots)
+    return total_cost / total_shares
+
+
+def current_portfolio_value(position_state, bar_matrix, trade_date: date) -> float:
+    if not position_state:
+        return 0.0
+    value = next(iter(position_state.values()))["cash_pool"][0]
+    for symbol, state in position_state.items():
+        bar = bar_matrix.get(symbol, {}).get(trade_date)
+        if bar is not None:
+            value += state["shares"] * bar.close_price
+    return value

@@ -61,6 +61,7 @@ class AnalyzePortfolioResponse(BaseModel):
     current_beta: float
     diversification_score: float
     sector_weights: dict[str, float]
+    factor_exposures: dict[str, float] = Field(default_factory=dict)
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
     notes: list[str]
@@ -97,6 +98,7 @@ class TaxBreakdownModel(BaseModel):
     ltcg_gain: float
     stcg_tax: float
     ltcg_tax: float
+    cess_tax: float
     total_tax: float
 
 
@@ -104,6 +106,8 @@ class CostBreakdownModel(BaseModel):
     total_brokerage: float
     total_stt: float
     total_stamp_duty: float
+    total_exchange_txn: float
+    total_sebi_fees: float
     total_gst: float
     total_slippage: float
     total_costs: float

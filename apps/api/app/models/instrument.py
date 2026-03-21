@@ -23,3 +23,4 @@ class Instrument(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
 
     daily_bars = relationship("DailyBar", back_populates="instrument", cascade="all, delete-orphan")
+    corporate_actions = relationship("CorporateAction", cascade="all, delete-orphan")

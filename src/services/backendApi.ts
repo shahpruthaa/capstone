@@ -30,6 +30,7 @@ interface ApiAnalyzePortfolioResponse {
   current_beta: number;
   diversification_score: number;
   sector_weights: Record<string, number>;
+  factor_exposures?: Record<string, number>;
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
   notes: string[];
@@ -54,17 +55,21 @@ interface ApiBacktestResponse {
     ltcg_gain: number;
     stcg_tax: number;
     ltcg_tax: number;
+    cess_tax: number;
     total_tax: number;
   };
   cost_breakdown: {
     total_brokerage: number;
     total_stt: number;
     total_stamp_duty: number;
+    total_exchange_txn: number;
+    total_sebi_fees: number;
     total_gst: number;
     total_slippage: number;
     total_costs: number;
   };
   equity_curve: { date: string; portfolio_value: number; benchmark_value: number }[];
+  notes?: string[];
 }
 
 interface ApiBenchmarkResponse {
@@ -81,6 +86,7 @@ interface ApiBenchmarkResponse {
     expense_ratio_pct: number;
   }[];
   projected_growth: { year: number; values: Record<string, number> }[];
+  notes?: string[];
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -184,6 +190,7 @@ export async function analyzePortfolioViaApi(
       reason: action.reason,
     })),
     sectorWeights: response.sector_weights,
+    factorExposures: response.factor_exposures ?? {},
     correlationWarnings:
       response.correlation_risk === 'HIGH'
         ? ['High empirical correlation risk detected by the backend analyzer.']
@@ -191,6 +198,7 @@ export async function analyzePortfolioViaApi(
           ? ['Moderate cross-sector correlation risk detected.']
           : [],
     totalValue: response.portfolio_value,
+    backendNotes: response.notes,
   };
 }
 
@@ -231,18 +239,22 @@ export async function runBacktestViaApi(
       ltcgGain: response.tax_liability.ltcg_gain,
       stcgTax: response.tax_liability.stcg_tax,
       ltcgTax: response.tax_liability.ltcg_tax,
+      cessTax: response.tax_liability.cess_tax,
       totalTax: response.tax_liability.total_tax,
     },
     costBreakdown: {
       totalBrokerage: response.cost_breakdown.total_brokerage,
       totalSTT: response.cost_breakdown.total_stt,
       totalStampDuty: response.cost_breakdown.total_stamp_duty,
+      totalExchangeTxn: response.cost_breakdown.total_exchange_txn,
+      totalSebiFees: response.cost_breakdown.total_sebi_fees,
       totalGST: response.cost_breakdown.total_gst,
       totalSlippage: response.cost_breakdown.total_slippage,
       totalCosts: response.cost_breakdown.total_costs,
     },
     config,
     initialInvestment: response.metrics.initial_investment,
+    notes: response.notes ?? [],
   };
 }
 
@@ -267,5 +279,5 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
   }));
 
   const winner = strategies.reduce((best, current) => (current.sharpe > best.sharpe ? current : best)).name;
-  return { strategies, projectedGrowth, winner };
+  return { strategies, projectedGrowth, winner, notes: response.notes ?? [] };
 }

@@ -125,9 +125,10 @@ export function BacktestTab({ portfolio }: Props) {
                         <div className="space-y-1">
                             {[
                                 ['STCG Gains', fmtRs(result.taxLiability.stcgGain), result.taxLiability.stcgGain < 0 ? 'text-emerald-600' : 'text-rose-500'],
-                                ['STCG Tax @20%', fmtRs(result.taxLiability.stcgTax), 'text-rose-500'],
+                                ['STCG Tax', fmtRs(result.taxLiability.stcgTax), 'text-rose-500'],
                                 ['LTCG Gains', fmtRs(result.taxLiability.ltcgGain), 'text-slate-700'],
-                                ['LTCG Tax @12.5%', fmtRs(result.taxLiability.ltcgTax), 'text-rose-500'],
+                                ['LTCG Tax', fmtRs(result.taxLiability.ltcgTax), 'text-rose-500'],
+                                ['Cess', fmtRs(result.taxLiability.cessTax), 'text-rose-500'],
                                 ['Total Tax', fmtRs(result.taxLiability.totalTax), 'text-rose-600 font-bold'],
                             ].map(([label, val, cls]) => (
                                 <div key={label} className="stat-row">
@@ -143,6 +144,11 @@ export function BacktestTab({ portfolio }: Props) {
                             {[
                                 ['Brokerage', fmtRs(result.costBreakdown.totalBrokerage)],
                                 ['STT', fmtRs(result.costBreakdown.totalSTT)],
+                                ['Exchange Txn', fmtRs(result.costBreakdown.totalExchangeTxn)],
+                                ['SEBI Fees', fmtRs(result.costBreakdown.totalSebiFees)],
+                                ['Stamp Duty', fmtRs(result.costBreakdown.totalStampDuty)],
+                                ['GST', fmtRs(result.costBreakdown.totalGST)],
+                                ['Slippage', fmtRs(result.costBreakdown.totalSlippage)],
                                 ['Total Costs', fmtRs(result.costBreakdown.totalCosts)],
                             ].map(([label, val]) => (
                                 <div key={label} className="stat-row">
@@ -163,10 +169,21 @@ export function BacktestTab({ portfolio }: Props) {
                             <TrendingUp className="w-8 h-8 opacity-30" />
                         </div>
                         <p className="text-base font-semibold mb-1">{portfolio ? 'Configure & run backtest' : 'Generate a portfolio first'}</p>
-                        <p className="text-sm">GBM simulation of price paths with real Indian market frictions.</p>
+                        <p className="text-sm">Historical replay with Indian market frictions, taxes, and benchmark comparison.</p>
                     </div>
                 ) : (
                     <>
+                        {result.notes && result.notes.length > 0 && (
+                            <div className="card p-5">
+                                <p className="section-title">Backend Simulation Notes</p>
+                                <div className="space-y-2">
+                                    {result.notes.map((note, index) => (
+                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Key metrics */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <MetricCard
