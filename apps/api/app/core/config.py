@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     raw_data_dir: str = "../../data/raw"
     nse_archive_base_url: str = "https://nsearchives.nseindia.com/content/cm"
+    ml_lightgbm_artifact_dir: str = "artifacts/models/lightgbm_v1"
+    ml_model_loader_max_symbols: int = 50
 
     model_config = SettingsConfigDict(
         env_prefix="APP_",

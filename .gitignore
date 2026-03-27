@@ -10,3 +10,6 @@ apps/api/.venv/
 apps/api/.pytest_cache/
 __pycache__/
 *.pyc
+
+# ML model artifacts (kept local; not committed)
+apps/api/artifacts/

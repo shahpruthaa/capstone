@@ -11,11 +11,40 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 const ALL_STOCKS = [...NSE_STOCKS, ...LIQUID_ASSETS];
 
 type ApiRiskMode = 'ULTRA_LOW' | 'MODERATE' | 'HIGH';
+export type ModelVariant = 'RULES' | 'LIGHTGBM_HYBRID';
+
+export interface CurrentModelStatus {
+  available: boolean;
+  variant: ModelVariant;
+  modelVersion?: string;
+  predictionHorizonDays?: number;
+  trainingMode?: string;
+  artifactClassification?: 'bootstrap' | 'standard';
+  validationMetrics?: Record<string, unknown>;
+  validationSummary?: Record<string, unknown>;
+  trainingMetadata?: Record<string, unknown>;
+  evaluationReport?: Record<string, unknown>;
+  reason?: string;
+  runtimeSitePackages?: string;
+}
+
+export interface MarketDataSummary {
+  available: boolean;
+  minTradeDate?: string;
+  maxTradeDate?: string;
+  dailyBarCount: number;
+  instrumentCount: number;
+  notes: string[];
+}
 
 interface ApiGeneratePortfolioResponse {
+  model_variant: ModelVariant;
+  model_source: 'RULES' | 'LIGHTGBM';
+  model_version: string;
+  prediction_horizon_days: number;
   risk_mode: ApiRiskMode;
   investment_amount: number;
-  allocations: { symbol: string; sector: string; weight: number; rationale: string }[];
+  allocations: { symbol: string; sector: string; weight: number; rationale: string; top_model_drivers?: string[] }[];
   metrics: {
     estimated_return_pct: number;
     estimated_volatility_pct: number;
@@ -33,10 +62,18 @@ interface ApiAnalyzePortfolioResponse {
   factor_exposures?: Record<string, number>;
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
+  model_variant_applied: ModelVariant;
+  ml_predictions?: Record<string, number>;
+  top_model_drivers_by_symbol?: Record<string, string[]>;
   notes: string[];
 }
 
 interface ApiBacktestResponse {
+  model_variant: ModelVariant;
+  model_source: 'RULES' | 'LIGHTGBM';
+  model_version: string;
+  prediction_horizon_days: number;
+  top_model_drivers_by_symbol?: Record<string, string[]>;
   metrics: {
     cagr_pct: number;
     total_return_pct: number;
@@ -77,6 +114,11 @@ interface ApiBenchmarkResponse {
     name: string;
     description: string;
     category: 'AI' | 'INDEX' | 'FACTOR' | 'AMC_STYLE';
+    construction_method: string;
+    is_proxy: boolean;
+    source_window: string;
+    constituent_method: string;
+    limitations: string[];
     annual_return_pct: number;
     volatility_pct: number;
     sharpe_ratio: number;
@@ -86,6 +128,30 @@ interface ApiBenchmarkResponse {
     expense_ratio_pct: number;
   }[];
   projected_growth: { year: number; values: Record<string, number> }[];
+  notes?: string[];
+}
+
+interface ApiCurrentModelStatusResponse {
+  available: boolean;
+  variant: ModelVariant;
+  model_version?: string;
+  prediction_horizon_days?: number;
+  training_mode?: string;
+  artifact_classification?: 'bootstrap' | 'standard';
+  validation_metrics?: Record<string, unknown>;
+  validation_summary?: Record<string, unknown>;
+  training_metadata?: Record<string, unknown>;
+  evaluation_report?: Record<string, unknown>;
+  runtime_site_packages?: string;
+  reason?: string;
+}
+
+interface ApiMarketDataSummaryResponse {
+  available: boolean;
+  min_trade_date?: string;
+  max_trade_date?: string;
+  daily_bar_count: number;
+  instrument_count: number;
   notes?: string[];
 }
 
@@ -115,12 +181,13 @@ function fromApiRiskMode(risk: ApiRiskMode): RiskProfile {
   return 'HIGH_RISK';
 }
 
-export async function generatePortfolioViaApi(amount: number, risk: RiskProfile): Promise<Portfolio> {
+export async function generatePortfolioViaApi(amount: number, risk: RiskProfile, modelVariant: ModelVariant = 'LIGHTGBM_HYBRID'): Promise<Portfolio> {
   const response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
     method: 'POST',
     body: JSON.stringify({
       investment_amount: amount,
       risk_mode: toApiRiskMode(risk),
+      model_variant: modelVariant,
     }),
   });
 
@@ -135,6 +202,7 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile)
         weight: allocation.weight,
         shares,
         amount: shares * stock.price,
+        drivers: allocation.top_model_drivers ?? [],
       };
     })
     .filter(Boolean) as Portfolio['allocations'];
@@ -147,6 +215,10 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile)
     totalInvested,
     riskProfile: fromApiRiskMode(response.risk_mode),
     backendNotes: response.notes ?? [],
+    modelVariant: response.model_variant,
+    modelSource: response.model_source,
+    modelVersion: response.model_version,
+    predictionHorizonDays: response.prediction_horizon_days,
     metrics: {
       avgBeta: response.metrics.beta,
       estimatedAnnualReturn: response.metrics.estimated_return_pct,
@@ -199,12 +271,16 @@ export async function analyzePortfolioViaApi(
           : [],
     totalValue: response.portfolio_value,
     backendNotes: response.notes,
+    modelVariantApplied: response.model_variant_applied,
+    mlPredictions: response.ml_predictions ?? {},
+    topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
   };
 }
 
 export async function runBacktestViaApi(
   portfolio: Portfolio,
   config: BacktestConfig,
+  modelVariant: ModelVariant = 'LIGHTGBM_HYBRID',
 ): Promise<BacktestResult> {
   const response = await fetchJson<ApiBacktestResponse>('/api/v1/backtests/run', {
     method: 'POST',
@@ -216,6 +292,7 @@ export async function runBacktestViaApi(
       rebalance_frequency: config.rebalanceFreq.toUpperCase(),
       stop_loss_pct: config.stopLossPct,
       take_profit_pct: config.takeProfitPct,
+      model_variant: modelVariant,
     }),
   });
 
@@ -255,6 +332,11 @@ export async function runBacktestViaApi(
     config,
     initialInvestment: response.metrics.initial_investment,
     notes: response.notes ?? [],
+    modelVariant: response.model_variant,
+    modelSource: response.model_source,
+    modelVersion: response.model_version,
+    predictionHorizonDays: response.prediction_horizon_days,
+    topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
   };
 }
 
@@ -263,6 +345,11 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
   const strategies: BenchmarkStrategy[] = response.strategies.map((strategy) => ({
     name: strategy.name,
     description: strategy.description,
+    constructionMethod: strategy.construction_method,
+    isProxy: strategy.is_proxy,
+    sourceWindow: strategy.source_window,
+    constituentMethod: strategy.constituent_method,
+    limitations: strategy.limitations ?? [],
     annualReturn: strategy.annual_return_pct,
     volatility: strategy.volatility_pct,
     maxDrawdown: strategy.max_drawdown_pct,
@@ -270,7 +357,7 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
     sortino: strategy.sortino_ratio,
     cagr5Y: strategy.cagr_5y_pct,
     expenseRatio: strategy.expense_ratio_pct,
-    type: strategy.category === 'AI' ? 'AI' : strategy.category === 'INDEX' ? 'INDEX' : 'QUANT',
+    type: strategy.category,
   }));
 
   const projectedGrowth = response.projected_growth.map((row) => ({
@@ -280,4 +367,34 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
 
   const winner = strategies.reduce((best, current) => (current.sharpe > best.sharpe ? current : best)).name;
   return { strategies, projectedGrowth, winner, notes: response.notes ?? [] };
+}
+
+export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus> {
+  const response = await fetchJson<ApiCurrentModelStatusResponse>('/api/v1/models/current');
+  return {
+    available: response.available,
+    variant: response.variant,
+    modelVersion: response.model_version,
+    predictionHorizonDays: response.prediction_horizon_days,
+    trainingMode: response.training_mode,
+    artifactClassification: response.artifact_classification,
+    validationMetrics: response.validation_metrics,
+    validationSummary: response.validation_summary,
+    trainingMetadata: response.training_metadata,
+    evaluationReport: response.evaluation_report,
+    runtimeSitePackages: response.runtime_site_packages,
+    reason: response.reason,
+  };
+}
+
+export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
+  const response = await fetchJson<ApiMarketDataSummaryResponse>('/api/v1/market-data/summary');
+  return {
+    available: response.available,
+    minTradeDate: response.min_trade_date,
+    maxTradeDate: response.max_trade_date,
+    dailyBarCount: response.daily_bar_count,
+    instrumentCount: response.instrument_count,
+    notes: response.notes ?? [],
+  };
 }

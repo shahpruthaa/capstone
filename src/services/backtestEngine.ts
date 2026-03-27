@@ -26,6 +26,11 @@ export interface BacktestResult {
     config: BacktestConfig;
     initialInvestment: number;
     notes?: string[];
+    modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
+    modelSource?: 'RULES' | 'LIGHTGBM';
+    modelVersion?: string;
+    predictionHorizonDays?: number;
+    topModelDriversBySymbol?: { [key: string]: string[] };
 }
 
 export interface TaxBreakdown {
@@ -270,6 +275,6 @@ export function runBacktest(portfolio: Portfolio, config: BacktestConfig): Backt
         costBreakdown: costs,
         config,
         initialInvestment,
-        notes: ['Local fallback uses GBM simulation and simplified tax/fee assumptions.'],
+        notes: ['Legacy offline demo engine using GBM simulation and simplified tax/fee assumptions.'],
     };
 }

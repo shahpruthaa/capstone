@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Plus, Search, Trash2, AlertTriangle, ShieldCheck, Zap, RefreshCw } from 'lucide-react';
-import { analyzePortfolio, AnalysisResult } from '../services/portfolioService';
+import { AnalysisResult } from '../services/portfolioService';
 import { analyzePortfolioViaApi } from '../services/backendApi';
 import { NSE_STOCKS, LIQUID_ASSETS, SECTOR_CORRELATIONS } from '../data/stocks';
 import { generateRebalancingAdvice } from '../services/localAdvisor';
@@ -95,10 +95,11 @@ export function AnalyzeTab() {
             setResult(await analyzePortfolioViaApi(updated));
             setAnalysisNotice({ tone: 'info', text: 'Risk analysis is being computed from backend market data.' });
         } catch (error) {
-            setResult(analyzePortfolio(updated));
+            setResult(null);
+            setAiAdvice('');
             setAnalysisNotice({
                 tone: 'warning',
-                text: `API fallback engaged: ${error instanceof Error ? error.message : 'Backend analysis is unavailable.'} Showing the local analyzer instead.`,
+                text: `Portfolio analysis failed: ${error instanceof Error ? error.message : 'The local backend analysis endpoint is unavailable.'}`,
             });
         } finally {
             setLoadingAnalysis(false);
@@ -149,10 +150,13 @@ export function AnalyzeTab() {
     };
 
     const sectorChartData = result
-        ? Object.entries(result.sectorWeights).map(([name, value]) => ({ name, value: +value.toFixed(1) }))
+        ? (Object.entries(result.sectorWeights) as [string, number][])
+            .map(([name, value]) => ({ name, value: +value.toFixed(1) }))
         : [];
     const factorChartData = result?.factorExposures
-        ? Object.entries(result.factorExposures).slice(0, 6).map(([name, value]) => ({ name, value: +value.toFixed(2) }))
+        ? (Object.entries(result.factorExposures) as [string, number][])
+            .slice(0, 6)
+            .map(([name, value]) => ({ name, value: +value.toFixed(2) }))
         : [];
 
     const uniqueSectors = [...new Set(
@@ -281,6 +285,20 @@ export function AnalyzeTab() {
                             />
                         </div>
 
+                        <div className="card p-5">
+                            <p className="section-title">Model Runtime</p>
+                            <div className="grid grid-cols-2 gap-3 text-xs">
+                                <div className="stat-row">
+                                    <span className="stat-label">Variant Applied</span>
+                                    <span className="stat-value">{result.modelVariantApplied || 'RULES'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">ML Scores</span>
+                                    <span className="stat-value">{Object.keys(result.mlPredictions || {}).length}</span>
+                                </div>
+                            </div>
+                        </div>
+
                         <div className="space-y-2">
                             {result.suggestions.length === 0 ? (
                                 <div className="alert-success flex items-center gap-2">
@@ -334,6 +352,31 @@ export function AnalyzeTab() {
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {result.mlPredictions && Object.keys(result.mlPredictions).length > 0 && (
+                            <div className="card p-5">
+                                <p className="section-title">ML Scores By Holding</p>
+                                <div className="space-y-2">
+                                    {(Object.entries(result.mlPredictions) as [string, number][])
+                                        .sort((left, right) => right[1] - left[1])
+                                        .map(([symbol, score]) => (
+                                            <div key={symbol} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                                                <div>
+                                                    <div className="font-bold text-sm text-slate-900">{symbol}</div>
+                                                    {(result.topModelDriversBySymbol?.[symbol] || []).length > 0 && (
+                                                        <div className="text-[10px] text-slate-500 mt-1">
+                                                            {(result.topModelDriversBySymbol?.[symbol] || []).slice(0, 2).join(', ')}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <span className={`font-mono text-sm ${score >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                                    {score >= 0 ? '+' : ''}{score.toFixed(3)}
+                                                </span>
+                                            </div>
+                                        ))}
                                 </div>
                             </div>
                         )}

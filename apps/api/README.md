@@ -1,71 +1,87 @@
 # API Service
 
-FastAPI backend scaffold for the NSE AI Portfolio Manager.
+Local FastAPI backend for the NSE AI Portfolio Manager.
 
-## Run locally without Docker
+This service is the active portfolio engine used by the UI. It serves:
+
+- portfolio generation
+- holdings analysis
+- historical backtests
+- benchmark summaries
+- model status
+- market-data ingestion
+
+## Setup
 
 ```bash
 cd apps/api
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
-If you are using the repository `docker compose` stack, Postgres is exposed on host port `5433`.
-
-## Run with Docker Compose
+## Database Services
 
 From the repository root:
 
 ```bash
-docker compose up --build
+docker compose up -d postgres redis
 ```
 
-API docs:
-- `http://localhost:8000/docs`
+Host ports:
+
+- Postgres: `5433`
+- Redis: `6379`
 
 ## Migrations
 
 ```bash
 cd apps/api
-alembic upgrade head
+.venv/bin/alembic upgrade head
 ```
 
-If that fails because your host shell is picking up a broken global `alembic.exe`, install the API dependencies into the same Python first and then call the environment-local executable:
+## Ingest Cached NSE History
 
 ```bash
 cd apps/api
-python -m pip install -r requirements.txt
-.venv\Scripts\alembic upgrade head
+.venv/bin/python scripts/ingest_nse_bhavcopy.py --start-date 2024-01-01 --end-date 2025-12-31
 ```
 
-If your local Python has packaging issues on Windows, run the migration inside Docker instead:
-
-```bash
-docker compose exec api alembic upgrade head
-```
-
-## NSE Bhavcopy Ingestion
-
-Example:
+## Train the Local LightGBM Artifact
 
 ```bash
 cd apps/api
-python scripts/ingest_nse_bhavcopy.py --start-date 2025-01-01 --end-date 2025-01-10
+.venv/bin/python scripts/ml/build_ml_dataset.py --start-date 2024-12-01 --end-date 2025-12-31 --max-symbols 120
+.venv/bin/python scripts/ml/train_lightgbm_model.py \
+  --dataset-csv artifacts/datasets/lightgbm_v1/ml_dataset.csv \
+  --dataset-manifest-json artifacts/datasets/lightgbm_v1/dataset_manifest.json \
+  --artifact-dir artifacts/models/lightgbm_v1
 ```
 
-Docker example:
+## Run the API
 
 ```bash
-docker compose exec api python scripts/ingest_nse_bhavcopy.py --start-date 2025-01-01 --end-date 2025-01-10
+cd apps/api
+.venv/bin/uvicorn app.main:app --reload --port 8000
 ```
 
-This pipeline:
-- downloads NSE CM bhavcopy archives to `data/raw/nse/cm/...`
-- parses supported legacy or UDiFF-style column names
-- upserts `instruments`
-- upserts `daily_bars`
+Docs:
 
-Note:
-- the archive URL format is based on the current NSE archive naming convention and may need adjustment if NSE changes its dissemination pattern again.
+- [http://localhost:8000/docs](http://localhost:8000/docs)
+
+## Current Routes
+
+- `GET /`
+- `GET /healthz`
+- `GET /api/v1/models/current`
+- `POST /api/v1/portfolio/generate`
+- `POST /api/v1/analysis/portfolio`
+- `POST /api/v1/backtests/run`
+- `GET /api/v1/backtests/{run_id}`
+- `GET /api/v1/benchmarks/summary`
+- `POST /api/v1/market-data/ingestions/nse-bhavcopy`
+
+## Notes
+
+- runtime is local-first; there is no external quant API dependency in the active request path
+- `LIGHTGBM_HYBRID` is the default request mode for generation and backtests
+- if the model artifact is missing or invalid, the backend automatically falls back to the rule model

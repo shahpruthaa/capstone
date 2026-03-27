@@ -1,11 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
     BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { ArrowRight, Calculator, Info, RefreshCw, Zap, ShieldCheck, TrendingUp } from 'lucide-react';
-import { generatePortfolio, calculateTransactionCosts, RiskProfile, Portfolio } from '../services/portfolioService';
-import { generatePortfolioViaApi } from '../services/backendApi';
+import { calculateTransactionCosts, RiskProfile, Portfolio } from '../services/portfolioService';
+import { generatePortfolioViaApi, getCurrentModelStatusViaApi, ModelVariant } from '../services/backendApi';
 import { generatePortfolioInsight } from '../services/localAdvisor';
 import { MetricCard, SectorChip } from './MetricCard';
 
@@ -52,20 +52,56 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [amount, setAmount] = useState(500000);
     const [risk, setRisk] = useState<RiskProfile>('LOW_RISK');
     const [generating, setGenerating] = useState(false);
+    const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
+    const [activeModelVersion, setActiveModelVersion] = useState<string>('');
+    const [activeTrainingMode, setActiveTrainingMode] = useState<string>('');
+    const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
+    const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+
+    useEffect(() => {
+        const loadModelStatus = async () => {
+            try {
+                const status = await getCurrentModelStatusViaApi();
+                if (status.available) {
+                    setActiveModelVariant('LIGHTGBM_HYBRID');
+                    setModelStatusReason('');
+                    if (typeof status.modelVersion === 'string') setActiveModelVersion(status.modelVersion);
+                    if (typeof status.trainingMode === 'string') setActiveTrainingMode(status.trainingMode);
+                    if (status.artifactClassification) setArtifactClassification(status.artifactClassification);
+                } else {
+                    setActiveModelVariant('RULES');
+                    setActiveTrainingMode('');
+                    setArtifactClassification('');
+                    setModelStatusReason(status.reason || 'missing_or_invalid_artifact');
+                }
+            } catch {
+                setActiveModelVariant('RULES');
+                setActiveTrainingMode('');
+                setArtifactClassification('');
+                setModelStatusReason('api_unreachable');
+            }
+        };
+        void loadModelStatus();
+    }, []);
 
     const handleGenerate = async () => {
         setGenerating(true);
         setGenerationNotice(null);
         try {
-            const p = await generatePortfolioViaApi(amount, risk);
+            const p = await generatePortfolioViaApi(amount, risk, activeModelVariant);
             onPortfolioGenerated(p);
-            setGenerationNotice({ tone: 'info', text: 'Using the database-backed portfolio generator with historical NSE data.' });
+            setGenerationNotice({
+                tone: 'info',
+                text:
+                    p.modelSource === 'LIGHTGBM'
+                        ? `Using local LightGBM hybrid expected returns${p.modelVersion ? ` (v${p.modelVersion})` : ''}${p.predictionHorizonDays ? ` over ${p.predictionHorizonDays} trading days` : ''}.`
+                        : 'Using the local rule-based portfolio allocator because no active LightGBM artifact is available.',
+            });
         } catch (error) {
-            onPortfolioGenerated(generatePortfolio(amount, risk));
             setGenerationNotice({
                 tone: 'warning',
-                text: `API fallback engaged: ${error instanceof Error ? error.message : 'Unable to reach the backend.'} Showing the local heuristic portfolio instead.`,
+                text: `Portfolio generation failed: ${error instanceof Error ? error.message : 'Unable to reach the local backend.'}`,
             });
         } finally {
             setGenerating(false);
@@ -103,6 +139,18 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         {generationNotice && (
                             <div className={generationNotice.tone === 'info' ? 'alert-info text-xs' : 'alert-warning text-xs'}>
                                 {generationNotice.text}
+                            </div>
+                        )}
+                        <div className="alert-info text-xs">
+                            Active local engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `LightGBM hybrid${activeModelVersion ? ` v${activeModelVersion}` : ''}` : 'Rules only'}
+                            {activeModelVariant === 'RULES' && modelStatusReason ? ` (${modelStatusReason})` : ''}
+                        </div>
+                        {activeModelVariant === 'LIGHTGBM_HYBRID' && (
+                            <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
+                                Training mode: {activeTrainingMode || 'unknown'}.
+                                {artifactClassification === 'bootstrap'
+                                    ? ' This is still a bootstrap artifact and should be treated as a development/demo model.'
+                                    : ' This artifact passed the standard local validation flow.'}
                             </div>
                         )}
                         <div>
@@ -144,6 +192,38 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                 {portfolio && (
                     <>
+                        {(portfolio.modelVariant || portfolio.modelSource) && (
+                            <div className="card p-5">
+                                <h3 className="font-bold text-sm mb-3 text-slate-900">Model Runtime</h3>
+                                <div className="grid grid-cols-2 gap-3 text-xs">
+                                    <div className="stat-row">
+                                        <span className="stat-label">Variant</span>
+                                        <span className="stat-value">{portfolio.modelVariant || 'RULES'}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Source</span>
+                                        <span className="stat-value">{portfolio.modelSource || 'RULES'}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Version</span>
+                                        <span className="stat-value">{portfolio.modelVersion || 'rules'}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Horizon</span>
+                                        <span className="stat-value">{portfolio.predictionHorizonDays || 21}D</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Training</span>
+                                        <span className="stat-value">{activeTrainingMode || 'rules'}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Artifact</span>
+                                        <span className="stat-value">{artifactClassification || 'n/a'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                         {portfolio.backendNotes && portfolio.backendNotes.length > 0 && (
                             <div className="card p-5">
                                 <h3 className="font-bold text-sm mb-3 text-slate-900">Backend Model Notes</h3>
@@ -168,8 +248,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     ['Brokerage', `Rs ${costs!.brokerage.toFixed(2)}`],
                                     ['STT (0.1%)', `Rs ${costs!.stt.toFixed(2)}`],
                                     ['Stamp Duty', `Rs ${costs!.stampDuty.toFixed(2)}`],
-                                    ['GST on Brokerage', `Rs ${costs!.gst.toFixed(2)}`],
-                                    ['Slippage (0.1%)', `Rs ${(portfolio.totalInvested * 0.001).toFixed(2)}`],
+                                    ['Exchange Txn', `Rs ${costs!.exchangeTxn.toFixed(2)}`],
+                                    ['SEBI Fees', `Rs ${costs!.sebi.toFixed(2)}`],
+                                    ['GST', `Rs ${costs!.gst.toFixed(2)}`],
+                                    ['Slippage (0.1%)', `Rs ${costs!.slippage.toFixed(2)}`],
                                 ].map(([k, v]) => (
                                     <div key={k} className="stat-row">
                                         <span className="stat-label text-xs">{k}</span>
@@ -251,6 +333,11 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                                 <td>
                                                     <div className="font-semibold text-slate-900">{a.stock.symbol}</div>
                                                     <div className="text-xs text-slate-400">{a.stock.name}</div>
+                                                    {a.drivers && a.drivers.length > 0 && (
+                                                        <div className="text-[10px] text-slate-500 mt-1">
+                                                            ML drivers: {a.drivers.slice(0, 2).join(', ')}
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td><SectorChip sector={a.stock.sector} /></td>
                                                 <td>

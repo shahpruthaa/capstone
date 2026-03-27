@@ -53,6 +53,18 @@ EQUITY_FEE_SCHEDULES = [
         gst_rate=0.18,
         notes="Versioned cash-equity schedule retained by effective date so historical replays can select the correct rule set.",
     ),
+    EquityFeeSchedule(
+        effective_from=date(2026, 3, 1),
+        brokerage_rate=0.0003,
+        max_brokerage_per_order=20.0,
+        stt_buy_rate=0.001,
+        stt_sell_rate=0.001,
+        exchange_txn_rate=0.000030699,
+        sebi_fee_rate=0.000001,
+        stamp_duty_buy_rate=0.00015,
+        gst_rate=0.18,
+        notes="Cash-equity schedule updated for the NSE capital-market transaction charge revision effective 2026-03-01.",
+    ),
 ]
 
 CAPITAL_GAINS_TAX_SCHEDULES = [

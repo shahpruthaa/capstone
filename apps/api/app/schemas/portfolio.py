@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 RiskMode = Literal["ULTRA_LOW", "MODERATE", "HIGH"]
 RebalanceFrequency = Literal["MONTHLY", "QUARTERLY", "ANNUALLY", "NONE"]
+ModelVariant = Literal["RULES", "LIGHTGBM_HYBRID"]
 
 
 class AllocationModel(BaseModel):
@@ -13,6 +14,7 @@ class AllocationModel(BaseModel):
     sector: str
     weight: float = Field(..., ge=0, le=100)
     rationale: str
+    top_model_drivers: list[str] = Field(default_factory=list)
 
 
 class PortfolioMetricsModel(BaseModel):
@@ -26,9 +28,14 @@ class GeneratePortfolioRequest(BaseModel):
     investment_amount: float = Field(..., gt=0)
     risk_mode: RiskMode
     as_of_date: date | None = None
+    model_variant: ModelVariant = "LIGHTGBM_HYBRID"
 
 
 class GeneratePortfolioResponse(BaseModel):
+    model_variant: ModelVariant
+    model_source: Literal["RULES", "LIGHTGBM"]
+    model_version: str
+    prediction_horizon_days: int
     risk_mode: RiskMode
     investment_amount: float
     allocations: list[AllocationModel]
@@ -53,6 +60,7 @@ class RebalanceActionModel(BaseModel):
 class AnalyzePortfolioRequest(BaseModel):
     holdings: list[HoldingModel]
     target_risk_mode: RiskMode
+    model_variant: ModelVariant | None = None
 
 
 class AnalyzePortfolioResponse(BaseModel):
@@ -64,6 +72,9 @@ class AnalyzePortfolioResponse(BaseModel):
     factor_exposures: dict[str, float] = Field(default_factory=dict)
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
+    model_variant_applied: ModelVariant
+    ml_predictions: dict[str, float] = Field(default_factory=dict)
+    top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     notes: list[str]
 
 
@@ -75,6 +86,7 @@ class BacktestRequest(BaseModel):
     rebalance_frequency: RebalanceFrequency = "QUARTERLY"
     stop_loss_pct: float = Field(default=0.15, ge=0, le=1)
     take_profit_pct: float = Field(default=0.3, ge=0, le=3)
+    model_variant: ModelVariant = "LIGHTGBM_HYBRID"
 
 
 class BacktestMetricModel(BaseModel):
@@ -120,6 +132,11 @@ class CurvePointModel(BaseModel):
 
 
 class BacktestResultResponse(BaseModel):
+    model_variant: ModelVariant
+    model_source: Literal["RULES", "LIGHTGBM"]
+    model_version: str
+    prediction_horizon_days: int
+    top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     run_id: str
     status: Literal["completed"]
     metrics: BacktestMetricModel
@@ -133,6 +150,11 @@ class BenchmarkMetricModel(BaseModel):
     name: str
     description: str
     category: Literal["AI", "INDEX", "FACTOR", "AMC_STYLE"]
+    construction_method: str
+    is_proxy: bool
+    source_window: str
+    constituent_method: str
+    limitations: list[str] = Field(default_factory=list)
     annual_return_pct: float
     volatility_pct: float
     sharpe_ratio: float
@@ -171,3 +193,12 @@ class IngestBhavcopyResponse(BaseModel):
     records_inserted: int
     records_updated: int
     notes: list[str]
+
+
+class MarketDataSummaryResponse(BaseModel):
+    available: bool
+    min_trade_date: date | None = None
+    max_trade_date: date | None = None
+    daily_bar_count: int = 0
+    instrument_count: int = 0
+    notes: list[str] = Field(default_factory=list)

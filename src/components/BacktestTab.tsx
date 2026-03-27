@@ -1,19 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
     ResponsiveContainer, ReferenceLine
 } from 'recharts';
-import { Play, Settings, TrendingUp, TrendingDown, Minus, AlertTriangle, IndianRupee } from 'lucide-react';
+import { Play, Settings, TrendingUp, AlertTriangle, IndianRupee } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
-import { runBacktest, BacktestConfig, BacktestResult } from '../services/backtestEngine';
-import { runBacktestViaApi } from '../services/backendApi';
+import { BacktestConfig, BacktestResult } from '../services/backtestEngine';
+import { getCurrentModelStatusViaApi, getMarketDataSummaryViaApi, ModelVariant, runBacktestViaApi } from '../services/backendApi';
 import { MetricCard } from './MetricCard';
 
 interface Props { portfolio: Portfolio | null; }
 
 const DEFAULT_CONFIG: BacktestConfig = {
-    startDate: '2022-01-01',
-    endDate: '2025-01-01',
+    startDate: '2025-01-01',
+    endDate: '2025-12-31',
     stopLossPct: 0.15,
     takeProfitPct: 0.40,
     rebalanceFreq: 'Quarterly',
@@ -23,24 +23,69 @@ const DEFAULT_CONFIG: BacktestConfig = {
 function fmt(n: number, dec = 2) { return n.toFixed(dec); }
 function fmtRs(n: number) { return `₹${Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`; }
 
+function shiftDate(dateStr: string, days: number): string {
+    const value = new Date(dateStr);
+    value.setDate(value.getDate() + days);
+    return value.toISOString().slice(0, 10);
+}
+
+function deriveBacktestWindow(minTradeDate: string, maxTradeDate: string): Pick<BacktestConfig, 'startDate' | 'endDate'> {
+    const proposedStart = shiftDate(maxTradeDate, -330);
+    return {
+        startDate: proposedStart < minTradeDate ? minTradeDate : proposedStart,
+        endDate: maxTradeDate,
+    };
+}
+
 export function BacktestTab({ portfolio }: Props) {
     const [config, setConfig] = useState<BacktestConfig>(DEFAULT_CONFIG);
     const [result, setResult] = useState<BacktestResult | null>(null);
     const [running, setRunning] = useState(false);
     const [runNotice, setRunNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
+    const [selectedModelVariant, setSelectedModelVariant] = useState<ModelVariant>('RULES');
+
+    useEffect(() => {
+        const loadRuntimeContext = async () => {
+            try {
+                const [status, marketData] = await Promise.all([
+                    getCurrentModelStatusViaApi(),
+                    getMarketDataSummaryViaApi(),
+                ]);
+                const variant: ModelVariant = status.available ? 'LIGHTGBM_HYBRID' : 'RULES';
+                setActiveModelVariant(variant);
+                setSelectedModelVariant(variant);
+                if (marketData.available && marketData.minTradeDate && marketData.maxTradeDate) {
+                    setConfig(current => ({
+                        ...current,
+                        ...deriveBacktestWindow(marketData.minTradeDate!, marketData.maxTradeDate!),
+                    }));
+                } else if (!marketData.available) {
+                    setRunNotice({
+                        tone: 'warning',
+                        text: 'No local market data is loaded yet. Start the API and let it bootstrap from cached bhavcopy archives, or ingest data manually.',
+                    });
+                }
+            } catch {
+                setActiveModelVariant('RULES');
+                setSelectedModelVariant('RULES');
+            }
+        };
+        void loadRuntimeContext();
+    }, []);
 
     const handleRun = async () => {
         if (!portfolio) return;
         setRunning(true);
         setRunNotice(null);
         try {
-            setResult(await runBacktestViaApi(portfolio, config));
-            setRunNotice({ tone: 'info', text: 'Using the backend historical replay with persisted market data and tax-cost logic.' });
+            setResult(await runBacktestViaApi(portfolio, config, selectedModelVariant));
+            setRunNotice({ tone: 'info', text: 'Using the local backend historical replay with persisted market data, Indian taxes, and versioned fee logic.' });
         } catch (error) {
-            setResult(runBacktest(portfolio, config));
+            setResult(null);
             setRunNotice({
                 tone: 'warning',
-                text: `API fallback engaged: ${error instanceof Error ? error.message : 'Backend backtest is unavailable.'} Showing the local simulation instead.`,
+                text: `Backtest failed: ${error instanceof Error ? error.message : 'The local backend backtest endpoint is unavailable.'}`,
             });
         } finally {
             setRunning(false);
@@ -104,6 +149,23 @@ export function BacktestTab({ portfolio }: Props) {
                                     <option key={f} value={f}>{f}</option>
                                 ))}
                             </select>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                                Expected-Return Engine
+                            </label>
+                            <select
+                                value={selectedModelVariant}
+                                onChange={e => setSelectedModelVariant(e.target.value as ModelVariant)}
+                                className="input-field px-3 py-2 text-sm"
+                            >
+                                <option value="RULES">Rules only</option>
+                                <option value="LIGHTGBM_HYBRID">Rules vs ML Hybrid</option>
+                            </select>
+                            {activeModelVariant === 'LIGHTGBM_HYBRID' && selectedModelVariant === 'LIGHTGBM_HYBRID' && (
+                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses LightGBM alpha (fallback to rules if artifact is missing).</p>
+                            )}
                         </div>
 
                         <button onClick={handleRun} disabled={!portfolio || running} className="btn-primary w-full py-2.5 text-sm flex items-center justify-center gap-2">
@@ -183,6 +245,28 @@ export function BacktestTab({ portfolio }: Props) {
                                 </div>
                             </div>
                         )}
+
+                        <div className="card p-5">
+                            <p className="section-title">Model Runtime</p>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                <div className="stat-row">
+                                    <span className="stat-label">Variant</span>
+                                    <span className="stat-value">{result.modelVariant || selectedModelVariant}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Source</span>
+                                    <span className="stat-value">{result.modelSource || 'RULES'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Version</span>
+                                    <span className="stat-value">{result.modelVersion || 'rules'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Horizon</span>
+                                    <span className="stat-value">{result.predictionHorizonDays || 21}D</span>
+                                </div>
+                            </div>
+                        </div>
 
                         {/* Key metrics */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

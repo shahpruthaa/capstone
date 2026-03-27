@@ -31,6 +31,7 @@ from app.schemas.portfolio import (
     GeneratePortfolioResponse,
     PortfolioMetricsModel,
     RebalanceActionModel,
+    ModelVariant,
     TaxBreakdownModel,
 )
 from app.services.corporate_actions import (
@@ -44,6 +45,7 @@ from app.services.market_rules import (
     resolve_capital_gains_tax_schedule,
     resolve_equity_fee_schedule,
 )
+from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 
 RISK_FREE_RATE = 0.07
 DEFAULT_BACKTEST_INVESTMENT = 1_000_000.0
@@ -69,6 +71,63 @@ BENCHMARK_UNIVERSES = [
     ("AMC Multi Factor", "AMC_STYLE", "Diversified multi-factor sleeve blending momentum, quality, low volatility, and liquidity."),
 ]
 
+BENCHMARK_METADATA = {
+    "NSE AI Portfolio": {
+        "construction_method": "Constrained long-only optimizer over local NSE snapshots using shrinkage covariance and model-aware expected returns.",
+        "is_proxy": False,
+        "constituent_method": "Local universe shortlist plus risk-mode allocator on ingested securities.",
+        "limitations": [
+            "Not a public index; this is the application strategy itself.",
+            "Performance is based on the locally ingested research universe and cost assumptions.",
+        ],
+    },
+    "Nifty 50 Proxy": {
+        "construction_method": "Large-cap liquidity-weighted proxy reconstructed from the ingested local NSE universe.",
+        "is_proxy": True,
+        "constituent_method": "Point-in-time top-cap and liquidity screen; not official historical Nifty 50 constituent reconstitution.",
+        "limitations": [
+            "Official Nifty constituent history is not yet loaded locally.",
+            "This series is a proxy and should not be read as the exact published index return.",
+        ],
+    },
+    "Nifty 500 Proxy": {
+        "construction_method": "Broad-market proxy with large, mid, and small-cap bucket balancing across ingested symbols.",
+        "is_proxy": True,
+        "constituent_method": "Bucket-balanced proxy over locally available EQ securities instead of official index constituents.",
+        "limitations": [
+            "Static proxy construction over the local universe, not a full official index rebuild.",
+            "Coverage depends on locally ingested bhavcopy history and instrument metadata quality.",
+        ],
+    },
+    "Momentum Factor": {
+        "construction_method": "Top-ranked factor sleeve using local momentum scores and sector caps.",
+        "is_proxy": True,
+        "constituent_method": "Point-in-time factor ranking over the research universe with sector balancing.",
+        "limitations": [
+            "This is a research proxy, not an official NSE factor index.",
+            "Weights are recomputed from local factor scores rather than external benchmark files.",
+        ],
+    },
+    "Quality Factor": {
+        "construction_method": "Quality-tilted proxy using drawdown, downside-volatility, and stability features.",
+        "is_proxy": True,
+        "constituent_method": "Point-in-time quality ranking over the local universe with sector balancing.",
+        "limitations": [
+            "This is a research proxy, not an official published quality index.",
+            "Inputs are price/volume derived and do not include full fundamentals.",
+        ],
+    },
+    "AMC Multi Factor": {
+        "construction_method": "AMC-style blended multi-factor sleeve over the local research universe.",
+        "is_proxy": True,
+        "constituent_method": "Locally defined mix of momentum, quality, low-vol, and liquidity scores.",
+        "limitations": [
+            "This is a local style proxy and not a specific AMC scheme NAV series.",
+            "Official fund holdings and expense-ratio drift are not yet part of the benchmark pipeline.",
+        ],
+    },
+}
+
 RISK_MODEL_CONFIG = {
     "ULTRA_LOW": {"candidate_count": 10, "max_weight": 0.35, "sector_cap": 0.42, "risk_aversion": 18.0, "shrinkage": 0.55, "turnover_penalty": 0.10, "drift_threshold": 0.06, "min_trade_weight": 0.03, "cooldown_days": 5},
     "MODERATE": {"candidate_count": 12, "max_weight": 0.16, "sector_cap": 0.28, "risk_aversion": 8.5, "shrinkage": 0.40, "turnover_penalty": 0.06, "drift_threshold": 0.04, "min_trade_weight": 0.025, "cooldown_days": 7},
@@ -89,6 +148,10 @@ class Snapshot:
     latest_price: float
     closes: list[tuple[date, float]]
     adjusted_closes: list[tuple[date, float]]
+    # Adjusted OHLC series (split/bonus corrected via corporate actions).
+    adjusted_opens: list[tuple[date, float]]
+    adjusted_highs: list[tuple[date, float]]
+    adjusted_lows: list[tuple[date, float]]
     returns: list[tuple[date, float]]
     annual_return_pct: float
     annual_volatility_pct: float
@@ -101,6 +164,13 @@ class Snapshot:
     corporate_action_count: int = 0
     beta_proxy: float = 1.0
     factor_scores: dict[str, float] = field(default_factory=dict)
+    # LightGBM hybrid annotations (populated only when model_variant requests it).
+    ml_pred_21d_return: float | None = None
+    ml_pred_annual_return: float | None = None
+    top_model_drivers: list[str] = field(default_factory=list)
+    expected_return_source: str = "RULES"
+    model_version: str = "rules"
+    prediction_horizon_days: int = 21
 
 
 @dataclass(frozen=True)
@@ -115,10 +185,16 @@ class BarRecord:
 
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
-    snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=RISK_MODE_UNIVERSES[payload.risk_mode], min_history=126)
+    ml_min_history = 252 if payload.model_variant == "LIGHTGBM_HYBRID" else 126
+    snapshots = load_snapshots(
+        db,
+        as_of_date=as_of_date,
+        symbols=RISK_MODE_UNIVERSES[payload.risk_mode],
+        min_history=ml_min_history,
+    )
     if len(snapshots) < 4:
         snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
-    selected = select_portfolio_candidates(payload.risk_mode, snapshots)
+    selected = select_portfolio_candidates(payload.risk_mode, snapshots, model_variant=payload.model_variant)
     if not selected:
         raise ValueError("Not enough historical market data to generate a portfolio. Ingest bhavcopy data first.")
 
@@ -136,6 +212,19 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
             else "No corporate actions were loaded for the selected instruments, so adjusted and raw close histories currently match."
         ),
     ]
+
+    used_ml_count = sum(1 for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM")
+    model_source = "LIGHTGBM" if used_ml_count > 0 else "RULES"
+    model_version = next((snapshot.model_version for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM"), "rules")
+    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM"), 21)
+
+    if payload.model_variant == "LIGHTGBM_HYBRID":
+        if used_ml_count > 0:
+            notes.append(
+                f"LightGBM hybrid used for {used_ml_count} equities; blended predicted annual return with rule expected returns (75/25). Model version: {model_version}."
+            )
+        else:
+            notes.append("LightGBM hybrid requested, but no valid ML predictions were produced; using rule expected returns for all instruments.")
 
     run = GeneratedPortfolioRun(
         risk_mode=payload.risk_mode,
@@ -165,11 +254,16 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
                 sector=snapshot.sector,
                 weight=round(weight, 2),
                 rationale=rationale,
+                top_model_drivers=list(snapshot.top_model_drivers),
             )
         )
 
     db.commit()
     return GeneratePortfolioResponse(
+        model_variant=payload.model_variant,
+        model_source=model_source,  # type: ignore[arg-type]
+        model_version=model_version,
+        prediction_horizon_days=prediction_horizon_days,
         risk_mode=payload.risk_mode,
         investment_amount=payload.investment_amount,
         allocations=allocations,
@@ -179,7 +273,16 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
 
 def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzePortfolioResponse:
-    snapshots = load_snapshots(db, symbols=[holding.symbol for holding in payload.holdings], min_history=63)
+    ml_status = get_lightgbm_model_status()
+    if payload.model_variant is None:
+        model_variant_applied: ModelVariant = "LIGHTGBM_HYBRID" if ml_status.get("available") else "RULES"
+    else:
+        model_variant_applied = payload.model_variant
+        if model_variant_applied == "LIGHTGBM_HYBRID" and not ml_status.get("available"):
+            model_variant_applied = "RULES"
+
+    ml_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 63
+    snapshots = load_snapshots(db, symbols=[holding.symbol for holding in payload.holdings], min_history=ml_min_history)
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
 
     total_value = 0.0
@@ -215,10 +318,16 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
 
     factor_exposures = compute_factor_exposures([(snapshot, value / total_value) for _, snapshot, value in priced_holdings])
     as_of_date = get_effective_trade_date(db)
-    target_snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=RISK_MODE_UNIVERSES[payload.target_risk_mode], min_history=126)
+    target_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 126
+    target_snapshots = load_snapshots(
+        db,
+        as_of_date=as_of_date,
+        symbols=RISK_MODE_UNIVERSES[payload.target_risk_mode],
+        min_history=target_min_history,
+    )
     if len(target_snapshots) < 4:
         target_snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
-    target_portfolio = select_portfolio_candidates(payload.target_risk_mode, target_snapshots)
+    target_portfolio = select_portfolio_candidates(payload.target_risk_mode, target_snapshots, model_variant=model_variant_applied)
     actions = build_rebalance_actions(priced_holdings, total_value, target_portfolio, payload.target_risk_mode)
     rebalance_days = {"ULTRA_LOW": "quarterly", "MODERATE": "monthly review / quarterly hard rebalance", "HIGH": "monthly with tighter drift checks"}[payload.target_risk_mode]
     notes = [
@@ -236,6 +345,40 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     if missing_symbols:
         notes.append(f"No market data found yet for: {', '.join(sorted(set(missing_symbols)))}.")
 
+    used_ml_count = sum(1 for snapshot, _ in target_portfolio if snapshot.expected_return_source == "LIGHTGBM")
+
+    model_source_note = ""
+    if model_variant_applied == "LIGHTGBM_HYBRID":
+        if used_ml_count > 0:
+            model_source_note = f"LightGBM hybrid applied to {used_ml_count} equities; allocator used blended ML+rules expected returns (75/25)."
+        else:
+            model_source_note = "LightGBM hybrid requested, but no valid equity predictions were produced; using rules expected returns."
+    if model_source_note:
+        notes.append(model_source_note)
+
+    ml_predictions: dict[str, float] = {}
+    top_model_drivers_by_symbol: dict[str, list[str]] = {}
+    if model_variant_applied == "LIGHTGBM_HYBRID" and snapshots:
+        try:
+            from app.ml.lightgbm_alpha.predict import LightGBMAlphaPredictor
+
+            predictor = LightGBMAlphaPredictor()
+            pred_map, model_info = predictor.predict(snapshots)
+            for sym, pred in pred_map.items():
+                ml_predictions[sym] = pred.pred_annual_return
+            for snapshot in snapshots:
+                if snapshot.symbol in pred_map and snapshot.instrument_type == "EQUITY":
+                    snapshot.expected_return_source = "LIGHTGBM"
+                    snapshot.top_model_drivers = list(pred_map[snapshot.symbol].top_drivers)
+                    snapshot.ml_pred_annual_return = float(pred_map[snapshot.symbol].pred_annual_return)
+                    snapshot.ml_pred_21d_return = float(pred_map[snapshot.symbol].pred_21d_return)
+                    snapshot.model_version = str(model_info.get("model_version", "unknown"))
+                    snapshot.prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
+                    top_model_drivers_by_symbol[snapshot.symbol] = list(snapshot.top_model_drivers)
+        except Exception:
+            # If prediction fails for the holdings, keep defaults (rules).
+            pass
+
     return AnalyzePortfolioResponse(
         total_holdings=len(payload.holdings),
         portfolio_value=round(total_value, 2),
@@ -245,16 +388,30 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         factor_exposures={key: round(value, 2) for key, value in factor_exposures.items()},
         correlation_risk=correlation_risk,
         actions=actions,
+        model_variant_applied=model_variant_applied,
+        ml_predictions=ml_predictions,
+        top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         notes=notes,
     )
 
 
 def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultResponse:
+    ml_status = get_lightgbm_model_status()
+    model_variant_applied = payload.model_variant
+    if model_variant_applied == "LIGHTGBM_HYBRID" and not ml_status.get("available"):
+        model_variant_applied = "RULES"
+
     selection_date = get_effective_trade_date(db, payload.start_date)
-    snapshots = load_snapshots(db, as_of_date=selection_date, symbols=RISK_MODE_UNIVERSES[payload.risk_mode], min_history=126)
+    ml_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 126
+    snapshots = load_snapshots(
+        db,
+        as_of_date=selection_date,
+        symbols=RISK_MODE_UNIVERSES[payload.risk_mode],
+        min_history=ml_min_history,
+    )
     if len(snapshots) < 4:
         snapshots = load_snapshots(db, as_of_date=selection_date, min_history=90)
-    model_portfolio = select_portfolio_candidates(payload.risk_mode, snapshots)
+    model_portfolio = select_portfolio_candidates(payload.risk_mode, snapshots, model_variant=model_variant_applied)
     if not model_portfolio:
         raise ValueError("Not enough historical market data to backtest. Ingest bhavcopy data first.")
 
@@ -385,6 +542,21 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         ),
     ]
 
+    used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM")
+    top_model_drivers_by_symbol = {
+        snapshot.symbol: list(snapshot.top_model_drivers) for snapshot, _ in model_portfolio if snapshot.top_model_drivers
+    }
+    model_source = "LIGHTGBM" if used_ml_count > 0 else "RULES"
+    model_version = next((snapshot.model_version for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM"), "rules")
+    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM"), 21)
+    if payload.model_variant == "LIGHTGBM_HYBRID":
+        if used_ml_count > 0:
+            notes.append(
+                f"LightGBM hybrid used for {used_ml_count} equities; blended predicted annual returns with rule expected returns (75/25). Model version: {model_version}."
+            )
+        else:
+            notes.append("LightGBM hybrid requested, but no valid equity predictions were produced; using rule expected returns for the portfolio.")
+
     db.add(
         BacktestRun(
             id=run_id,
@@ -397,8 +569,15 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                 "metrics": metrics.model_dump(),
                 "tax_liability": round_mapping(taxes),
                 "cost_breakdown": round_mapping(costs),
-                "equity_curve": [point.model_dump() for point in equity_curve],
+                "equity_curve": [point.model_dump(mode="json") for point in equity_curve],
                 "notes": notes,
+                "model_info": {
+                    "model_variant": model_variant_applied,
+                    "model_source": model_source,
+                    "model_version": model_version,
+                    "prediction_horizon_days": prediction_horizon_days,
+                    "top_model_drivers_by_symbol": top_model_drivers_by_symbol,
+                },
             },
             notes="\n".join(notes),
         )
@@ -406,6 +585,11 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
     db.commit()
 
     return BacktestResultResponse(
+        model_variant=model_variant_applied,
+        model_source=model_source,  # type: ignore[arg-type]
+        model_version=model_version,
+        prediction_horizon_days=prediction_horizon_days,
+        top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         run_id=run_id,
         status="completed",
         metrics=metrics,
@@ -421,7 +605,18 @@ def get_backtest_result(db: Session, run_id: str) -> BacktestResultResponse:
     if run is None:
         raise ValueError(f"Backtest run {run_id} was not found.")
     payload = run.metrics_json
+    model_info = payload.get("model_info", {}) if isinstance(payload, dict) else {}
+    model_variant = model_info.get("model_variant", "RULES")
+    model_source = model_info.get("model_source", "RULES")
+    model_version = model_info.get("model_version", "rules")
+    prediction_horizon_days = model_info.get("prediction_horizon_days", 21)
+    top_model_drivers_by_symbol = model_info.get("top_model_drivers_by_symbol", {})
     return BacktestResultResponse(
+        model_variant=model_variant,
+        model_source=model_source,  # type: ignore[arg-type]
+        model_version=model_version,
+        prediction_horizon_days=prediction_horizon_days,
+        top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         run_id=run.id,
         status="completed",
         metrics=BacktestMetricModel(**payload["metrics"]),
@@ -437,6 +632,10 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
     snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=126)
     if not snapshots:
         raise ValueError("No benchmark data is available yet. Ingest bhavcopy data first.")
+    source_window_start = min(
+        (snapshot.adjusted_closes[0][0] if snapshot.adjusted_closes else snapshot.latest_trade_date)
+        for snapshot in snapshots
+    )
 
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
     benchmark_portfolios = {
@@ -452,11 +651,17 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
     for name, category, description in BENCHMARK_UNIVERSES:
         metrics = summarize_return_series(aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {})))
         expense_ratio = 0.08 if category == "AI" else 0.06 if category == "INDEX" else 0.34
+        benchmark_metadata = BENCHMARK_METADATA.get(name, {})
         strategies.append(
             BenchmarkMetricModel(
                 name=name,
                 description=description,
                 category=category,  # type: ignore[arg-type]
+                construction_method=benchmark_metadata.get("construction_method", "Local research benchmark over ingested NSE data."),
+                is_proxy=bool(benchmark_metadata.get("is_proxy", True)),
+                source_window=f"{source_window_start.isoformat()} to {as_of_date.isoformat()}",
+                constituent_method=benchmark_metadata.get("constituent_method", "Local proxy construction"),
+                limitations=list(benchmark_metadata.get("limitations", [])),
                 annual_return_pct=metrics["annual_return_pct"],
                 volatility_pct=metrics["volatility_pct"],
                 sharpe_ratio=metrics["sharpe_ratio"],
@@ -503,6 +708,9 @@ def load_snapshots(
             Instrument.instrument_type,
             Instrument.market_cap_bucket,
             DailyBar.trade_date,
+            DailyBar.open_price,
+            DailyBar.high_price,
+            DailyBar.low_price,
             DailyBar.close_price,
             DailyBar.total_traded_value,
         )
@@ -524,10 +732,16 @@ def load_snapshots(
                 "instrument_type": row.instrument_type or ("ETF" if row.symbol.endswith("BEES") else "EQUITY"),
                 "market_cap_bucket": row.market_cap_bucket,
                 "closes": [],
+                "opens": [],
+                "highs": [],
+                "lows": [],
                 "turnover": [],
             },
         )
         bucket["closes"].append((row.trade_date, float(row.close_price)))
+        bucket["opens"].append((row.trade_date, float(row.open_price)))
+        bucket["highs"].append((row.trade_date, float(row.high_price)))
+        bucket["lows"].append((row.trade_date, float(row.low_price)))
         bucket["turnover"].append(float(row.total_traded_value or 0))
 
     action_map = load_corporate_actions(db, symbols=list(grouped.keys()), end_date=effective_date) if grouped else {}
@@ -537,7 +751,14 @@ def load_snapshots(
             continue
 
         closes = bucket["closes"]
-        adjusted_closes, dividend_by_date = adjust_close_series(closes, action_map.get(symbol, []))
+        actions = action_map.get(symbol, [])
+        adjusted_closes, dividend_by_date = adjust_close_series(closes, actions)
+
+        # Apply the same split/bonus correction factor to OHLC for ML feature engineering.
+        factor_lookup = build_cumulative_factor_lookup(closes, actions)
+        adjusted_opens = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["opens"]]
+        adjusted_highs = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["highs"]]
+        adjusted_lows = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["lows"]]
         returns = build_total_return_series(adjusted_closes, dividend_by_date)
         if len(returns) < max(5, min_history - 1):
             continue
@@ -554,6 +775,9 @@ def load_snapshots(
                 latest_price=adjusted_closes[-1][1],
                 closes=closes,
                 adjusted_closes=adjusted_closes,
+                adjusted_opens=adjusted_opens,
+                adjusted_highs=adjusted_highs,
+                adjusted_lows=adjusted_lows,
                 returns=returns,
                 annual_return_pct=annualize_return(adjusted_closes),
                 annual_volatility_pct=annualize_volatility([item[1] for item in returns]),
@@ -587,16 +811,33 @@ def load_snapshots(
 
 
 def get_effective_trade_date(db: Session, as_of_date: date | None = None) -> date:
+    min_trade_date, max_trade_date = db.execute(select(func.min(DailyBar.trade_date), func.max(DailyBar.trade_date))).one()
+    if max_trade_date is None:
+        raise ValueError("No daily market data is available yet. Ingest bhavcopy data first.")
+
+    if as_of_date is not None and min_trade_date is not None and as_of_date < min_trade_date:
+        raise ValueError(
+            f"Requested date {as_of_date.isoformat()} is earlier than the available market data range "
+            f"({min_trade_date.isoformat()} to {max_trade_date.isoformat()})."
+        )
+
     stmt = select(func.max(DailyBar.trade_date))
     if as_of_date is not None:
         stmt = stmt.where(DailyBar.trade_date <= as_of_date)
     trade_date = db.execute(stmt).scalar_one_or_none()
     if trade_date is None:
-        raise ValueError("No daily market data is available yet. Ingest bhavcopy data first.")
+        raise ValueError(
+            f"No daily market data is available on or before {as_of_date.isoformat() if as_of_date else 'the requested date'}. "
+            f"Available range: {min_trade_date.isoformat()} to {max_trade_date.isoformat()}."
+        )
     return trade_date
 
 
-def select_portfolio_candidates(risk_mode: str, snapshots: list[Snapshot]) -> list[tuple[Snapshot, float]]:
+def select_portfolio_candidates(
+    risk_mode: str,
+    snapshots: list[Snapshot],
+    model_variant: ModelVariant = "RULES",
+) -> list[tuple[Snapshot, float]]:
     config = RISK_MODEL_CONFIG[risk_mode]
     screened = shortlist_candidates(risk_mode, snapshots, config["candidate_count"])
     if len(screened) < 4:
@@ -606,7 +847,7 @@ def select_portfolio_candidates(risk_mode: str, snapshots: list[Snapshot]) -> li
     if len(aligned_snapshots) < 4 or len(return_matrix[0]) < 20:
         return []
 
-    expected_returns = estimate_expected_returns(aligned_snapshots, return_matrix, risk_mode)
+    expected_returns = estimate_expected_returns(aligned_snapshots, return_matrix, risk_mode, model_variant=model_variant)
     covariance_matrix = build_shrunk_covariance(return_matrix, config["shrinkage"])
     optimized_weights = optimize_constrained_allocator(
         aligned_snapshots,
@@ -940,9 +1181,15 @@ def align_return_matrix(snapshots: list[Snapshot]) -> tuple[list[Snapshot], list
     return snapshots, matrix
 
 
-def estimate_expected_returns(snapshots: list[Snapshot], return_matrix: list[list[float]], risk_mode: str) -> list[float]:
+def estimate_expected_returns(
+    snapshots: list[Snapshot],
+    return_matrix: list[list[float]],
+    risk_mode: str,
+    model_variant: ModelVariant = "RULES",
+) -> list[float]:
+    # 1) Compute rule-based expected returns (always).
     regime = detect_market_regime(snapshots)
-    expected_returns = []
+    rule_expected_returns: list[float] = []
     config = RISK_MODEL_CONFIG[risk_mode]
     for index, snapshot in enumerate(snapshots):
         series = return_matrix[index]
@@ -990,7 +1237,50 @@ def estimate_expected_returns(snapshots: list[Snapshot], return_matrix: list[lis
             )
             expected = regime["base_return"] + (0.36 * annual_mean) + (0.030 * factor_alpha)
         expected -= config["turnover_penalty"] * max(0.0, abs(snapshot.beta_proxy - 1.0) - 0.15) * 0.01
-        expected_returns.append(max(-0.15, min(0.35, expected)))
+        rule_expected_returns.append(max(-0.15, min(0.35, expected)))
+
+    # 2) Default to rule-only, and annotate snapshot metadata accordingly.
+    for snapshot in snapshots:
+        snapshot.expected_return_source = "RULES"
+        snapshot.model_version = "rules"
+        snapshot.ml_pred_21d_return = None
+        snapshot.ml_pred_annual_return = None
+        snapshot.top_model_drivers = []
+
+    if model_variant != "LIGHTGBM_HYBRID":
+        return rule_expected_returns
+
+    # 3) Hybrid mode: blend ML calibrated annual return into the rule engine.
+    #    Only apply ML predictions to delivery equities; keep ETFs stable.
+    try:
+        from app.ml.lightgbm_alpha.predict import LightGBMAlphaPredictor
+
+        predictor = LightGBMAlphaPredictor()
+        predictions_by_symbol, model_info = predictor.predict(snapshots)
+    except Exception:
+        predictions_by_symbol, model_info = {}, {"available": False}
+
+    model_version = str(model_info.get("model_version", "unknown"))
+
+    expected_returns = rule_expected_returns[:]
+    any_ml_used = False
+    for i, snapshot in enumerate(snapshots):
+        symbol = snapshot.symbol
+        pred = predictions_by_symbol.get(symbol)
+        if snapshot.instrument_type != "EQUITY" or pred is None:
+            continue
+        expected_ml_annual = pred.pred_annual_return
+        blended = 0.75 * expected_ml_annual + 0.25 * rule_expected_returns[i]
+        expected_returns[i] = max(-0.15, min(0.35, blended))
+
+        snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
+        snapshot.ml_pred_annual_return = float(expected_ml_annual)
+        snapshot.top_model_drivers = list(pred.top_drivers)
+        snapshot.expected_return_source = "LIGHTGBM"
+        snapshot.model_version = model_version
+        snapshot.prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
+        any_ml_used = True
+
     return expected_returns
 
 
@@ -1497,16 +1787,24 @@ def determine_exit_fill(bar: BarRecord, state, risk_mode: str, stop_loss_pct: fl
     return None, None
 
 
+def is_long_term_equity_holding(entry_date: date, trade_date: date) -> bool:
+    try:
+        anniversary = entry_date.replace(year=entry_date.year + 1)
+    except ValueError:
+        # Handle leap-day entries by rolling to Feb 28 in the next year.
+        anniversary = entry_date.replace(year=entry_date.year + 1, month=2, day=28)
+    return trade_date >= anniversary
+
+
 def realize_tax_lots(state, shares_to_sell: int, sell_price: float, trade_date: date, taxes: dict[str, float], tax_buckets: dict[str, dict]) -> None:
     remaining = shares_to_sell
     while remaining > 0 and state["lots"]:
         lot = state["lots"][0]
         quantity = min(remaining, lot["shares"])
         gain = quantity * (sell_price - lot["entry_price"])
-        holding_days = (trade_date - lot["entry_date"]).days
         schedule = resolve_capital_gains_tax_schedule(trade_date)
         fiscal_year = financial_year_for_trade_date(trade_date)
-        if holding_days < 365:
+        if not is_long_term_equity_holding(lot["entry_date"], trade_date):
             taxes["stcg_gain"] += gain
             tax_buckets["stcg"][(fiscal_year, schedule.stcg_rate, schedule.cess_rate)] += gain
         else:

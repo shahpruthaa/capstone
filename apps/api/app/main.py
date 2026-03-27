@@ -3,12 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
+from app.services.local_bootstrap import bootstrap_local_state
 
 
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="Quant backend scaffold for the NSE AI Portfolio Manager.",
+    description="Local-first research backend for the NSE AI Portfolio Manager, including rule-based allocation, historical replay, and LightGBM hybrid inference.",
 )
 
 app.add_middleware(
@@ -20,6 +22,14 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+
+@app.on_event("startup")
+def _startup_bootstrap_local_runtime() -> None:
+    # Ensure the local schema exists and seed the DB from cached bhavcopy archives when needed.
+    app.state.bootstrap_status = bootstrap_local_state()  # type: ignore[attr-defined]
+    # Validate artifact availability early so UI can display whether ML hybrid is active.
+    app.state.lightgbm_model_status = get_lightgbm_model_status()  # type: ignore[attr-defined]
 
 
 @app.get("/", tags=["meta"])

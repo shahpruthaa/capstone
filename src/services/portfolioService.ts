@@ -7,6 +7,7 @@ export interface Allocation {
   weight: number;   // percentage 0-100
   shares: number;
   amount: number;
+  drivers?: string[];
 }
 
 export interface Portfolio {
@@ -15,6 +16,10 @@ export interface Portfolio {
   riskProfile: RiskProfile;
   metrics: PortfolioMetrics;
   backendNotes?: string[];
+  modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
+  modelSource?: 'RULES' | 'LIGHTGBM';
+  modelVersion?: string;
+  predictionHorizonDays?: number;
 }
 
 export interface PortfolioMetrics {
@@ -37,6 +42,9 @@ export interface AnalysisResult {
   correlationWarnings: string[];
   totalValue: number;
   backendNotes?: string[];
+  modelVariantApplied?: 'RULES' | 'LIGHTGBM_HYBRID';
+  mlPredictions?: { [key: string]: number };
+  topModelDriversBySymbol?: { [key: string]: string[] };
 }
 
 export interface RebalancingAction {
@@ -53,7 +61,8 @@ export const MAX_BROKERAGE = 20;        // ₹20 cap per order
 export const STT_BUY_RATE = 0.001;     // 0.1% on buy
 export const STT_SELL_RATE = 0.001;     // 0.1% on sell delivery
 export const STAMP_DUTY_RATE = 0.00015;   // 0.015% on buy only
-export const GST_RATE = 0.18;      // 18% on brokerage
+export const EXCHANGE_TXN_RATE = 0.000030699; // current NSE CM charge approx. 2026-03-01 onwards
+export const GST_RATE = 0.18;      // 18% on brokerage + exchange + sebi
 export const SEBI_CHARGES = 0.000001;  // ₹1 per ₹1 crore
 export const SLIPPAGE_RATE = 0.001;     // 0.1% assumed slippage
 
@@ -64,16 +73,17 @@ export const LTCG_EXEMPTION = 125000;    // ₹1.25L exemption pa (budget 2024)
 
 // ─── Transaction Cost Calculation ────────────────────────────────────────────
 export function calculateTransactionCosts(amount: number, isBuy: boolean = true): {
-  brokerage: number; stt: number; stampDuty: number; gst: number; sebi: number; total: number;
+  brokerage: number; stt: number; stampDuty: number; exchangeTxn: number; gst: number; sebi: number; slippage: number; total: number;
 } {
   const brokerage = Math.min(amount * BROKERAGE_RATE, MAX_BROKERAGE);
   const stt = amount * (isBuy ? STT_BUY_RATE : STT_SELL_RATE);
   const stampDuty = isBuy ? amount * STAMP_DUTY_RATE : 0;
-  const gst = brokerage * GST_RATE;
+  const exchangeTxn = amount * EXCHANGE_TXN_RATE;
   const sebi = amount * SEBI_CHARGES;
+  const gst = (brokerage + exchangeTxn + sebi) * GST_RATE;
   const slippage = amount * SLIPPAGE_RATE;
-  const total = brokerage + stt + stampDuty + gst + sebi + slippage;
-  return { brokerage, stt, stampDuty, gst, sebi, total };
+  const total = brokerage + stt + stampDuty + exchangeTxn + gst + sebi + slippage;
+  return { brokerage, stt, stampDuty, exchangeTxn, gst, sebi, slippage, total };
 }
 
 // ─── Portfolio Sector Correlation Score ──────────────────────────────────────

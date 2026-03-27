@@ -4,6 +4,11 @@
 export interface BenchmarkStrategy {
     name: string;
     description: string;
+    constructionMethod: string;
+    isProxy: boolean;
+    sourceWindow: string;
+    constituentMethod: string;
+    limitations: string[];
     annualReturn: number;   // %
     volatility: number;     // % annualised
     maxDrawdown: number;    // %
@@ -11,7 +16,7 @@ export interface BenchmarkStrategy {
     sortino: number;
     cagr5Y: number;         // 5-year CAGR %
     expenseRatio: number;   // annual %
-    type: 'AI' | 'INDEX' | 'QUANT' | 'PASSIVE';
+    type: 'AI' | 'INDEX' | 'FACTOR' | 'AMC_STYLE';
 }
 
 export interface ComparisonResult {
@@ -26,6 +31,11 @@ const STRATEGIES: BenchmarkStrategy[] = [
     {
         name: 'NSE AI Portfolio',
         description: 'Correlation-optimised, factor-driven, dynamically rebalanced with stop-loss & tax-loss harvesting.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: false,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 18.4,
         volatility: 14.2,
         maxDrawdown: 9.8,
@@ -38,6 +48,11 @@ const STRATEGIES: BenchmarkStrategy[] = [
     {
         name: 'Nifty 50 Proxy',
         description: 'Large-cap proxy basket for the top end of the NSE universe.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: true,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 12.8,
         volatility: 16.5,
         maxDrawdown: 15.4,
@@ -50,6 +65,11 @@ const STRATEGIES: BenchmarkStrategy[] = [
     {
         name: 'Nifty 500 Proxy',
         description: 'Broad-market proxy including large, mid, and smaller listed companies.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: true,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 14.2,
         volatility: 18.8,
         maxDrawdown: 18.2,
@@ -62,6 +82,11 @@ const STRATEGIES: BenchmarkStrategy[] = [
     {
         name: 'Equal Weight',
         description: 'Equal allocation across all Nifty 50 stocks. Avoids market-cap concentration bias.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: true,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 13.5,
         volatility: 17.2,
         maxDrawdown: 16.1,
@@ -69,11 +94,16 @@ const STRATEGIES: BenchmarkStrategy[] = [
         sortino: 1.28,
         cagr5Y: 12.8,
         expenseRatio: 0.20,
-        type: 'PASSIVE',
+        type: 'INDEX',
     },
     {
         name: 'Markowitz MVO',
         description: 'Traditional Mean-Variance Optimization targeting the Efficient Frontier. Sensitive to input estimates.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: true,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 14.8,
         volatility: 13.8,
         maxDrawdown: 12.5,
@@ -81,11 +111,16 @@ const STRATEGIES: BenchmarkStrategy[] = [
         sortino: 1.68,
         cagr5Y: 14.1,
         expenseRatio: 0.30,
-        type: 'QUANT',
+        type: 'FACTOR',
     },
     {
         name: 'Momentum Factor',
         description: 'Invests in top 30% past-6M momentum NSE stocks. High returns but sharp drawdowns in reversals.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: true,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 20.1,
         volatility: 22.5,
         maxDrawdown: 24.8,
@@ -93,11 +128,16 @@ const STRATEGIES: BenchmarkStrategy[] = [
         sortino: 1.55,
         cagr5Y: 18.2,
         expenseRatio: 0.45,
-        type: 'QUANT',
+        type: 'FACTOR',
     },
     {
         name: 'Quality Factor',
         description: 'High ROE, low leverage, stable earnings. Mirae / Motilal approach. Defensive outperformer.',
+        constructionMethod: 'Simulated local benchmark',
+        isProxy: true,
+        sourceWindow: 'Illustrative only',
+        constituentMethod: 'Static demo data',
+        limitations: ['Demo-only local fallback benchmark.'],
         annualReturn: 15.6,
         volatility: 12.9,
         maxDrawdown: 11.2,
@@ -105,7 +145,7 @@ const STRATEGIES: BenchmarkStrategy[] = [
         sortino: 1.82,
         cagr5Y: 14.9,
         expenseRatio: 0.35,
-        type: 'QUANT',
+        type: 'FACTOR',
     },
 ];
 

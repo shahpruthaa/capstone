@@ -1,290 +1,197 @@
 # NSE AI Portfolio Manager Technical Plan
 
-## 1. Current State
-
-This repository already contains a functioning end-to-end local research stack:
-
-- React/Vite frontend
-- FastAPI backend
-- PostgreSQL + TimescaleDB persistence
-- NSE bhavcopy ingestion
-- DB-backed portfolio generation
-- DB-backed analysis
-- DB-backed backtests
-- DB-backed benchmark summaries
-
-For the current supported scope, the following items are now implemented end to end:
-
-- expected return model
-- tax model detail
-- fee table detail by effective date
-- rebalance policy
-
-The remaining work is mostly about production depth, live data, and official benchmark replication.
-
-## 2. Expected Return Model
-
-### Inputs
-
-- adjusted total-return histories
-- aligned return matrix across selected instruments
-- risk-mode configuration
-- factor z-scores
-- rule-based market regime
-
-### Factor Set
-
-- `momentum`
-- `quality`
-- `low_vol`
-- `liquidity`
-- `sector_strength`
-- `size`
-- `beta`
-
-Current construction:
-
-- `momentum = 0.20 * 1M + 0.35 * 3M + 0.45 * 6M`
-- `quality = annual_return - 0.70 * downside_vol - 0.40 * max_drawdown + beta_discipline`
-- `low_vol = -annual_volatility`
-- `liquidity = sqrt(avg_traded_value)`
-- `sector_strength = stock_momentum - sector_average_momentum`
-- `size = {Large: 1, Mid: 0, Small: -1, Unknown: -0.25}`
-- `beta = beta_proxy - 1`
-
-### Regime Overlay
-
-Current overlay is simple and deterministic:
-
-- benchmark trend weak or volatility stressed -> defensive base return
-- benchmark trend strong and volatility controlled -> risk-on bonus
-- otherwise neutral
-
-### Risk-Mode Return Blends
-
-#### Ultra-Low
-
-- regime base return
-- `0.30 * annual_mean`
-- `0.028 * factor_alpha`
-- defensive / ETF bonus
-
-#### Moderate
-
-- regime base return
-- `0.36 * annual_mean`
-- `0.030 * factor_alpha`
-
-#### High
-
-- regime base return
-- regime risk-on bonus
-- `0.42 * annual_mean`
-- `0.035 * factor_alpha`
-- cyclical bonus
-
-### Guardrails
-
-- beta drift penalty
-- bounded output clamp before optimization
-
-Implementation status:
-
-- Complete for current scope
-
-Known boundary:
-
-- no fundamentals-driven quality/value factors yet
-
-## 3. Tax Model Detail
-
-### Supported Scope
-
-- listed delivery-equity research simulation
-
-### Lot Logic
-
-- FIFO tax lots per symbol
-- realized gains bucketed by:
-  - financial year
-  - holding period
-  - effective tax schedule
-
-### Holding Period Rules
-
-- `STCG`: `< 365 days`
-- `LTCG`: `>= 365 days`
-
-### Effective-Date Tax Schedules
-
-| Effective From | STCG | LTCG | LTCG Exemption | Cess |
-| --- | --- | --- | --- | --- |
-| `2020-07-01` | `15%` | `10%` | `Rs 1,00,000` | `4%` |
-| `2024-07-23` | `20%` | `12.5%` | `Rs 1,25,000` | `4%` |
-
-### Computation Sequence
-
-1. realize lots using FIFO
-2. bucket gains by fiscal year and schedule
-3. apply STCG only on positive net STCG
-4. net positive and negative LTCG inside fiscal-year schedule buckets
-5. apply LTCG exemption once per fiscal year
-6. compute cess on base tax
-
-### Output Fields
-
-- `stcg_gain`
-- `ltcg_gain`
-- `stcg_tax`
-- `ltcg_tax`
-- `cess_tax`
-- `total_tax`
-
-Implementation status:
-
-- Complete for current scope
-
-Known boundary:
-
-- no surcharge
-- no derivatives tax support
-
-## 4. Fee Table Detail by Effective Date
-
-### Per-Trade Formula
-
-- `brokerage = min(turnover * brokerage_rate, max_brokerage_per_order)`
-- `stt = turnover * stt_rate(side)`
-- `stamp_duty = turnover * stamp_duty_buy_rate` on buy only
-- `exchange_txn = turnover * exchange_txn_rate`
-- `sebi_fee = turnover * sebi_fee_rate`
-- `gst = (brokerage + exchange_txn + sebi_fee) * gst_rate`
-- `slippage = turnover * liquidity_adjusted_slippage_rate`
-- `total_costs = sum(all components)`
-
-### Effective-Date Fee Schedules
-
-| Effective From | Brokerage | Max Brokerage | STT Buy | STT Sell | Exchange Txn | SEBI | Stamp Duty Buy | GST |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `2020-07-01` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
-| `2024-07-23` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
-
-### Slippage Model
-
-- liquidity participation based
-- volatility loaded
-- engineering cap applied
-
-Implementation status:
-
-- Complete for current scope
-
-Known boundary:
-
-- no broker-plan-specific schedules
-
-## 5. Rebalance Policy
-
-### Review Cadence
-
-- monthly = `21` trading days
-- quarterly = `63` trading days
-- annually = `252` trading days
-- none = disabled
-
-### Risk-Mode Rules
-
-| Risk Mode | Drift Threshold | Minimum Trade Weight | Cooldown After Exit |
-| --- | --- | --- | --- |
-| `ULTRA_LOW` | `6.0%` | `3.0%` | `5 days` |
-| `MODERATE` | `4.0%` | `2.5%` | `7 days` |
-| `HIGH` | `3.0%` | `2.0%` | `10 days` |
-
-### Decision Logic
-
-1. generate current optimizer target
-2. compare live holdings with target weights
-3. sell overweights if drift exceeds threshold
-4. buy underweights only if:
-   - cash is available
-   - symbol is out of cooldown
-   - minimum trade budget is met
-
-Implementation status:
-
-- Complete for current scope
-
-Known boundary:
-
-- no persisted approval workflow
-- no user-custom rebalance policy editor yet
-
-## 6. End-to-End Flow
-
-### Portfolio Generation
-
-1. load instruments and histories from the database
-2. apply corporate-action adjustment if actions exist
-3. compute factor scores
-4. estimate expected returns
-5. estimate shrinkage covariance
-6. optimize long-only constrained portfolio
-7. persist run and return notes to the UI
-
-### Holdings Analysis
-
-1. price holdings from the database
-2. compute sector weights, beta, factor exposures, and correlation
-3. generate optimizer target for the chosen risk mode
-4. compute target-vs-current rebalance actions
-5. return notes and actions to the UI
+## 1. Goal
+
+Ship a fully local NSE portfolio research application where:
+
+- the UI uses only the local FastAPI backend
+- the backend uses the local database and local model artifacts
+- LightGBM hybrid expected returns are the default runtime path when a valid artifact exists
+- rules remain the safe fallback when the artifact is missing or invalid
+
+## 2. Current Implementation Baseline
+
+Already implemented:
+
+- local FastAPI routes for portfolio generation, holdings analysis, backtests, benchmark summaries, and model status
+- PostgreSQL + TimescaleDB schema and migrations
+- NSE bhavcopy ingestion with raw archive caching
+- corporate-action adjustment and dividend handling
+- constrained allocator over shrinkage covariance
+- holdings analyzer and rebalance action generation
+- historical replay with stop-loss, take-profit, fees, taxes, and cooldown-based re-entry rules
+- local LightGBM dataset builder, trainer, predictor, and artifact loader
+- UI support for model variant, model version, training mode, artifact classification, and top ML drivers
+- backend market-data summary endpoint for readiness and valid-range derivation
+- benchmark provenance metadata in the compare flow
+- evaluation report generation under `artifacts/reports`
+- UI adapters wired directly to backend endpoints with no silent local portfolio/backtest/benchmark fallbacks
+
+Still pending or partial:
+
+- official benchmark constituent ingestion
+- deeper pre-2024 history for longer walk-forward training
+- automated test coverage
+- richer factor set beyond price/liquidity-derived inputs
+- broker profile abstraction and more detailed fee schedules
+- standard-history v2 artifact with positive held-out validation metrics
+
+## 3. Local LightGBM Plan
+
+### Runtime policy
+
+- request default: `LIGHTGBM_HYBRID`
+- equity expected returns: local LightGBM + rule blend
+- ETF expected returns: rules only
+- missing or invalid artifact: automatic runtime fallback to `RULES`
+
+### Dataset design
+
+- one row per `(symbol, decision_date)`
+- monthly decision dates only
+- trailing `252` trading-day feature window
+- next `21` trading-day return target
+- adjusted total-return history
+- numeric features winsorized and z-scored cross-sectionally per decision date
+- sector and market-cap bucket encoded categorically
+
+### Training design
+
+- local LightGBM regressor
+- expanding walk-forward validation
+- embargo between train, validation, and test folds
+- primary metric: out-of-sample mean Spearman rank IC
+- secondary metric: top-minus-bottom forward return spread
+
+### Practical repo constraint
+
+- the checked-in cache begins in 2024, so the trainer now supports compressed walk-forward windows when the preferred `24/6/6` monthly split is impossible
+- the current bootstrap artifact can be accepted with negative IC metadata when history is too thin to satisfy the original rejection gate
+- once older history is ingested, retrain with the longer preferred walk-forward schedule
+- the UI now labels that state explicitly through `training_mode` and `artifact_classification`
+
+## 4. UI Integration Plan
+
+### Generate
+
+- submit directly to `POST /api/v1/portfolio/generate`
+- preflight model availability via `GET /api/v1/models/current`
+- surface `model_variant`, `model_source`, `model_version`, and `prediction_horizon_days`
+- surface training mode and bootstrap-vs-standard artifact status
+- show top ML drivers on selected equities
+- remove silent heuristic fallback behavior
+
+### Analyze
+
+- submit directly to `POST /api/v1/analysis/portfolio`
+- show `model_variant_applied`
+- show ML scores by holding when present
+- use backend rebalance actions as the authoritative response
 
 ### Backtest
 
-1. generate starting portfolio from historical data available at start date
-2. load adjusted daily OHLC history and dividend cash events
-3. enter positions with dated fee schedules
-4. simulate stop-loss, take-profit, and rebalance events
-5. realize gains via FIFO lots
-6. compute STCG/LTCG/cess under the correct effective schedule
-7. persist results and render them in the UI
+- submit directly to `POST /api/v1/backtests/run`
+- preflight model availability via `GET /api/v1/models/current`
+- derive valid default dates from `GET /api/v1/market-data/summary`
+- show model runtime info beside the result
+- keep `RULES` vs `LIGHTGBM_HYBRID` selector in the UI
+- remove silent local simulation fallback behavior
 
-## 7. Documentation / Code Mapping
+### Compare
 
-Primary implementation files:
+- submit directly to `GET /api/v1/benchmarks/summary`
+- show backend benchmark notes and per-strategy provenance metadata
+- label proxy benchmarks clearly in the UI
+- if the endpoint fails, show the failure instead of silently substituting a different benchmark engine
 
-- [db_quant_engine.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/db_quant_engine.py)
-- [market_rules.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/market_rules.py)
-- [corporate_actions.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/corporate_actions.py)
-- [portfolio.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/schemas/portfolio.py)
+### Environment wiring
 
-UI surfaces:
+- frontend API host comes from `VITE_API_BASE_URL`
+- default local value remains `http://localhost:8000`
+- `.env.example` documents the expected frontend API target
 
-- [GenerateTab.tsx](C:/Users/pruth/nse-ai-portfolio-manager/src/components/GenerateTab.tsx)
-- [AnalyzeTab.tsx](C:/Users/pruth/nse-ai-portfolio-manager/src/components/AnalyzeTab.tsx)
-- [BacktestTab.tsx](C:/Users/pruth/nse-ai-portfolio-manager/src/components/BacktestTab.tsx)
-- [CompareTab.tsx](C:/Users/pruth/nse-ai-portfolio-manager/src/components/CompareTab.tsx)
+## 5. API and Contract Plan
 
-## 8. Phase Status
+Active routes:
 
-| Phase | Scope | Status | Notes |
-| --- | --- | --- | --- |
-| 0 | UI shell | Complete | browser workflows are live |
-| 1 | Local backend | Complete | API, Docker, Postgres, Redis |
-| 2 | Historical ingestion | Complete | bhavcopy + raw cache + Timescale daily bars |
-| 3 | Expected return + allocator | Complete for current scope | factor-aware alpha + shrinkage covariance + constraints |
-| 4 | Tax/fees/rebalance | Complete for current scope | FIFO tax lots, dated fee schedules, drift-based rebalance |
-| 5 | Simulation realism | Partial | daily OHLC only, not intraday |
-| 6 | Benchmarking | Partial | proxy benchmarks only |
-| 7 | Live / production hardening | Not started | live feeds, broker routing, auth, compliance |
+- `GET /healthz`
+- `GET /api/v1/models/current`
+- `POST /api/v1/portfolio/generate`
+- `POST /api/v1/analysis/portfolio`
+- `POST /api/v1/backtests/run`
+- `GET /api/v1/backtests/{run_id}`
+- `GET /api/v1/benchmarks/summary`
+- `GET /api/v1/market-data/summary`
+- `POST /api/v1/market-data/ingestions/nse-bhavcopy`
 
-## 9. Remaining Backlog
+Contract requirements:
 
-The four requested areas are complete for the current supported local research scope. The remaining work is:
+- generation and backtest responses must always return model source metadata
+- analysis responses must return the applied model variant and any ML scores
+- model status must reflect whether the artifact is truly loadable, not just whether files exist
+- model status should include `training_mode`, `artifact_classification`, and `validation_summary`
+- benchmark summaries should include construction/proxy metadata per strategy
+- market-data summary is the authoritative source for valid local backtest dates
 
-- official benchmark constituent ingestion
-- live market-data feeds
-- fundamentals-driven factor models
-- intraday execution modeling
-- broker-specific fee plans
-- user portfolio persistence and approval flows
+## 6. Data Pipeline Plan
+
+### Market data
+
+- use cached NSE bhavcopy ZIP files as the current local EOD source
+- ingest into `instruments` and `daily_bars`
+- enrich selected symbols with sector, instrument type, and market-cap bucket
+
+### Corporate actions
+
+- keep schema and import flow
+- apply split/bonus factors to OHLC and close histories
+- add dividend cash credits into total-return series and backtests
+
+### Benchmarks
+
+- current state: proxy benchmarks only
+- current endpoint now labels proxy construction explicitly
+- next step: add official index constituent files and benchmark series storage
+
+## 7. Simulation Engine Plan
+
+Keep the current event-driven daily replay model, but harden these areas:
+
+- maintain dated fee and tax schedules
+- keep the true `12-month` listed-equity LTCG classification aligned with new tax schedules
+- externalize brokerage profiles instead of treating one discount-broker plan as universal
+- keep stop-loss / take-profit fills gap-aware and based on adjusted OHLC bars
+- preserve identical fee/tax/rebalance logic between `RULES` and `LIGHTGBM_HYBRID`; only the expected-return source should differ
+
+## 8. Verification Plan
+
+Minimum verification after each major change:
+
+- `npm run build`
+- API import/startup check
+- `/healthz`
+- `/api/v1/models/current`
+- `/api/v1/market-data/summary`
+- end-to-end smoke calls for:
+  - portfolio generation
+  - holdings analysis
+  - backtest
+  - benchmark summary
+- confirm the UI tabs map to those exact backend routes through `src/services/backendApi.ts`
+
+ML-specific verification:
+
+- dataset shape and leakage checks
+- artifact loader validation
+- inference fallback when artifact is missing
+- side-by-side `RULES` vs `LIGHTGBM_HYBRID` backtest comparison
+
+## 9. Near-Term Execution Order
+
+1. Remove stale scaffold and frontend fallback messaging.
+2. Make LightGBM hybrid the default request path and validate artifact loading.
+3. Ingest enough local bhavcopy history to support the DB-backed endpoints.
+4. Build the ML dataset and train the first local artifact.
+5. Generate the evaluation report under `artifacts/reports`.
+6. Run endpoint smoke checks against the local stack.
+7. Replace proxy benchmarks with official reconstitution as the next research milestone.

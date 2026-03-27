@@ -1,12 +1,39 @@
+from sqlalchemy import func, select
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.ingestion.nse_bhavcopy import ingest_nse_bhavcopy_range
-from app.schemas.portfolio import IngestBhavcopyRequest, IngestBhavcopyResponse
+from app.models.daily_bar import DailyBar
+from app.models.instrument import Instrument
+from app.schemas.portfolio import IngestBhavcopyRequest, IngestBhavcopyResponse, MarketDataSummaryResponse
 
 
 router = APIRouter()
+
+
+@router.get("/summary", response_model=MarketDataSummaryResponse)
+def market_data_summary_endpoint(
+    db: Session = Depends(get_db),
+) -> MarketDataSummaryResponse:
+    min_trade_date, max_trade_date = db.execute(select(func.min(DailyBar.trade_date), func.max(DailyBar.trade_date))).one()
+    daily_bar_count = int(db.execute(select(func.count(DailyBar.id))).scalar_one() or 0)
+    instrument_count = int(db.execute(select(func.count(Instrument.id))).scalar_one() or 0)
+
+    notes: list[str] = []
+    if max_trade_date is None:
+        notes.append("No daily bars are loaded in PostgreSQL yet.")
+    else:
+        notes.append(f"Local market data is available from {min_trade_date.isoformat()} to {max_trade_date.isoformat()}.")
+
+    return MarketDataSummaryResponse(
+        available=max_trade_date is not None,
+        min_trade_date=min_trade_date,
+        max_trade_date=max_trade_date,
+        daily_bar_count=daily_bar_count,
+        instrument_count=instrument_count,
+        notes=notes,
+    )
 
 
 @router.post("/ingestions/nse-bhavcopy", response_model=IngestBhavcopyResponse)

@@ -24,4 +24,4 @@ class CorporateAction(TimestampMixin, Base):
     description: Mapped[str | None] = mapped_column(String(255))
     source: Mapped[str] = mapped_column(String(64), nullable=False, default="manual_csv")
 
-    instrument = relationship("Instrument")
+    instrument = relationship("Instrument", back_populates="corporate_actions")

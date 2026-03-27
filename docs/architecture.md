@@ -2,41 +2,43 @@
 
 ## Objective
 
-Define the current local-first architecture of the NSE AI Portfolio Manager, with explicit implementation detail for:
+Document the current local-first architecture after removing reliance on any external quant API. The active system is:
 
-- expected return model
-- tax model detail
-- fee table detail by effective date
-- rebalance policy
-
-This document describes the system as it exists now, not just the target future state.
+- React/Vite UI
+- local FastAPI backend
+- PostgreSQL + TimescaleDB market store
+- NSE bhavcopy ingestion
+- local LightGBM hybrid alpha model
+- local benchmark, analysis, and backtest services
+- readiness/status surfaces for model and market-data health
 
 ## Runtime Architecture
 
 ```mermaid
 flowchart LR
     U["User Browser"] --> WEB["React / Vite UI"]
-    WEB --> API["FastAPI Backend"]
+    WEB --> API["FastAPI API"]
 
-    API --> QE["Quant Engine"]
-    API --> ING["NSE Ingestion"]
+    API --> QE["Local Quant Engine"]
+    API --> ML["LightGBM Inference"]
     API --> PG["PostgreSQL + TimescaleDB"]
     API --> REDIS["Redis"]
 
-    NSE["NSE Bhavcopy Archives"] --> ING
-    CA["Corporate Actions CSV Import"] --> API
-    ING --> RAW["Local Raw Archive Cache"]
-    ING --> PG
-    QE --> PG
+    ING["Bhavcopy / Corporate Actions Ingestion"] --> PG
+    RAW["Raw NSE Archives"] --> ING
+    MLTRAIN["Offline LightGBM Training"] --> ART["Model Artifacts"]
+    ART --> ML
 ```
 
 ## Core Principles
 
-- Portfolio construction is deterministic and auditable.
-- LLM-style assistance is explanatory only.
+- The UI is presentation and orchestration only; portfolio math lives in Python.
+- Portfolio generation, analysis, backtests, and benchmarks all use the same local market store.
+- ML training is offline and local. Runtime uses inference only.
+- The active expected-return engine is `LIGHTGBM_HYBRID` when a valid artifact exists, otherwise `RULES`.
+- The UI derives readiness and valid backtest ranges from backend summary endpoints instead of hardcoded assumptions.
 - Raw files are preserved before transformation.
-- Historical replay uses dated rules rather than one timeless cost/tax assumption.
-- The frontend is presentation-oriented; portfolio math lives in Python services.
+- Historical replay uses dated rules instead of one timeless fee/tax assumption.
 
 ## Main Components
 
@@ -44,370 +46,219 @@ flowchart LR
 
 Responsibilities:
 
-- portfolio generation workflow
-- holdings analysis
-- backtest controls and result visualization
-- benchmark comparison
-- backend notes, loading, and fallback handling
+- submit generation, analysis, backtest, and benchmark requests
+- call the model-status endpoint to decide whether the UI should default to `RULES` or `LIGHTGBM_HYBRID`
+- call the market-data summary endpoint to constrain valid backtest windows
+- surface model runtime info such as variant, source, version, and horizon
+- surface training mode and bootstrap-vs-standard artifact classification
+- show backend notes and top model drivers
+- show benchmark construction notes and proxy labels
+- display endpoint failures directly instead of silently switching to a different simulation path
 
-Status:
+Current endpoint mapping:
 
-- Complete
+- `App` readiness panel -> `GET /api/v1/models/current`, `GET /api/v1/market-data/summary`
+- `GenerateTab` -> `GET /api/v1/models/current`, `POST /api/v1/portfolio/generate`
+- `AnalyzeTab` -> `POST /api/v1/analysis/portfolio`
+- `BacktestTab` -> `GET /api/v1/models/current`, `GET /api/v1/market-data/summary`, `POST /api/v1/backtests/run`
+- `CompareTab` -> `GET /api/v1/benchmarks/summary`
 
 ### FastAPI Backend
 
 Responsibilities:
 
-- generate portfolio
-- analyze holdings
-- run backtests
-- summarize benchmarks
-- trigger market-data ingestion
+- `POST /api/v1/portfolio/generate`
+- `POST /api/v1/analysis/portfolio`
+- `POST /api/v1/backtests/run`
+- `GET /api/v1/benchmarks/summary`
+- `GET /api/v1/models/current`
+- `GET /api/v1/market-data/summary`
+- market-data ingestion endpoints
 
-Status:
-
-- Complete for local development
-
-### Quant Engine
+### Local Quant Engine
 
 Responsibilities:
 
-- adjusted return construction
-- factor scoring
-- expected return estimation
-- shrinkage covariance
-- constrained optimization
-- rebalance recommendation generation
-- dated fee/tax replay
+- load adjusted histories from the database
+- compute factor scores
+- estimate expected returns
+- estimate shrinkage covariance
+- optimize long-only constrained portfolios
+- analyze holdings and produce rebalance actions
+- run historical replay with dated taxes and fees
 
-Status:
+Primary implementation:
 
-- Complete for the current supported local research scope
+- `apps/api/app/services/db_quant_engine.py`
 
-## Expected Return Model Architecture
+### LightGBM Alpha Layer
 
-### Input Layer
+Responsibilities:
 
-The expected return model consumes:
+- build supervised monthly decision datasets
+- train a local LightGBM regressor
+- load validated artifacts at API startup
+- score equity snapshots at runtime
+- expose model metadata to the UI
+- expose validation summaries and evaluation-report metadata
+
+Primary implementation:
+
+- `apps/api/app/ml/lightgbm_alpha/dataset.py`
+- `apps/api/app/ml/lightgbm_alpha/train.py`
+- `apps/api/app/ml/lightgbm_alpha/predict.py`
+- `apps/api/app/ml/lightgbm_alpha/artifact_loader.py`
+- `apps/api/scripts/ml/evaluate_lightgbm_model.py`
+
+## Expected Return Architecture
+
+### Rule Engine
+
+Inputs:
 
 - adjusted total-return history
-- aligned cross-sectional return matrix
 - risk-mode configuration
-- factor z-scores
-- simple market regime classification
+- momentum, quality proxy, low-volatility, liquidity, sector strength, size, and beta factors
+- simple regime overlay
 
-### Factor Layer
+Output:
 
-Current factors:
+- bounded annualized expected return per instrument
 
-- `momentum`
-- `quality`
-- `low_vol`
-- `liquidity`
-- `sector_strength`
-- `size`
-- `beta`
+### LightGBM Hybrid Engine
 
-Definitions:
+Inputs:
 
-- `momentum = 0.20 * 1M + 0.35 * 3M + 0.45 * 6M`
-- `quality = annual_return - 0.70 * downside_vol - 0.40 * max_drawdown + beta_discipline`
-- `low_vol = -annual_volatility`
-- `liquidity = sqrt(avg_traded_value)`
-- `sector_strength = stock_momentum - sector_average_momentum`
-- `size = {Large: 1, Mid: 0, Small: -1, Unknown: -0.25}`
-- `beta = beta_proxy - 1`
+- monthly decision-date snapshots
+- trailing return / volatility / drawdown / moving-average / liquidity / beta / factor features
+- sector and market-cap categorical features
 
-### Regime Layer
+Training target:
 
-Current regime logic is rule-based:
+- next `21` trading-day adjusted return
 
-- `risk_off`
-  - if 3M benchmark return is weak or benchmark volatility is stressed
-- `neutral`
-  - otherwise
-- `risk_on`
-  - if 3M benchmark trend is strong and benchmark volatility is contained
+Runtime behavior:
 
-Outputs:
+- equities use LightGBM when a valid score is available
+- ETFs stay on the rule model
+- final equity expected return is a blend of ML and rules
+- UI receives top contributing model drivers per selected symbol
+- model status exposes `training_mode`, `artifact_classification`, and a compact validation summary
 
-- `base_return`
-- `risk_on_bonus`
-
-### Risk-Mode Return Blend
-
-#### Ultra-Low Risk
-
-- regime base return
-- `0.30 * annual_mean`
-- `0.028 * factor_alpha`
-- defensive / ETF bonus
-
-#### Moderate Risk
-
-- regime base return
-- `0.36 * annual_mean`
-- `0.030 * factor_alpha`
-
-#### High Risk
-
-- regime base return
-- regime risk-on bonus
-- `0.42 * annual_mean`
-- `0.035 * factor_alpha`
-- cyclical-sector bonus
-
-### Stability Controls
-
-- beta drift penalty around `1.0`
-- bounded engineering clamp on expected return before optimization
-
-Status:
-
-- Complete for current scope
-
-Known boundary:
-
-- quality is still a price/risk proxy, not a fundamentals-derived quality factor
-
-## Risk Model and Allocator Architecture
+## Risk Model and Allocation
 
 Current flow:
 
 1. shortlist candidates by risk mode
-2. align total-return series
+2. align total-return history
 3. estimate expected returns
-4. compute annualized shrinkage covariance
-5. optimize under constraints
-6. renormalize and persist allocations
+4. build annualized shrunk covariance
+5. optimize under long-only, asset-cap, and sector-cap constraints
+6. persist portfolio run and return notes to the UI
 
-Constraints:
+Risk modes:
 
-- long-only
-- fully invested
-- per-asset caps
-- per-sector caps
-- risk-mode-specific risk aversion
+- `ULTRA_LOW`
+- `MODERATE`
+- `HIGH`
 
-## Rebalance Policy Architecture
+## Holdings Analysis Architecture
 
-Rebalancing is built around optimizer-target drift, not simple equal-sector budgeting.
+Current flow:
 
-### Review Cadence
+1. price user holdings from the local DB
+2. compute sector weights, beta proxy, pairwise correlation, and factor exposures
+3. build the optimizer target for the chosen risk mode
+4. compare current vs target weights
+5. return ranked rebalance actions plus ML scores when available
 
-- monthly: `21` trading days
-- quarterly: `63` trading days
-- annually: `252` trading days
-- none: disabled
+## Backtest Architecture
 
-### Risk-Mode Rules
+Current replay loop:
 
-| Risk Mode | Drift Threshold | Minimum Trade Weight | Cooldown After Exit |
-| --- | --- | --- | --- |
-| `ULTRA_LOW` | `6.0%` | `3.0%` | `5 days` |
-| `MODERATE` | `4.0%` | `2.5%` | `7 days` |
-| `HIGH` | `3.0%` | `2.0%` | `10 days` |
+1. generate the starting portfolio using data available at the selected start date
+2. load adjusted OHLC bars and dividend cash events
+3. initialize positions with dated transaction costs
+4. evaluate stop-loss / take-profit with gap-aware fills
+5. rebalance on the configured schedule
+6. realize tax lots using FIFO
+7. compute STCG, LTCG, cess, fee drag, and cost drag
+8. persist backtest run and return the equity curve to the UI
 
-### Execution Logic
+## Tax and Fee Layer
 
-- compare live holdings against current optimizer target
-- rebalance only when:
-  - drift exceeds threshold
-  - trade size exceeds minimum trade budget
-- sell overweights first
-- buy underweights only if:
-  - cash exists
-  - cooldown has expired
-
-Status:
-
-- Complete for current scope
-
-Known boundary:
-
-- no persisted rebalance-plan approval workflow yet
-
-## Simulation and Cost Architecture
-
-### Historical Replay
-
-Current simulator uses:
-
-- stored daily OHLC bars
-- gap-aware stop/take-profit evaluation
-- benchmark comparison
-- drift-threshold rebalancing
-- dividend cash credits when corporate actions are loaded
-
-### Live-Market Behavior Approximation
-
-Implemented:
-
-- if the open crosses a stop/target, fill at the open
-- otherwise fill at the trigger level
-- liquidity-loaded slippage
-- volatility-loaded slippage
-
-Status:
-
-- Partial
-
-Known boundary:
-
-- no intraday or order-book execution model
-
-## Tax Model Architecture
-
-### Scope
-
-Supported scope:
+Current scope:
 
 - listed delivery-equity research simulation
+- dated schedules for taxes and fees
+- FY-wise LTCG exemption handling
+- liquidity- and volatility-aware slippage
 
-### Lot Accounting
+Important engineering note:
 
-- FIFO lots per symbol
-- realized gains bucketed by:
-  - financial year
-  - holding period
-  - effective tax schedule
+- the fee/tax layer is versioned and already uses a true `12-month` listed-equity LTCG eligibility rule
+- it still needs continuous maintenance against new exchange circulars and budget changes
 
-### Holding Period Rules
+## Benchmark Architecture
 
-- `STCG`: holding period `< 365 days`
-- `LTCG`: holding period `>= 365 days`
+Current backend benchmark endpoint is local and active, but still proxy-based.
 
-### Effective-Date Tax Schedules
+Implemented today:
 
-| Effective From | STCG | LTCG | LTCG Exemption | Cess |
-| --- | --- | --- | --- | --- |
-| `2020-07-01` | `15%` | `10%` | `Rs 1,00,000` | `4%` |
-| `2024-07-23` | `20%` | `12.5%` | `Rs 1,25,000` | `4%` |
+- `NSE AI Portfolio`
+- `Nifty 50 Proxy`
+- `Nifty 500 Proxy`
+- `Momentum Factor`
+- `Quality Factor`
+- `AMC Multi Factor`
 
-### Computation Flow
+Known limitation:
 
-1. bucket realized gains by financial year and schedule
-2. tax positive STCG only
-3. net LTCG positive and negative within fiscal-year schedule buckets
-4. apply LTCG exemption once per financial year
-5. compute cess on base tax
+- these are locally computed research benchmarks over the ingested universe, not official historical constituent reconstitution jobs yet
+- the benchmark endpoint now returns `construction_method`, `is_proxy`, `source_window`, `constituent_method`, and `limitations` per strategy
 
-Output fields:
+## Data Architecture
 
-- `stcg_gain`
-- `ltcg_gain`
-- `stcg_tax`
-- `ltcg_tax`
-- `cess_tax`
-- `total_tax`
+Bronze:
 
-Status:
+- raw bhavcopy ZIP files
+- corporate-action CSV files
 
-- Complete for the current supported delivery-equity scope
+Silver:
 
-Known boundary:
+- normalized instruments
+- daily bars
+- corporate actions
+- ingestion runs
 
-- no surcharge modeling
-- no derivatives tax model
+Gold:
 
-## Fee Model Architecture
+- adjusted total-return histories
+- factor snapshots
+- portfolio runs
+- backtest runs
+- ML datasets and model artifacts
+- model evaluation reports
 
-### Per-Trade Formula
+## Operational Modes
 
-- `brokerage = min(turnover * brokerage_rate, max_brokerage_per_order)`
-- `stt = turnover * stt_rate(side)`
-- `stamp_duty = turnover * stamp_duty_buy_rate` on buy only
-- `exchange_txn = turnover * exchange_txn_rate`
-- `sebi_fee = turnover * sebi_fee_rate`
-- `gst = (brokerage + exchange_txn + sebi_fee) * gst_rate`
-- `slippage = turnover * liquidity_adjusted_slippage_rate`
-- `total_costs = sum(all components)`
+### Rules Only
 
-### Effective-Date Fee Schedules
+- artifact missing, invalid, or unavailable
+- backend still serves portfolio, analysis, backtest, and benchmark endpoints
 
-| Effective From | Brokerage | Max Brokerage | STT Buy | STT Sell | Exchange Txn | SEBI | Stamp Duty Buy | GST |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `2020-07-01` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
-| `2024-07-23` | `0.03%` | `Rs 20` | `0.10%` | `0.10%` | `0.00297%` | `0.00010%` | `0.015%` | `18%` |
+### LightGBM Hybrid
 
-### Slippage Layer
+- artifact present and loadable
+- UI shows active model version, training mode, artifact classification, and horizon
+- portfolio generation and backtests expose model drivers and source metadata
 
-- participation-based
-- volatility-loaded
-- capped to avoid unrealistic daily-bar execution assumptions
+## Verification Status
 
-Status:
+Verified in the current local code path:
 
-- Complete for the current supported delivery-equity scope
-
-Known boundary:
-
-- no broker-plan-specific schedules yet
-
-## Market Data Architecture
-
-### Historical Data
-
-Implemented:
-
-- NSE CM bhavcopy download
-- raw zip caching
-- normalized instrument + daily-bar upsert
-- Timescale hypertable on `daily_bars`
-- instrument enrichment hooks
-
-Status:
-
-- Complete
-
-### Corporate Actions
-
-Implemented:
-
-- `corporate_actions` table
-- CSV import script
-- split / bonus adjustments
-- dividend cash credits
-
-Status:
-
-- Partial
-
-Known boundary:
-
-- no automated upstream corporate-actions feed yet
-
-### Live Data
-
-Implemented:
-
-- none
-
-Status:
-
-- Not started
-
-## Persistence Layer
-
-Current persisted entities:
-
-- `instruments`
-- `daily_bars`
-- `corporate_actions`
-- `ingestion_runs`
-- `generated_portfolio_runs`
-- `generated_portfolio_allocations`
-- `backtest_runs`
-
-## Phase Map
-
-| Phase | Area | Status | Notes |
-| --- | --- | --- | --- |
-| 0 | Frontend shell | Complete | browser UX is live |
-| 1 | Backend foundation | Complete | FastAPI, Docker, Postgres, Redis |
-| 2 | Historical data | Complete | bhavcopy ingestion + Timescale daily bars |
-| 3 | Quant allocator | Complete for current scope | factor-aware expected returns + shrinkage covariance + constraints |
-| 4 | Analyzer / rebalance | Complete for current scope | target-diff rebalance logic and factor exposures are live |
-| 5 | Simulation realism | Partial | daily OHLC replay + tax/fee realism + corp-action support |
-| 6 | Benchmark engine | Partial | proxy benchmarks only |
-| 7 | Live / product hardening | Not started | live feeds, broker connectivity, auth, compliance |
+- frontend production build succeeds
+- model status endpoint reports local artifact availability
+- market-data summary endpoint reports the active local data range
+- benchmark summary endpoint returns per-strategy provenance metadata
+- generate, analyze, backtest, and benchmark UI flows all reach FastAPI endpoints directly
