@@ -13,3 +13,4 @@ __pycache__/
 
 # ML model artifacts (kept local; not committed)
 apps/api/artifacts/
+data/raw/
