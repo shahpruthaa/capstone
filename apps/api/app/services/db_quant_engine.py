@@ -194,7 +194,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     )
     if len(snapshots) < 4:
         snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
-    selected = select_portfolio_candidates(payload.risk_mode, snapshots, model_variant=payload.model_variant)
+    selected = select_portfolio_candidates(db, as_of_date, payload.risk_mode, snapshots, model_variant=payload.model_variant)
     if not selected:
         raise ValueError("Not enough historical market data to generate a portfolio. Ingest bhavcopy data first.")
 
@@ -327,7 +327,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     )
     if len(target_snapshots) < 4:
         target_snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
-    target_portfolio = select_portfolio_candidates(payload.target_risk_mode, target_snapshots, model_variant=model_variant_applied)
+    target_portfolio = select_portfolio_candidates(db, as_of_date, payload.target_risk_mode, target_snapshots, model_variant=model_variant_applied)
     actions = build_rebalance_actions(priced_holdings, total_value, target_portfolio, payload.target_risk_mode)
     rebalance_days = {"ULTRA_LOW": "quarterly", "MODERATE": "monthly review / quarterly hard rebalance", "HIGH": "monthly with tighter drift checks"}[payload.target_risk_mode]
     notes = [
@@ -360,10 +360,10 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     top_model_drivers_by_symbol: dict[str, list[str]] = {}
     if model_variant_applied == "LIGHTGBM_HYBRID" and snapshots:
         try:
-            from app.ml.lightgbm_alpha.predict import LightGBMAlphaPredictor
+            from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
 
-            predictor = LightGBMAlphaPredictor()
-            pred_map, model_info = predictor.predict(snapshots)
+            predictor = EnsembleAlphaPredictor()
+            pred_map, model_info = predictor.predict(db, snapshots, as_of_date)
             for sym, pred in pred_map.items():
                 ml_predictions[sym] = pred.pred_annual_return
             for snapshot in snapshots:
@@ -411,7 +411,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
     )
     if len(snapshots) < 4:
         snapshots = load_snapshots(db, as_of_date=selection_date, min_history=90)
-    model_portfolio = select_portfolio_candidates(payload.risk_mode, snapshots, model_variant=model_variant_applied)
+    model_portfolio = select_portfolio_candidates(db, as_of_date, payload.risk_mode, snapshots, model_variant=model_variant_applied)
     if not model_portfolio:
         raise ValueError("Not enough historical market data to backtest. Ingest bhavcopy data first.")
 
@@ -639,7 +639,7 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
 
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
     benchmark_portfolios = {
-        "NSE AI Portfolio": dict((snapshot.symbol, weight / 100.0) for snapshot, weight in select_portfolio_candidates("MODERATE", snapshots)),
+        "NSE AI Portfolio": dict((snapshot.symbol, weight / 100.0) for snapshot, weight in select_portfolio_candidates(db, as_of_date, "MODERATE", snapshots)),
         "Nifty 50 Proxy": build_nifty50_proxy_portfolio(snapshots),
         "Nifty 500 Proxy": build_nifty500_proxy_portfolio(snapshots),
         "Momentum Factor": build_factor_portfolio(snapshots, factor_key="momentum", count=12, sector_cap=0.25),
@@ -833,7 +833,7 @@ def get_effective_trade_date(db: Session, as_of_date: date | None = None) -> dat
     return trade_date
 
 
-def select_portfolio_candidates(
+def select_portfolio_candidates(db, as_of_date,
     risk_mode: str,
     snapshots: list[Snapshot],
     model_variant: ModelVariant = "RULES",
@@ -847,7 +847,7 @@ def select_portfolio_candidates(
     if len(aligned_snapshots) < 4 or len(return_matrix[0]) < 20:
         return []
 
-    expected_returns = estimate_expected_returns(aligned_snapshots, return_matrix, risk_mode, model_variant=model_variant)
+    expected_returns = estimate_expected_returns(db, as_of_date, aligned_snapshots, return_matrix, risk_mode, model_variant=model_variant)
     covariance_matrix = build_shrunk_covariance(return_matrix, config["shrinkage"])
     optimized_weights = optimize_constrained_allocator(
         aligned_snapshots,
@@ -1181,7 +1181,7 @@ def align_return_matrix(snapshots: list[Snapshot]) -> tuple[list[Snapshot], list
     return snapshots, matrix
 
 
-def estimate_expected_returns(
+def estimate_expected_returns(db, as_of_date,
     snapshots: list[Snapshot],
     return_matrix: list[list[float]],
     risk_mode: str,
@@ -1253,10 +1253,10 @@ def estimate_expected_returns(
     # 3) Hybrid mode: blend ML calibrated annual return into the rule engine.
     #    Only apply ML predictions to delivery equities; keep ETFs stable.
     try:
-        from app.ml.lightgbm_alpha.predict import LightGBMAlphaPredictor
+        from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
 
-        predictor = LightGBMAlphaPredictor()
-        predictions_by_symbol, model_info = predictor.predict(snapshots)
+        predictor = EnsembleAlphaPredictor()
+        predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
     except Exception:
         predictions_by_symbol, model_info = {}, {"available": False}
 

@@ -11,3 +11,7 @@ lightgbm
 scikit-learn
 numpy
 pandas
+torch==2.6.0
+
+torch-geometric==2.6.1
+httpx==0.28.1

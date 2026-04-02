@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.ml.lightgbm_alpha.features import compute_snapshot_features
@@ -120,24 +120,28 @@ def build_lightgbm_ml_dataset(
     """
     benchmark_symbol = benchmark_symbol or _get_benchmark_symbol(db)
 
-    # Universe: delivery equities only (skip ETFs via instrument_type).
-    universe_stmt = select(Instrument.symbol, Instrument.sector, Instrument.market_cap_bucket).where(
-        Instrument.instrument_type == "EQUITY",
-        Instrument.is_active.is_(True),
-    ).order_by(Instrument.symbol.asc())
-    universe_rows = db.execute(universe_stmt).all()
-    priority_symbols = {
-        symbol
-        for symbols in RISK_MODE_UNIVERSES.values()
-        for symbol in symbols
-        if not symbol.endswith("BEES")
-    }
-    universe_rows = sorted(
-        universe_rows,
-        key=lambda row: (0 if str(row.symbol) in priority_symbols else 1, str(row.symbol)),
+    # Select universe by avg daily traded value — top liquid stocks only.
+    liquidity_stmt = (
+        select(
+            Instrument.symbol,
+            Instrument.sector,
+            Instrument.market_cap_bucket,
+            func.avg(DailyBar.total_traded_value).label("avg_value"),
+            func.count(DailyBar.id).label("day_count"),
+        )
+        .join(DailyBar, DailyBar.instrument_id == Instrument.id)
+        .where(
+            Instrument.instrument_type == "EQUITY",
+            Instrument.is_active.is_(True),
+            DailyBar.total_traded_value > 0,
+        )
+        .group_by(Instrument.symbol, Instrument.sector, Instrument.market_cap_bucket)
+        .having(func.count(DailyBar.id) >= 200)
+        .order_by(func.avg(DailyBar.total_traded_value).desc())
     )
     if max_symbols is not None:
-        universe_rows = universe_rows[:max_symbols]
+      liquidity_stmt = liquidity_stmt.limit(max_symbols)
+    universe_rows = db.execute(liquidity_stmt).all()
     universe_symbols = [str(r.symbol) for r in universe_rows]
     if not universe_symbols:
         raise ValueError("No equity instruments available for ML dataset build.")
@@ -165,12 +169,12 @@ def build_lightgbm_ml_dataset(
     if len(cal_dates) < (LOOKBACK_DAYS_TRADING + HORIZON_DAYS_TRADING + 2):
         raise ValueError("Not enough benchmark trading history to build ML dataset.")
 
-    # Monthly decision dates: last trading day of each month.
-    month_last: dict[tuple[int, int], date] = {}
+    # Weekly decision dates: last trading day of each week (Friday or last available).
+    week_last: dict[tuple[int, int], date] = {}
     for d in cal_dates:
-        key = (d.year, d.month)
-        month_last[key] = d
-    decision_dates = sorted([d for (y, m), d in month_last.items() if start_date <= d <= end_date])
+        key = (d.isocalendar()[0], d.isocalendar()[1])
+        week_last[key] = d
+    decision_dates = sorted([d for (y, w), d in week_last.items() if start_date <= d <= end_date])
 
     # Ensure lookback + forward windows exist (in trading-day index terms).
     cal_index = {d: i for i, d in enumerate(cal_dates)}
@@ -186,7 +190,7 @@ def build_lightgbm_ml_dataset(
         eligible_decision_dates.append(d)
 
     if not eligible_decision_dates:
-        raise ValueError("No eligible monthly decision dates found for ML dataset build.")
+        raise ValueError("No eligible weekly decision dates found for ML dataset build.")
 
     # Preload corporate actions for forward label.
     max_label_end = eligible_decision_dates[-1] + timedelta(days=45)

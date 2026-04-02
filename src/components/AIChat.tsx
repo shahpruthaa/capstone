@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { MessageCircle, X, Send, Bot, User } from 'lucide-react';
+import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
-import { answerChatQuestion } from '../services/localAdvisor';
 
 interface Message {
     role: 'user' | 'ai';
@@ -15,7 +14,7 @@ interface AIChatProps {
 export function AIChat({ portfolio }: AIChatProps) {
     const [open, setOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
-        { role: 'ai', text: "Hi! I'm your local NSE strategy assistant. Ask about portfolio construction, risk, taxes, or backtesting." }
+        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant powered by Groq LLM. Ask me about your portfolio, NSE stocks, market trends, tax implications, or trading strategy." }
     ]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -34,11 +33,34 @@ export function AIChat({ portfolio }: AIChatProps) {
         setLoading(true);
 
         try {
-            await new Promise(resolve => setTimeout(resolve, 250));
-            const response = answerChatQuestion(userMsg, portfolio);
-            setMessages(prev => [...prev, { role: 'ai', text: response }]);
+            const history = messages.slice(-6).map(m => ({
+                role: m.role === 'ai' ? 'assistant' : 'user',
+                content: m.text,
+            }));
+
+            const portfolioContext = portfolio
+                ? `Current portfolio: ${portfolio.allocations?.slice(0, 5).map(a => `${a.symbol} (${a.weight?.toFixed(1)}%)`).join(', ')} | Risk: ${portfolio.risk_mode} | Amount: ₹${portfolio.investment_amount?.toLocaleString('en-IN')}`
+                : 'No portfolio generated yet.';
+
+            const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContext}]`;
+
+            const response = await fetch('/api/v1/explain/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: enrichedMessage,
+                    history,
+                }),
+            });
+
+            if (!response.ok) throw new Error('API error');
+            const data = await response.json();
+            setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
         } catch {
-            setMessages(prev => [...prev, { role: 'ai', text: 'Local assistant is temporarily unavailable.' }]);
+            setMessages(prev => [...prev, {
+                role: 'ai',
+                text: 'AI assistant is temporarily unavailable. Please try again in a moment.',
+            }]);
         } finally {
             setLoading(false);
         }
@@ -57,8 +79,10 @@ export function AIChat({ portfolio }: AIChatProps) {
                                 <Bot className="w-4 h-4 text-white" />
                             </div>
                             <div>
-                                <p className="text-sm font-bold text-white">NSE Strategy Assistant</p>
-                                <p className="text-xs text-teal-100">Runs fully local</p>
+                                <p className="text-sm font-bold text-white">NSE AI Assistant</p>
+                                <p className="text-xs text-teal-100 flex items-center gap-1">
+                                    <Sparkles className="w-3 h-3" /> Powered by Groq LLM
+                                </p>
                             </div>
                         </div>
                         <button onClick={() => setOpen(false)} className="text-white/70 hover:text-white transition-colors">
@@ -75,7 +99,7 @@ export function AIChat({ portfolio }: AIChatProps) {
                                         : <User className="w-3.5 h-3.5 text-blue-700" />}
                                 </div>
                                 <div
-                                    className={`px-3 py-2 rounded-2xl text-sm max-w-[80%] leading-relaxed ${msg.role === 'ai'
+                                    className={`px-3 py-2 rounded-2xl text-sm max-w-[80%] leading-relaxed whitespace-pre-wrap ${msg.role === 'ai'
                                         ? 'bg-slate-100 text-slate-800 rounded-tl-sm'
                                         : 'bg-teal-600 text-white rounded-tr-sm'
                                         }`}
@@ -104,7 +128,7 @@ export function AIChat({ portfolio }: AIChatProps) {
                     <div className="p-3 border-t border-slate-100 flex gap-2">
                         <input
                             className="input-field px-3 py-2 text-sm flex-1"
-                            placeholder="Ask about NSE stocks, taxes, backtesting..."
+                            placeholder="Ask about stocks, taxes, strategy..."
                             value={input}
                             onChange={e => setInput(e.target.value)}
                             onKeyDown={e => e.key === 'Enter' && send()}
@@ -125,7 +149,7 @@ export function AIChat({ portfolio }: AIChatProps) {
                 <button
                     onClick={() => setOpen(o => !o)}
                     className="btn-primary w-14 h-14 rounded-full flex items-center justify-center shadow-xl"
-                    title="Local strategy assistant"
+                    title="AI Strategy Assistant"
                 >
                     {open ? <X className="w-6 h-6" /> : <MessageCircle className="w-6 h-6" />}
                 </button>

@@ -12,37 +12,45 @@ import { MetricCard, SectorChip } from './MetricCard';
 const COLORS = ['#14b8a6', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#10b981', '#6366f1', '#84cc16', '#f43f5e', '#0ea5e9', '#a855f7'];
 
 interface Props { onPortfolioGenerated: (p: Portfolio) => void; portfolio: Portfolio | null; }
-
 function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
     const [insight, setInsight] = useState('');
     const [loading, setLoading] = useState(false);
-
     const generate = async () => {
         setLoading(true);
         try {
-            await new Promise(resolve => setTimeout(resolve, 250));
-            setInsight(generatePortfolioInsight(portfolio));
+            const res = await fetch('/api/v1/explain/portfolio', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    allocations: portfolio.allocations || [],
+                    risk_mode: portfolio.risk_mode || 'MODERATE',
+                    total_amount: portfolio.investment_amount || 500000,
+                }),
+            });
+            if (!res.ok) throw new Error('API error');
+            const data = await res.json();
+            setInsight(data.explanation || 'No explanation returned.');
         } catch {
-            setInsight('Local insight engine could not generate analysis.');
+            setInsight('AI analysis temporarily unavailable.');
         } finally {
             setLoading(false);
         }
     };
-
     return (
         <div className="card p-5" style={{ background: 'linear-gradient(135deg,#f0fdf9,#e0f2fe)', borderColor: '#99f6de' }}>
             <div className="flex items-center gap-2 mb-2">
                 <Zap className="w-4 h-4 text-teal-600" />
-                <h3 className="font-bold text-sm text-teal-800">Local Quant Insights</h3>
+                <h3 className="font-bold text-sm text-teal-800">AI Portfolio Analysis</h3>
+                <span className="text-xs text-teal-600 bg-teal-100 px-2 py-0.5 rounded-full">Powered by Groq LLM</span>
             </div>
             {insight ? (
-                <p className="text-sm text-slate-700 leading-relaxed italic mb-3">"{insight}"</p>
+                <p className="text-sm text-slate-700 leading-relaxed mb-3 whitespace-pre-wrap">{insight}</p>
             ) : (
-                <p className="text-sm text-slate-500 mb-3">Generate a local rules-based analysis of your portfolio.</p>
+                <p className="text-sm text-slate-500 mb-3">Get an AI-powered analysis of your portfolio using ensemble signals, sector trends, and market context.</p>
             )}
             <button onClick={generate} disabled={loading} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
-                {loading ? <RefreshCw className="w-3 h-3 spin" /> : <RefreshCw className="w-3 h-3" />}
-                {insight ? 'Regenerate' : 'Generate Analysis'}
+                {loading ? <RefreshCw className="w-3 h-3 spin" /> : <Zap className="w-3 h-3" />}
+                {loading ? 'Analysing with AI...' : insight ? 'Regenerate AI Analysis' : 'Generate AI Analysis'}
             </button>
         </div>
     );

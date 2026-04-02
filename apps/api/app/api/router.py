@@ -1,7 +1,5 @@
 from fastapi import APIRouter
-
-from app.api.routes import analysis, backtests, benchmarks, health, market_data, models, portfolio
-
+from app.api.routes import analysis, backtests, benchmarks, health, market_data, models, portfolio, news, explain, stock_detail
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -11,3 +9,6 @@ api_router.include_router(backtests.router, prefix="/api/v1/backtests", tags=["b
 api_router.include_router(benchmarks.router, prefix="/api/v1/benchmarks", tags=["benchmarks"])
 api_router.include_router(market_data.router, prefix="/api/v1/market-data", tags=["market-data"])
 api_router.include_router(models.router, prefix="/api/v1/models", tags=["models"])
+api_router.include_router(news.router, prefix="/api/v1/news", tags=["news"])
+api_router.include_router(explain.router, prefix="/api/v1/explain", tags=["explain"])
+api_router.include_router(stock_detail.router, prefix="/api/v1/stock", tags=["stock"])
