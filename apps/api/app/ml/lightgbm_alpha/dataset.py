@@ -50,6 +50,25 @@ NUMERIC_FEATURES: list[str] = [
     "factor_sector_strength",
     "factor_size",
     "factor_beta",
+    # Technical indicators
+    "rsi_14_normalized",
+    "macd_signal_normalized",
+    "ema_ratio_9",
+    "ema_ratio_21",
+    "ema_ratio_50",
+    "ema_ratio_200",
+    "ema_9_above_21",
+    "ema_21_above_50",
+    "bb_pct_b",
+    "bb_bandwidth",
+    "atr_normalized",
+    "adx_14",
+    "adx_trending",
+    "candle_hammer",
+    "candle_shooting_star",
+    "candle_engulfing",
+    "candle_marubozu",
+    "candle_three_candles",
 ]
 
 CATEGORICAL_FEATURES: list[str] = ["sector_cat", "market_cap_bucket_cat"]
