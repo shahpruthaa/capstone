@@ -106,7 +106,7 @@ def explain_portfolio(
         return "LLM explanation unavailable."
 
     symbols_summary = ", ".join(
-        f"{a['symbol']} ({a.get('weight', 0):.1f}%)"
+        f"{a.get('symbol', a.get('ticker', a.get('name', 'UNKNOWN')))} ({a.get('weight', a.get('allocation', 0)):.1f}%)"
         for a in allocations[:8]
     )
     sectors = list({a.get("sector", "Unknown") for a in allocations})

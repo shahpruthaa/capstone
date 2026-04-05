@@ -22,9 +22,15 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    allocations: portfolio.allocations || [],
-                    risk_mode: portfolio.risk_mode || 'MODERATE',
-                    total_amount: portfolio.investment_amount || 500000,
+                    allocations: (portfolio.allocations || []).map(a => ({
+                        symbol: a.stock?.symbol || (a as any).symbol || 'UNKNOWN',
+                        sector: a.stock?.sector || (a as any).sector || 'Unknown',
+                        weight: a.weight || (a as any).weight || 0,
+                        rationale: (a as any).rationale || '',
+                        top_model_drivers: (a as any).drivers || (a as any).top_model_drivers || [],
+                    })),
+                    risk_mode: portfolio.riskProfile || 'MODERATE',
+                    total_amount: portfolio.totalInvested || 500000,
                 }),
             });
             if (!res.ok) throw new Error('API error');
