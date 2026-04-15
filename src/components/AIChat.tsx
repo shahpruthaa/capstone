@@ -33,13 +33,13 @@ export function AIChat({ portfolio }: AIChatProps) {
         setLoading(true);
 
         try {
-            const history = messages.slice(-6).map(m => ({
-                role: m.role === 'ai' ? 'assistant' : 'user',
-                content: m.text,
+            const history = messages.slice(-6).map(message => ({
+                role: message.role === 'ai' ? 'assistant' : 'user',
+                content: message.text,
             }));
 
             const portfolioContext = portfolio
-                ? `Current portfolio: ${portfolio.allocations?.slice(0, 5).map(a => `${a.symbol} (${a.weight?.toFixed(1)}%)`).join(', ')} | Risk: ${portfolio.risk_mode} | Amount: ₹${portfolio.investment_amount?.toLocaleString('en-IN')}`
+                ? `Current portfolio: ${portfolio.allocations.slice(0, 5).map(allocation => `${allocation.stock.symbol} (${allocation.weight.toFixed(1)}%)`).join(', ')} | Risk: ${portfolio.riskProfile} | Amount: Rs ${portfolio.totalInvested.toLocaleString('en-IN')}`
                 : 'No portfolio generated yet.';
 
             const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContext}]`;

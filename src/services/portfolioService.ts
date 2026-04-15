@@ -17,9 +17,11 @@ export interface Portfolio {
   metrics: PortfolioMetrics;
   backendNotes?: string[];
   modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
-  modelSource?: 'RULES' | 'LIGHTGBM';
+  modelSource?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
   modelVersion?: string;
   predictionHorizonDays?: number;
+  activeMode?: string;
+  artifactClassification?: string;
 }
 
 export interface PortfolioMetrics {
@@ -43,6 +45,11 @@ export interface AnalysisResult {
   totalValue: number;
   backendNotes?: string[];
   modelVariantApplied?: 'RULES' | 'LIGHTGBM_HYBRID';
+  modelSource?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
+  modelVersion?: string;
+  predictionHorizonDays?: number;
+  activeMode?: string;
+  artifactClassification?: string;
   mlPredictions?: { [key: string]: number };
   topModelDriversBySymbol?: { [key: string]: string[] };
 }

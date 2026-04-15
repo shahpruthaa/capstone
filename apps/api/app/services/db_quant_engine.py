@@ -45,7 +45,7 @@ from app.services.market_rules import (
     resolve_capital_gains_tax_schedule,
     resolve_equity_fee_schedule,
 )
-from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
+from app.services.model_runtime import get_model_runtime_status
 
 RISK_FREE_RATE = 0.07
 DEFAULT_BACKTEST_INVESTMENT = 1_000_000.0
@@ -185,7 +185,12 @@ class BarRecord:
 
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
-    ml_min_history = 252 if payload.model_variant == "LIGHTGBM_HYBRID" else 126
+    runtime_status = get_model_runtime_status()
+    model_variant_applied: ModelVariant = payload.model_variant
+    if model_variant_applied == "LIGHTGBM_HYBRID" and not runtime_status.get("available"):
+        model_variant_applied = "RULES"
+
+    ml_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 126
     snapshots = load_snapshots(
         db,
         as_of_date=as_of_date,
@@ -194,7 +199,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     )
     if len(snapshots) < 4:
         snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
-    selected = select_portfolio_candidates(db, as_of_date, payload.risk_mode, snapshots, model_variant=payload.model_variant)
+    selected = select_portfolio_candidates(db, as_of_date, payload.risk_mode, snapshots, model_variant=model_variant_applied)
     if not selected:
         raise ValueError("Not enough historical market data to generate a portfolio. Ingest bhavcopy data first.")
 
@@ -213,18 +218,22 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         ),
     ]
 
-    used_ml_count = sum(1 for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM")
-    model_source = "LIGHTGBM" if used_ml_count > 0 else "RULES"
-    model_version = next((snapshot.model_version for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM"), "rules")
-    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM"), 21)
+    used_ml_count = sum(1 for snapshot, _ in selected if snapshot.expected_return_source != "RULES")
+    model_source = "ENSEMBLE" if used_ml_count > 0 else "RULES"
+    model_version = next((snapshot.model_version for snapshot, _ in selected if snapshot.expected_return_source != "RULES"), "rules")
+    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in selected if snapshot.expected_return_source != "RULES"), 21)
+    active_mode = runtime_status.get("active_mode", "rules_only") if used_ml_count > 0 else "rules_only"
+    artifact_classification = str(runtime_status.get("artifact_classification", "missing")) if used_ml_count > 0 else "missing"
 
     if payload.model_variant == "LIGHTGBM_HYBRID":
         if used_ml_count > 0:
             notes.append(
-                f"LightGBM hybrid used for {used_ml_count} equities; blended predicted annual return with rule expected returns (75/25). Model version: {model_version}."
+                f"Ensemble runtime used for {used_ml_count} equities in {active_mode.replace('_', ' ')} mode; blended predicted annual return with rule expected returns (75/25). Model version: {model_version}."
             )
         else:
-            notes.append("LightGBM hybrid requested, but no valid ML predictions were produced; using rule expected returns for all instruments.")
+            notes.append(
+                f"Ensemble runtime requested, but no valid ML predictions were produced; using rule expected returns for all instruments. Status: {runtime_status.get('reason', 'rules_fallback')}."
+            )
 
     run = GeneratedPortfolioRun(
         risk_mode=payload.risk_mode,
@@ -260,10 +269,12 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
     db.commit()
     return GeneratePortfolioResponse(
-        model_variant=payload.model_variant,
+        model_variant=model_variant_applied,
         model_source=model_source,  # type: ignore[arg-type]
         model_version=model_version,
         prediction_horizon_days=prediction_horizon_days,
+        active_mode=active_mode,
+        artifact_classification=artifact_classification,
         risk_mode=payload.risk_mode,
         investment_amount=payload.investment_amount,
         allocations=allocations,
@@ -273,12 +284,12 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
 
 def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzePortfolioResponse:
-    ml_status = get_lightgbm_model_status()
+    runtime_status = get_model_runtime_status()
     if payload.model_variant is None:
-        model_variant_applied: ModelVariant = "LIGHTGBM_HYBRID" if ml_status.get("available") else "RULES"
+        model_variant_applied: ModelVariant = "LIGHTGBM_HYBRID" if runtime_status.get("available") else "RULES"
     else:
         model_variant_applied = payload.model_variant
-        if model_variant_applied == "LIGHTGBM_HYBRID" and not ml_status.get("available"):
+        if model_variant_applied == "LIGHTGBM_HYBRID" and not runtime_status.get("available"):
             model_variant_applied = "RULES"
 
     ml_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 63
@@ -345,14 +356,17 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     if missing_symbols:
         notes.append(f"No market data found yet for: {', '.join(sorted(set(missing_symbols)))}.")
 
-    used_ml_count = sum(1 for snapshot, _ in target_portfolio if snapshot.expected_return_source == "LIGHTGBM")
+    used_ml_count = sum(1 for snapshot, _ in target_portfolio if snapshot.expected_return_source != "RULES")
 
     model_source_note = ""
     if model_variant_applied == "LIGHTGBM_HYBRID":
         if used_ml_count > 0:
-            model_source_note = f"LightGBM hybrid applied to {used_ml_count} equities; allocator used blended ML+rules expected returns (75/25)."
+            model_source_note = (
+                f"Ensemble runtime applied to {used_ml_count} equities in {runtime_status.get('active_mode', 'degraded_ensemble').replace('_', ' ')} mode; "
+                "allocator used blended ML+rules expected returns (75/25)."
+            )
         else:
-            model_source_note = "LightGBM hybrid requested, but no valid equity predictions were produced; using rules expected returns."
+            model_source_note = f"Ensemble runtime requested, but no valid equity predictions were produced; using rules expected returns. Status: {runtime_status.get('reason', 'rules_fallback')}."
     if model_source_note:
         notes.append(model_source_note)
 
@@ -368,7 +382,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
                 ml_predictions[sym] = pred.pred_annual_return
             for snapshot in snapshots:
                 if snapshot.symbol in pred_map and snapshot.instrument_type == "EQUITY":
-                    snapshot.expected_return_source = "LIGHTGBM"
+                    snapshot.expected_return_source = str(model_info.get("model_source", "ENSEMBLE"))
                     snapshot.top_model_drivers = list(pred_map[snapshot.symbol].top_drivers)
                     snapshot.ml_pred_annual_return = float(pred_map[snapshot.symbol].pred_annual_return)
                     snapshot.ml_pred_21d_return = float(pred_map[snapshot.symbol].pred_21d_return)
@@ -389,6 +403,11 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         correlation_risk=correlation_risk,
         actions=actions,
         model_variant_applied=model_variant_applied,
+        model_source="ENSEMBLE" if used_ml_count > 0 else "RULES",
+        model_version=next((snapshot.model_version for snapshot in snapshots if snapshot.expected_return_source != "RULES"), runtime_status.get("model_version", "rules")),
+        prediction_horizon_days=next((snapshot.prediction_horizon_days for snapshot in snapshots if snapshot.expected_return_source != "RULES"), int(runtime_status.get("prediction_horizon_days", 21))),
+        active_mode=runtime_status.get("active_mode", "rules_only") if used_ml_count > 0 else "rules_only",
+        artifact_classification=str(runtime_status.get("artifact_classification", "missing")) if used_ml_count > 0 else "missing",
         ml_predictions=ml_predictions,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         notes=notes,
@@ -396,9 +415,9 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
 
 
 def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultResponse:
-    ml_status = get_lightgbm_model_status()
+    runtime_status = get_model_runtime_status()
     model_variant_applied = payload.model_variant
-    if model_variant_applied == "LIGHTGBM_HYBRID" and not ml_status.get("available"):
+    if model_variant_applied == "LIGHTGBM_HYBRID" and not runtime_status.get("available"):
         model_variant_applied = "RULES"
 
     selection_date = get_effective_trade_date(db, payload.start_date)
@@ -542,20 +561,24 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         ),
     ]
 
-    used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM")
+    used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source != "RULES")
     top_model_drivers_by_symbol = {
         snapshot.symbol: list(snapshot.top_model_drivers) for snapshot, _ in model_portfolio if snapshot.top_model_drivers
     }
-    model_source = "LIGHTGBM" if used_ml_count > 0 else "RULES"
-    model_version = next((snapshot.model_version for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM"), "rules")
-    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM"), 21)
+    model_source = "ENSEMBLE" if used_ml_count > 0 else "RULES"
+    model_version = next((snapshot.model_version for snapshot, _ in model_portfolio if snapshot.expected_return_source != "RULES"), "rules")
+    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in model_portfolio if snapshot.expected_return_source != "RULES"), 21)
+    active_mode = runtime_status.get("active_mode", "rules_only") if used_ml_count > 0 else "rules_only"
+    artifact_classification = str(runtime_status.get("artifact_classification", "missing")) if used_ml_count > 0 else "missing"
     if payload.model_variant == "LIGHTGBM_HYBRID":
         if used_ml_count > 0:
             notes.append(
-                f"LightGBM hybrid used for {used_ml_count} equities; blended predicted annual returns with rule expected returns (75/25). Model version: {model_version}."
+                f"Ensemble runtime used for {used_ml_count} equities in {active_mode.replace('_', ' ')} mode; blended predicted annual returns with rule expected returns (75/25). Model version: {model_version}."
             )
         else:
-            notes.append("LightGBM hybrid requested, but no valid equity predictions were produced; using rule expected returns for the portfolio.")
+            notes.append(
+                f"Ensemble runtime requested, but no valid equity predictions were produced; using rule expected returns for the portfolio. Status: {runtime_status.get('reason', 'rules_fallback')}."
+            )
 
     db.add(
         BacktestRun(
@@ -576,6 +599,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                     "model_source": model_source,
                     "model_version": model_version,
                     "prediction_horizon_days": prediction_horizon_days,
+                    "active_mode": active_mode,
+                    "artifact_classification": artifact_classification,
                     "top_model_drivers_by_symbol": top_model_drivers_by_symbol,
                 },
             },
@@ -589,6 +614,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         model_source=model_source,  # type: ignore[arg-type]
         model_version=model_version,
         prediction_horizon_days=prediction_horizon_days,
+        active_mode=active_mode,
+        artifact_classification=artifact_classification,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         run_id=run_id,
         status="completed",
@@ -610,12 +637,16 @@ def get_backtest_result(db: Session, run_id: str) -> BacktestResultResponse:
     model_source = model_info.get("model_source", "RULES")
     model_version = model_info.get("model_version", "rules")
     prediction_horizon_days = model_info.get("prediction_horizon_days", 21)
+    active_mode = model_info.get("active_mode", "rules_only")
+    artifact_classification = model_info.get("artifact_classification", "missing")
     top_model_drivers_by_symbol = model_info.get("top_model_drivers_by_symbol", {})
     return BacktestResultResponse(
         model_variant=model_variant,
         model_source=model_source,  # type: ignore[arg-type]
         model_version=model_version,
         prediction_horizon_days=prediction_horizon_days,
+        active_mode=active_mode,
+        artifact_classification=artifact_classification,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         run_id=run.id,
         status="completed",
@@ -1276,7 +1307,7 @@ def estimate_expected_returns(db, as_of_date,
         snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
         snapshot.ml_pred_annual_return = float(expected_ml_annual)
         snapshot.top_model_drivers = list(pred.top_drivers)
-        snapshot.expected_return_source = "LIGHTGBM"
+        snapshot.expected_return_source = str(model_info.get("model_source", "ENSEMBLE"))
         snapshot.model_version = model_version
         snapshot.prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
         any_ml_used = True

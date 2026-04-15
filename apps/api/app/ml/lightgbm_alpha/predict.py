@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.ml.lightgbm_alpha.artifact_loader import try_load_lightgbm_artifact
@@ -13,6 +13,7 @@ class MLPrediction:
     pred_21d_return: float
     pred_annual_return: float
     top_drivers: list[str]
+    component_scores: dict[str, float] = field(default_factory=dict)
 
 
 def _calibrate_pred_21d_to_annual(pred_21d: float, horizon_days: int = 21) -> float:
@@ -183,6 +184,7 @@ class LightGBMAlphaPredictor:
                 pred_21d_return=pred_21d,
                 pred_annual_return=pred_annual,
                 top_drivers=top_drivers,
+                component_scores={"lightgbm_raw_21d": pred_21d, "lightgbm_annual": pred_annual},
             )
 
         model_info = {

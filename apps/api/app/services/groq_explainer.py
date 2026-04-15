@@ -1,13 +1,16 @@
-"""Groq LLM explanation service for portfolio stock recommendations."""
+"""Groq LLM explanation service for portfolio and stock analysis."""
 from __future__ import annotations
+
 import logging
 from typing import Any
+
 import httpx
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-EXPLAIN_PROMPT = """You are an expert NSE (National Stock Exchange of India) portfolio analyst. 
+EXPLAIN_PROMPT = """You are an expert NSE (National Stock Exchange of India) portfolio analyst.
 Explain why this stock was selected or rejected in a portfolio in 2-3 clear paragraphs.
 Be specific about the numbers. Write for a sophisticated retail investor. No bullet points.
 
@@ -15,7 +18,7 @@ Stock: {symbol}
 Sector: {sector}
 Ensemble Score: {score:.3f} (range -1 to +1, higher = more attractive)
 LightGBM Signal: {lgb_score:.3f}
-LSTM Signal: {lstm_score:.3f}  
+LSTM Signal: {lstm_score:.3f}
 Death Risk: {death_risk:.3f} (0=safe, 1=high risk of blow-up)
 News Sentiment: {news_sentiment:.3f}
 
@@ -32,9 +35,80 @@ Current Technicals:
 
 Portfolio Context: {context}
 
-Write a 2-3 paragraph explanation covering: (1) why the model scored this stock this way, 
+Write a 2-3 paragraph explanation covering: (1) why the model scored this stock this way,
 (2) what the key risks or opportunities are, (3) what an investor should watch for.
 Be direct and quantitative."""
+
+
+def get_groq_status() -> dict[str, Any]:
+    configured = bool(settings.groq_api_key)
+    return {
+        "available": configured,
+        "configured": configured,
+        "reason": None if configured else "api_key_missing",
+        "model": settings.groq_model,
+    }
+
+
+def _sync_completion(messages: list[dict[str, str]], *, max_tokens: int = 500, temperature: float = 0.3) -> str | None:
+    if not settings.groq_api_key:
+        return None
+    try:
+        response = httpx.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.groq_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": settings.groq_model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+                "temperature": temperature,
+            },
+            timeout=20,
+        )
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+        logger.error(f"Groq API error {response.status_code}: {response.text[:200]}")
+    except Exception as exc:
+        logger.error(f"Groq call failed: {exc}")
+    return None
+
+
+async def chat_with_assistant(message: str, history: list[dict[str, str]] | None = None) -> str:
+    if not settings.groq_api_key:
+        return "AI unavailable - no Groq API key configured."
+    messages = [{
+        "role": "system",
+        "content": "You are an expert NSE trading assistant helping Indian investors understand AI-generated portfolio recommendations. Be concise, accurate, and reference specific stocks and sectors when relevant.",
+    }]
+    for item in (history or [])[-6:]:
+        role = item.get("role")
+        content = item.get("content")
+        if role and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.groq_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.groq_model,
+                    "max_tokens": 500,
+                    "messages": messages,
+                    "temperature": 0.4,
+                },
+            )
+            if response.status_code == 200:
+                return response.json()["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        logger.error(f"Groq chat failed: {exc}")
+    return "AI temporarily unavailable."
 
 
 def explain_stock(
@@ -49,9 +123,8 @@ def explain_stock(
     technicals: dict[str, Any],
     portfolio_context: str = "MODERATE risk portfolio",
 ) -> str:
-    """Call Groq to explain why a stock was scored the way it was."""
     if not settings.groq_api_key:
-        return "LLM explanation unavailable — Groq API key not configured."
+        return "LLM explanation unavailable - Groq API key not configured."
 
     prompt = EXPLAIN_PROMPT.format(
         symbol=symbol,
@@ -70,78 +143,31 @@ def explain_stock(
         market_cap=technicals.get("market_cap_bucket", "Unknown"),
         context=portfolio_context,
     )
-
-    try:
-        r = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.groq_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.groq_model,
-                "max_tokens": 500,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-            },
-            timeout=20,
-        )
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"].strip()
-        else:
-            logger.error(f"Groq API error {r.status_code}: {r.text[:200]}")
-            return f"LLM explanation temporarily unavailable (status {r.status_code})."
-    except Exception as e:
-        logger.error(f"Groq call failed: {e}")
-        return "LLM explanation temporarily unavailable."
+    completion = _sync_completion([{"role": "user", "content": prompt}], max_tokens=500, temperature=0.3)
+    return completion or "LLM explanation temporarily unavailable."
 
 
-def explain_portfolio(
-    allocations: list[dict[str, Any]],
-    risk_mode: str,
-    total_amount: float,
-) -> str:
-    """Generate a portfolio-level summary explanation."""
+def explain_portfolio(allocations: list[dict[str, Any]], risk_mode: str, total_amount: float) -> str:
     if not settings.groq_api_key:
         return "LLM explanation unavailable."
 
     symbols_summary = ", ".join(
-        f"{a.get('symbol', a.get('ticker', a.get('name', 'UNKNOWN')))} ({a.get('weight', a.get('allocation', 0)):.1f}%)"
-        for a in allocations[:8]
+        f"{allocation.get('symbol', allocation.get('ticker', allocation.get('name', 'UNKNOWN')))} ({allocation.get('weight', allocation.get('allocation', 0)):.1f}%)"
+        for allocation in allocations[:8]
     )
-    sectors = list({a.get("sector", "Unknown") for a in allocations})
+    sectors = sorted({allocation.get("sector", "Unknown") for allocation in allocations})
 
     prompt = f"""You are an NSE portfolio analyst. Summarize this AI-generated portfolio in 2 paragraphs.
 
 Risk Mode: {risk_mode}
-Investment Amount: ₹{total_amount:,.0f}
+Investment Amount: Rs {total_amount:,.0f}
 Top Holdings: {symbols_summary}
-Seors Covered: {", ".join(sectors)}
+Sectors Covered: {", ".join(sectors)}
 Number of Holdings: {len(allocations)}
 
-Explain: (1) what the portfolio is trying to achieve given the risk mode, 
-(2) what themes or factors are driving the selection, 
+Explain: (1) what the portfolio is trying to achieve given the risk mode,
+(2) what themes or factors are driving the selection,
 (3) key risks to watch. Be specific and quantitative. No bullet points."""
 
-    try:
-        r = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.groq_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": settings.groq_model,
-                "max_tokens": 400,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
-            },
-            timeout=20,
-        )
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"].strip()
-        else:
-            return "Portfolio summary unavailable."
-    except Exception as e:
-        logger.error(f"Groq portfolio explain failed: {e}")
-        return "Portfolio summary unavailable."
+    completion = _sync_completion([{"role": "user", "content": prompt}], max_tokens=400, temperature=0.3)
+    return completion or "Portfolio summary unavailable."

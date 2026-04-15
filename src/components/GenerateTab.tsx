@@ -69,7 +69,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
     const [activeModelVersion, setActiveModelVersion] = useState<string>('');
     const [activeTrainingMode, setActiveTrainingMode] = useState<string>('');
-    const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
+    const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | 'missing' | ''>('');
+    const [activeMode, setActiveMode] = useState<string>('rules_only');
+    const [groqConnected, setGroqConnected] = useState(false);
+    const [availableComponents, setAvailableComponents] = useState<string[]>([]);
     const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
 
@@ -77,6 +80,9 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         const loadModelStatus = async () => {
             try {
                 const status = await getCurrentModelStatusViaApi();
+                setActiveMode(status.activeMode || 'rules_only');
+                setGroqConnected(Boolean(status.groqConnected));
+                setAvailableComponents(status.availableComponents || []);
                 if (status.available) {
                     setActiveModelVariant('LIGHTGBM_HYBRID');
                     setModelStatusReason('');
@@ -108,9 +114,9 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             setGenerationNotice({
                 tone: 'info',
                 text:
-                    p.modelSource === 'LIGHTGBM'
-                        ? `Using local LightGBM hybrid expected returns${p.modelVersion ? ` (v${p.modelVersion})` : ''}${p.predictionHorizonDays ? ` over ${p.predictionHorizonDays} trading days` : ''}.`
-                        : 'Using the local rule-based portfolio allocator because no active LightGBM artifact is available.',
+                    p.modelSource === 'ENSEMBLE'
+                        ? `Using ${p.activeMode || 'ensemble'} runtime${p.modelVersion ? ` (${p.modelVersion})` : ''}${p.predictionHorizonDays ? ` over ${p.predictionHorizonDays} trading days` : ''}.`
+                        : 'Using the local rule-based portfolio allocator because no active ensemble artifact is available.',
             });
         } catch (error) {
             setGenerationNotice({
@@ -156,8 +162,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         )}
                         <div className="alert-info text-xs">
-                            Active local engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `LightGBM hybrid${activeModelVersion ? ` v${activeModelVersion}` : ''}` : 'Rules only'}
+                            Active local runtime: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `${activeMode}${activeModelVersion ? ` ${activeModelVersion}` : ''}` : 'rules_only'}
                             {activeModelVariant === 'RULES' && modelStatusReason ? ` (${modelStatusReason})` : ''}
+                        </div>
+                        <div className={groqConnected ? 'alert-success text-xs' : 'alert-warning text-xs'}>
+                            Groq explanations: {groqConnected ? 'connected' : 'unavailable'}.
+                            {availableComponents.length > 0 ? ` Components ready: ${availableComponents.join(', ')}.` : ' No ensemble components are loaded yet.'}
                         </div>
                         {activeModelVariant === 'LIGHTGBM_HYBRID' && (
                             <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
@@ -227,12 +237,16 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                         <span className="stat-value">{portfolio.predictionHorizonDays || 21}D</span>
                                     </div>
                                     <div className="stat-row">
+                                        <span className="stat-label">Mode</span>
+                                        <span className="stat-value">{portfolio.activeMode || activeMode}</span>
+                                    </div>
+                                    <div className="stat-row">
                                         <span className="stat-label">Training</span>
                                         <span className="stat-value">{activeTrainingMode || 'rules'}</span>
                                     </div>
                                     <div className="stat-row">
                                         <span className="stat-label">Artifact</span>
-                                        <span className="stat-value">{artifactClassification || 'n/a'}</span>
+                                        <span className="stat-value">{portfolio.artifactClassification || artifactClassification || 'n/a'}</span>
                                     </div>
                                 </div>
                             </div>

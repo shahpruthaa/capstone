@@ -27,9 +27,11 @@ export interface BacktestResult {
     initialInvestment: number;
     notes?: string[];
     modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
-    modelSource?: 'RULES' | 'LIGHTGBM';
+    modelSource?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
     modelVersion?: string;
     predictionHorizonDays?: number;
+    activeMode?: string;
+    artifactClassification?: string;
     topModelDriversBySymbol?: { [key: string]: string[] };
 }
 

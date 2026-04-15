@@ -161,10 +161,10 @@ export function BacktestTab({ portfolio }: Props) {
                                 className="input-field px-3 py-2 text-sm"
                             >
                                 <option value="RULES">Rules only</option>
-                                <option value="LIGHTGBM_HYBRID">Rules vs ML Hybrid</option>
+                                <option value="LIGHTGBM_HYBRID">Ensemble runtime</option>
                             </select>
                             {activeModelVariant === 'LIGHTGBM_HYBRID' && selectedModelVariant === 'LIGHTGBM_HYBRID' && (
-                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses LightGBM alpha (fallback to rules if artifact is missing).</p>
+                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
                             )}
                         </div>
 
@@ -258,12 +258,20 @@ export function BacktestTab({ portfolio }: Props) {
                                     <span className="stat-value">{result.modelSource || 'RULES'}</span>
                                 </div>
                                 <div className="stat-row">
+                                    <span className="stat-label">Mode</span>
+                                    <span className="stat-value">{result.activeMode || 'rules_only'}</span>
+                                </div>
+                                <div className="stat-row">
                                     <span className="stat-label">Version</span>
                                     <span className="stat-value">{result.modelVersion || 'rules'}</span>
                                 </div>
                                 <div className="stat-row">
                                     <span className="stat-label">Horizon</span>
                                     <span className="stat-value">{result.predictionHorizonDays || 21}D</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Artifact</span>
+                                    <span className="stat-value">{result.artifactClassification || 'missing'}</span>
                                 </div>
                             </div>
                         </div>

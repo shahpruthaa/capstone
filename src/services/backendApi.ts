@@ -16,14 +16,22 @@ export type ModelVariant = 'RULES' | 'LIGHTGBM_HYBRID';
 export interface CurrentModelStatus {
   available: boolean;
   variant: ModelVariant;
+  modelSource?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
+  activeMode?: string;
   modelVersion?: string;
   predictionHorizonDays?: number;
   trainingMode?: string;
-  artifactClassification?: 'bootstrap' | 'standard';
+  artifactClassification?: 'bootstrap' | 'standard' | 'missing';
   validationMetrics?: Record<string, unknown>;
   validationSummary?: Record<string, unknown>;
   trainingMetadata?: Record<string, unknown>;
   evaluationReport?: Record<string, unknown>;
+  components?: Record<string, unknown>;
+  availableComponents?: string[];
+  missingComponents?: string[];
+  groqConnected?: boolean;
+  groqModel?: string;
+  notes?: string[];
   reason?: string;
   runtimeSitePackages?: string;
 }
@@ -39,9 +47,11 @@ export interface MarketDataSummary {
 
 interface ApiGeneratePortfolioResponse {
   model_variant: ModelVariant;
-  model_source: 'RULES' | 'LIGHTGBM';
+  model_source: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
   model_version: string;
   prediction_horizon_days: number;
+  active_mode?: string;
+  artifact_classification?: string;
   risk_mode: ApiRiskMode;
   investment_amount: number;
   allocations: { symbol: string; sector: string; weight: number; rationale: string; top_model_drivers?: string[] }[];
@@ -63,6 +73,11 @@ interface ApiAnalyzePortfolioResponse {
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
   model_variant_applied: ModelVariant;
+  model_source?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
+  model_version?: string;
+  prediction_horizon_days?: number;
+  active_mode?: string;
+  artifact_classification?: string;
   ml_predictions?: Record<string, number>;
   top_model_drivers_by_symbol?: Record<string, string[]>;
   notes: string[];
@@ -70,9 +85,11 @@ interface ApiAnalyzePortfolioResponse {
 
 interface ApiBacktestResponse {
   model_variant: ModelVariant;
-  model_source: 'RULES' | 'LIGHTGBM';
+  model_source: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
   model_version: string;
   prediction_horizon_days: number;
+  active_mode?: string;
+  artifact_classification?: string;
   top_model_drivers_by_symbol?: Record<string, string[]>;
   metrics: {
     cagr_pct: number;
@@ -134,14 +151,22 @@ interface ApiBenchmarkResponse {
 interface ApiCurrentModelStatusResponse {
   available: boolean;
   variant: ModelVariant;
+  model_source?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
+  active_mode?: string;
   model_version?: string;
   prediction_horizon_days?: number;
   training_mode?: string;
-  artifact_classification?: 'bootstrap' | 'standard';
+  artifact_classification?: 'bootstrap' | 'standard' | 'missing';
   validation_metrics?: Record<string, unknown>;
   validation_summary?: Record<string, unknown>;
   training_metadata?: Record<string, unknown>;
   evaluation_report?: Record<string, unknown>;
+  components?: Record<string, unknown>;
+  available_components?: string[];
+  missing_components?: string[];
+  groq_connected?: boolean;
+  groq_model?: string;
+  notes?: string[];
   runtime_site_packages?: string;
   reason?: string;
 }
@@ -219,6 +244,8 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile,
     modelSource: response.model_source,
     modelVersion: response.model_version,
     predictionHorizonDays: response.prediction_horizon_days,
+    activeMode: response.active_mode,
+    artifactClassification: response.artifact_classification,
     metrics: {
       avgBeta: response.metrics.beta,
       estimatedAnnualReturn: response.metrics.estimated_return_pct,
@@ -272,6 +299,11 @@ export async function analyzePortfolioViaApi(
     totalValue: response.portfolio_value,
     backendNotes: response.notes,
     modelVariantApplied: response.model_variant_applied,
+    modelSource: response.model_source,
+    modelVersion: response.model_version,
+    predictionHorizonDays: response.prediction_horizon_days,
+    activeMode: response.active_mode,
+    artifactClassification: response.artifact_classification,
     mlPredictions: response.ml_predictions ?? {},
     topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
   };
@@ -336,6 +368,8 @@ export async function runBacktestViaApi(
     modelSource: response.model_source,
     modelVersion: response.model_version,
     predictionHorizonDays: response.prediction_horizon_days,
+    activeMode: response.active_mode,
+    artifactClassification: response.artifact_classification,
     topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
   };
 }
@@ -374,6 +408,8 @@ export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus>
   return {
     available: response.available,
     variant: response.variant,
+    modelSource: response.model_source,
+    activeMode: response.active_mode,
     modelVersion: response.model_version,
     predictionHorizonDays: response.prediction_horizon_days,
     trainingMode: response.training_mode,
@@ -382,6 +418,12 @@ export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus>
     validationSummary: response.validation_summary,
     trainingMetadata: response.training_metadata,
     evaluationReport: response.evaluation_report,
+    components: response.components,
+    availableComponents: response.available_components,
+    missingComponents: response.missing_components,
+    groqConnected: response.groq_connected,
+    groqModel: response.groq_model,
+    notes: response.notes,
     runtimeSitePackages: response.runtime_site_packages,
     reason: response.reason,
   };

@@ -105,13 +105,19 @@ export default function App() {
               Market Data: {marketData?.available ? 'Loaded' : 'Missing'}
             </span>
             <span className={modelStatus?.available ? 'badge badge-green' : 'badge badge-slate'}>
-              Model: {modelStatus?.available ? `${modelStatus.variant}${modelStatus.modelVersion ? ` ${modelStatus.modelVersion}` : ''}` : 'Rules fallback'}
+              Runtime: {modelStatus?.available ? `${modelStatus.activeMode || modelStatus.variant}${modelStatus.modelVersion ? ` ${modelStatus.modelVersion}` : ''}` : 'rules_only'}
             </span>
             <span className="badge badge-slate">
               Training: {modelStatus?.available ? modelStatus.trainingMode || 'unknown' : 'n/a'}
             </span>
             <span className="badge badge-slate">
               Artifact: {modelStatus?.available ? modelStatus.artifactClassification || 'n/a' : 'n/a'}
+            </span>
+            <span className={modelStatus?.groqConnected ? 'badge badge-green' : 'badge badge-amber'}>
+              Groq: {modelStatus?.groqConnected ? 'Connected' : 'Unavailable'}
+            </span>
+            <span className="badge badge-slate">
+              Components: {modelStatus?.availableComponents?.length ? modelStatus.availableComponents.join(', ') : 'rules only'}
             </span>
             <span className="badge badge-slate">
               Data Range: {marketData?.minTradeDate && marketData?.maxTradeDate ? `${marketData.minTradeDate} to ${marketData.maxTradeDate}` : 'Unavailable'}
@@ -125,6 +131,9 @@ export default function App() {
               {modelStatus?.available === false && modelStatus.reason && (
                 <div className="alert-warning text-xs">Model fallback reason: {modelStatus.reason}</div>
               )}
+              {modelStatus?.notes?.slice(0, 2).map((note) => (
+                <div key={note} className="alert-info text-xs">{note}</div>
+              ))}
               {marketData?.notes?.slice(0, 2).map((note) => (
                 <div key={note} className="alert-info text-xs">{note}</div>
               ))}
@@ -150,11 +159,11 @@ export default function App() {
       >
         <div className="max-w-7xl mx-auto px-4 text-center">
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            Disclaimer: This tool is for educational and research use only. It relies on locally ingested NSE market data plus rule-based and LightGBM portfolio models.
+            Disclaimer: This tool is for educational and research use only. It relies on locally ingested NSE market data plus rule-based and ensemble portfolio models.
             Stock market investments are subject to market risk. Consult a SEBI-registered advisor before investing.
           </p>
           <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-            NSE AI Portfolio Manager · Local FastAPI + TimescaleDB + LightGBM stack · Delivery-equity tax assumptions currently include STCG 20%, LTCG 12.5%, and STT 0.1%.
+            NSE AI Portfolio Manager · Local FastAPI + TimescaleDB + ensemble runtime · Delivery-equity tax assumptions currently include STCG 20%, LTCG 12.5%, and STT 0.1%.
           </p>
         </div>
       </footer>

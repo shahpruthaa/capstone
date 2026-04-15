@@ -1,69 +1,66 @@
-"""Stock detail endpoint — SHAP, LSTM signal, GNN neighbors, death risk."""
+"""Stock detail endpoint with ensemble signals, optional news context, and Groq explanation."""
 from __future__ import annotations
+
+import json
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
+from app.core.config import settings
 from app.db.session import get_db
+from app.services.groq_explainer import explain_stock
+from app.services.model_runtime import get_model_runtime_status, resolve_artifact_dir
 
 router = APIRouter()
 
+
 @router.get("/{symbol}")
 async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
-    """
-    Returns full AI breakdown for a single stock:
-    - LightGBM SHAP feature importances
-    - LSTM signal
-    - GNN sector neighbors
-    - Death risk score
-    - News sentiment
-    - LLM explanation
-    """
-    from app.services.db_quant_engine import load_snapshots, get_effective_trade_date
     from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
-    from app.services.groq_explainer import explain_stock
-    import json
-    from pathlib import Path
-    from app.core.config import settings
+    from app.services.db_quant_engine import get_effective_trade_date, load_snapshots
 
     as_of_date = get_effective_trade_date(db)
-    snapshots = loasnapshots(db, as_of_date=as_of_date, min_history=90)
-    snap = next((s for s in snapshots if s.symbol == symbol), None)
-
-    if not snap:
+    snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
+    snap = next((snapshot for snapshot in snapshots if snapshot.symbol == symbol), None)
+    if snap is None:
         return {"error": f"No data found for {symbol}"}
 
-    # Get ensemble predictions
     predictor = EnsembleAlphaPredictor()
-    results, model_info = predictor.predict(db, snapshots, as_of_date)
-    pred = results.get(symbol)
+    predictions, model_info = predictor.predict(db, snapshots, as_of_date)
+    prediction = predictions.get(symbol)
 
-    # GNN neighbors — stocks in same sector from embeddings
     gnn_neighbors = []
     try:
-        gnn_path = Path(settings.ml_gnn_artifact_dir) / "gnn_embeddings.json"
+        gnn_path = resolve_artifact_dir(settings.ml_gnn_artifact_dir) / "gnn_embeddings.json"
         if gnn_path.exists():
-            with open(gnn_path) as f:
-                embeddings = json.load(f)
-            sector = snap.sector or "Unknown"
+            with gnn_path.open("r", encoding="utf-8") as handle:
+                embeddings = json.load(handle)
             gnn_neighbors = [
-                s for s in embeddings.keys()
-                if s != symbol and s in [sn.symbol for sn in snapshots]
+                candidate.symbol
+                for candidate in snapshots
+                if candidate.symbol != symbol and candidate.symbol in embeddings and candidate.sector == snap.sector
             ][:5]
     except Exception:
-        pass
+        gnn_neighbors = []
 
-    # Death risk
     death_risk = 0.0
     try:
         from app.ml.death_risk.train import predict_death_risk
-        dr =redict_death_risk([snap], settings.ml_death_risk_artifact_dir)
-        death_risk = dr.get(symbol, 0.0)
+
+        death_risk_map = predict_death_risk([symbol], db, resolve_artifact_dir(settings.ml_death_risk_artifact_dir))
+        death_risk = float(death_risk_map.get(symbol, 0.0))
     except Exception:
-        pass
+        death_risk = 0.0
 
-    # SHAP-style feature importance from drivers
-    drivers = list(pred.top_drivers) if pred else []
+    news_sentiment = 0.0
+    try:
+        from app.services.news_intelligence import get_market_context, get_stock_news_risk_score
 
-    # Technicals
+        market_context = await get_market_context()
+        news_sentiment = float(get_stock_news_risk_score(symbol, snap.sector, market_context))
+    except Exception:
+        news_sentiment = 0.0
+
     technicals = {
         "ret_21d": snap.factor_scores.get("momentum", 0.0),
         "ret_63d": getattr(snap, "ret_63d", 0.0),
@@ -72,16 +69,15 @@ async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
         "beta_proxy": snap.beta_proxy,
         "market_cap_bucket": snap.market_cap_bucket or "Unknown",
     }
-
-    # LLM explanation
+    drivers = list(prediction.top_drivers) if prediction else []
     explanation = explain_stock(
         symbol=symbol,
         sector=snap.sector or "Unknown",
-        score=float(pred.pred_21d_return) if pred else 0.0,
-        lgb_score=float(pred.pred_21d_return) if pred else 0.0,
-        lstm_score=0.0,
+        score=float(prediction.pred_21d_return) if prediction else 0.0,
+        lgb_score=float(prediction.component_scores.get("lightgbm_z", 0.0)) if prediction else 0.0,
+        lstm_score=float(prediction.component_scores.get("lstm_z", 0.0)) if prediction else 0.0,
         death_risk=death_risk,
-        news_sentiment=0.0,
+        news_sentiment=news_sentiment,
         drivers=drivers,
         technicals=technicals,
         portfolio_context=f"NSE stock analysis as of {as_of_date}",
@@ -92,13 +88,19 @@ async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
         "sector": snap.sector or "Unknown",
         "market_cap_bucket": snap.market_cap_bucket or "Unknown",
         "as_of_date": str(as_of_date),
-        "ensemble_score": float(pred.pred_21d_return) if pred else 0.0,
-        "pred_annual_return": float(pred.pred_annual_return) if pred else 0.0,
+        "active_mode": model_info.get("active_mode", "rules_only"),
+        "model_version": model_info.get("model_version", "rules"),
+        "artifact_classification": model_info.get("artifact_classification", "missing"),
+        "ensemble_score": float(prediction.pred_21d_return) if prediction else 0.0,
+        "pred_annual_return": float(prediction.pred_annual_return) if prediction else 0.0,
+        "component_scores": prediction.component_scores if prediction else {},
         "death_risk": death_risk,
+        "news_sentiment": news_sentiment,
         "feature_drivers": drivers,
         "gnn_sector_neighbors": gnn_neighbors,
         "factor_scores": snap.factor_scores,
         "beta": snap.beta_proxy,
         "explanation": explanation,
-        "model_components": model_info.get("components", []),
+        "model_components": model_info.get("available_components", []),
+        "runtime_status": get_model_runtime_status(),
     }

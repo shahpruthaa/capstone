@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 RiskMode = Literal["ULTRA_LOW", "MODERATE", "HIGH"]
 RebalanceFrequency = Literal["MONTHLY", "QUARTERLY", "ANNUALLY", "NONE"]
 ModelVariant = Literal["RULES", "LIGHTGBM_HYBRID"]
+ModelSource = Literal["RULES", "LIGHTGBM", "ENSEMBLE"]
 
 
 class AllocationModel(BaseModel):
@@ -33,9 +34,11 @@ class GeneratePortfolioRequest(BaseModel):
 
 class GeneratePortfolioResponse(BaseModel):
     model_variant: ModelVariant
-    model_source: Literal["RULES", "LIGHTGBM"]
+    model_source: ModelSource
     model_version: str
     prediction_horizon_days: int
+    active_mode: str = "rules_only"
+    artifact_classification: str = "missing"
     risk_mode: RiskMode
     investment_amount: float
     allocations: list[AllocationModel]
@@ -73,6 +76,11 @@ class AnalyzePortfolioResponse(BaseModel):
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
     model_variant_applied: ModelVariant
+    model_source: ModelSource = "RULES"
+    model_version: str = "rules"
+    prediction_horizon_days: int = 21
+    active_mode: str = "rules_only"
+    artifact_classification: str = "missing"
     ml_predictions: dict[str, float] = Field(default_factory=dict)
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     notes: list[str]
@@ -133,9 +141,11 @@ class CurvePointModel(BaseModel):
 
 class BacktestResultResponse(BaseModel):
     model_variant: ModelVariant
-    model_source: Literal["RULES", "LIGHTGBM"]
+    model_source: ModelSource
     model_version: str
     prediction_horizon_days: int
+    active_mode: str = "rules_only"
+    artifact_classification: str = "missing"
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     run_id: str
     status: Literal["completed"]
