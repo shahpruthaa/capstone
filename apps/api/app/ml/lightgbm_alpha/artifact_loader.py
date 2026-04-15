@@ -29,11 +29,19 @@ class LightGBMArtifact:
 
 def _api_root() -> Path:
     # .../apps/api/app/ml/lightgbm_alpha/artifact_loader.py -> .../apps/api
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[2]
 
 
 def _resolve_artifact_dir() -> Path:
-    return _api_root() / LIGHTGBM_ARTIFACT_DIR
+    relative = Path(LIGHTGBM_ARTIFACT_DIR)
+    if relative.is_absolute():
+        return relative
+
+    preferred = _api_root() / relative
+    legacy = _api_root().parent / relative
+    if preferred.exists() or not legacy.exists():
+        return preferred
+    return legacy
 
 
 def _read_json(path: Path) -> dict[str, Any]:
