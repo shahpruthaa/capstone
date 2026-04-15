@@ -248,13 +248,29 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
                 rationale=rationale,
             )
         )
+        # Parse death_risk and lstm signal from drivers
+        drivers = list(snapshot.top_model_drivers)
+        death_risk_val = None
+        lstm_val = None
+        for d in drivers:
+            if d.startswith("death_risk="):
+                try: death_risk_val = float(d.split("=")[1])
+                except: pass
+            if d.startswith("lstm="):
+                try: lstm_val = float(d.split("=")[1])
+                except: pass
+
         allocations.append(
             AllocationModel(
                 symbol=snapshot.symbol,
                 sector=snapshot.sector,
                 weight=round(weight, 2),
                 rationale=rationale,
-                top_model_drivers=list(snapshot.top_model_drivers),
+                top_model_drivers=drivers,
+                ml_pred_21d_return=round(float(snapshot.ml_pred_21d_return), 4) if snapshot.ml_pred_21d_return is not None else None,
+                ml_pred_annual_return=round(float(snapshot.ml_pred_annual_return), 4) if snapshot.ml_pred_annual_return is not None else None,
+                death_risk=death_risk_val,
+                lstm_signal=lstm_val,
             )
         )
 

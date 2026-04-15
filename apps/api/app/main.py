@@ -30,6 +30,13 @@ def _startup_bootstrap_local_runtime() -> None:
     app.state.bootstrap_status = bootstrap_local_state()  # type: ignore[attr-defined]
     # Validate artifact availability early so UI can display whether ML hybrid is active.
     app.state.lightgbm_model_status = get_lightgbm_model_status()  # type: ignore[attr-defined]
+    # Start auto-ingestion scheduler (runs daily at 16:15 IST after NSE market close)
+    try:
+        from app.services.scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Scheduler not started: {e}")
 
 
 @app.get("/", tags=["meta"])

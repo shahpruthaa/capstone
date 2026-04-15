@@ -15,6 +15,10 @@ class AllocationModel(BaseModel):
     weight: float = Field(..., ge=0, le=100)
     rationale: str
     top_model_drivers: list[str] = Field(default_factory=list)
+    ml_pred_21d_return: float | None = None
+    ml_pred_annual_return: float | None = None
+    death_risk: float | None = None
+    lstm_signal: float | None = None
 
 
 class PortfolioMetricsModel(BaseModel):

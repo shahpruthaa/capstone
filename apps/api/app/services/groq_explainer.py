@@ -101,28 +101,59 @@ def explain_portfolio(
     risk_mode: str,
     total_amount: float,
 ) -> str:
-    """Generate a portfolio-level summary explanation."""
     if not settings.groq_api_key:
         return "LLM explanation unavailable."
 
-    symbols_summary = ", ".join(
-        f"{a.get('symbol', a.get('ticker', a.get('name', 'UNKNOWN')))} ({a.get('weight', a.get('allocation', 0)):.1f}%)"
-        for a in allocations[:8]
-    )
-    sectors = list({a.get("sector", "Unknown") for a in allocations})
+    holding_lines = []
+    for a in allocations[:10]:
+        sym = a.get("symbol", "UNKNOWN")
+        wt = float(a.get("weight", a.get("allocation", 0)) or 0)
+        sector = a.get("sector", "")
+        drivers = a.get("top_model_drivers", a.get("drivers", []))
+        pred_21d = a.get("ml_pred_21d_return")
+        pred_annual = a.get("ml_pred_annual_return")
+        death_risk = a.get("death_risk")
+        lstm = a.get("lstm_signal")
 
-    prompt = f"""You are an NSE portfolio analyst. Summarize this AI-generated portfolio in 2 paragraphs.
+        line = f"- {sym}: {wt:.1f}%"
+        if sector and sector not in ("Unknown", ""):
+            line += f" | Sector: {sector}"
+        if pred_21d is not None:
+            line += f" | ML 21d: {float(pred_21d)*100:+.1f}%"
+        if pred_annual is not None:
+            line += f" | Annual forecast: {float(pred_annual)*100:+.1f}%"
+        if death_risk is not None:
+            line += f" | Death risk: {float(death_risk):.2f}"
+        if lstm is not None:
+            line += f" | LSTM: {float(lstm):+.2f}"
+        if drivers:
+            tech = [d for d in drivers if any(x in d for x in ["ema", "candle", "rsi", "macd", "bb", "adx", "atr"])][:2]
+            others = [d for d in drivers if d not in tech and not d.startswith("lstm=") and not d.startswith("death_risk=")][:2]
+            shown = (tech + others)[:3]
+            if shown:
+                line += f" | Signals: {', '.join(shown)}"
+        holding_lines.append(line)
 
-Risk Mode: {risk_mode}
-Investment Amount: ₹{total_amount:,.0f}
-Top Holdings: {symbols_summary}
-Seors Covered: {", ".join(sectors)}
-Number of Holdings: {len(allocations)}
+    holdings_text = "\n".join(holding_lines)
+    sectors = list({a.get("sector", "") for a in allocations if a.get("sector") and a.get("sector") not in ("Unknown", "")})
+    sectors_text = ", ".join(sectors) if sectors else "Diversified"
+    active = sum(1 for a in allocations if float(a.get("weight", 0) or 0) > 0)
 
-Explain: (1) what the portfolio is trying to achieve given the risk mode, 
-(2) what themes or factors are driving the selection, 
-(3) key risks to watch. Be specific and quantitative. No bullet points."""
+    prompt = f"""You are a senior NSE portfolio analyst at a top Indian asset management firm.
 
+An AI ensemble model (LightGBM + LSTM + GNN + Death-Risk classifier) generated this portfolio:
+
+Risk Mode: {risk_mode} | Investment: \u20b9{total_amount:,.0f} | Active positions: {active}
+Sectors: {sectors_text}
+
+Holdings with AI signals:
+{holdings_text}
+
+Write a 3-paragraph professional analysis:
+Para 1: Portfolio objective — risk-return target, expected return range, construction philosophy for {risk_mode} mode.
+Para 2: Interpret the AI signals — ema_21_above_50 means trend confirmed above 50-day EMA, candle_shooting_ means bearish reversal risk, high death_risk (>0.3) means crash risk, negative LSTM means sequence model is bearish, positive ML 21d forecast means model expects gains. Reference specific stocks.
+Para 3: Key risks — concentration, sector exposure, specific stocks with warning signals (high death_risk or negative forecasts), what to monitor in current Indian market.
+Be specific, professional, quantitative. Reference stock names and percentages. No bullet points."""
     try:
         r = httpx.post(
             "https://api.groq.com/openai/v1/chat/completions",
