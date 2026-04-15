@@ -273,6 +273,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 0.625rem;
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--surface-2);
   font-size: 0.875rem;
@@ -280,6 +281,28 @@ body {
 .stat-row:last-child { border-bottom: none; }
 .stat-label { color: var(--text-secondary); }
 .stat-value { font-weight: 600; }
+
+/* Runtime cards use denser, clearer label/value typography. */
+.runtime-grid .stat-row {
+  padding: 0.45rem 0;
+}
+.runtime-grid .stat-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  color: #64748b;
+}
+.runtime-grid .stat-value {
+  margin-left: auto;
+  max-width: 62%;
+  text-align: right;
+  word-break: break-word;
+  line-height: 1.2;
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
 
 /* ─── Slider ─────────────────────────────────────────────────────────── */
 input[type='range'] {

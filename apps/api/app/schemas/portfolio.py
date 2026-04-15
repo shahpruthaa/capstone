@@ -43,6 +43,8 @@ class GeneratePortfolioResponse(BaseModel):
     investment_amount: float
     allocations: list[AllocationModel]
     metrics: PortfolioMetricsModel
+    holding_period_days_recommended: int = 21
+    holding_period_reason: str = "Review the portfolio on the configured prediction horizon."
     notes: list[str]
 
 
@@ -83,7 +85,17 @@ class AnalyzePortfolioResponse(BaseModel):
     artifact_classification: str = "missing"
     ml_predictions: dict[str, float] = Field(default_factory=dict)
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
+    holding_period_days_recommended: int = 21
+    holding_period_reason: str = "Review the portfolio on the configured prediction horizon."
     notes: list[str]
+
+
+class PredictionValidationRow(BaseModel):
+    symbol: str
+    predicted_return_pct: float
+    actual_return_pct: float
+    absolute_error_pct: float
+    direction_match: bool
 
 
 class BacktestRequest(BaseModel):
@@ -147,6 +159,12 @@ class BacktestResultResponse(BaseModel):
     active_mode: str = "rules_only"
     artifact_classification: str = "missing"
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
+    validation_as_of_date: date | None = None
+    validation_horizon_days: int = 21
+    validation_samples: int = 0
+    validation_hit_rate_pct: float = 0.0
+    validation_mae_pct: float = 0.0
+    prediction_validation: list[PredictionValidationRow] = Field(default_factory=list)
     run_id: str
     status: Literal["completed"]
     metrics: BacktestMetricModel
@@ -172,6 +190,9 @@ class BenchmarkMetricModel(BaseModel):
     max_drawdown_pct: float
     cagr_5y_pct: float
     expense_ratio_pct: float
+    source_type: Literal["LOCAL_PROXY", "THIRD_PARTY"] = "LOCAL_PROXY"
+    source_provider: str = "local_research"
+    relative_accuracy_score_pct: float = 0.0
 
 
 class BenchmarkGrowthPointModel(BaseModel):

@@ -196,10 +196,24 @@ The existing tabs remain the core capstone surfaces:
 Frontend responsibilities:
 
 - preflight runtime readiness
-- submit backend requests directly
+- submit backend requests through a single API adapter (`src/services/backendApi.ts`)
 - show fallback reasons and component availability
 - surface model version, artifact classification, and top drivers
 - distinguish quant output from Groq-generated text
+
+### UI communication policy
+
+- operational tab notices are rendered with neutral informational styling
+- warning-themed banners are intentionally avoided to keep the UI visually clean
+- fallback reasons and failures are still surfaced as plain text status messages for transparency
+- runtime tables use monospace typography for improved readability
+- invested amounts display conservatively (rounded down) for realistic expectations
+
+### Frontend/API integration contract
+
+- `Generate`, `Analyze`, `Backtest`, and `Compare` are bound to FastAPI routes via the shared API adapter
+- AI chat and AI portfolio explanations now use the same adapter and base URL logic as other tabs
+- request timeout and lightweight response caching are applied for model-status and market-summary calls to reduce repeated latency on tab transitions
 
 ## Local Demo Path
 
@@ -232,6 +246,12 @@ Frontend responsibilities:
 - quant APIs remain healthy
 - explanation routes degrade gracefully
 - runtime banner shows Groq as unavailable
+
+### Runtime path hygiene
+
+- canonical model artifacts live under `apps/api/artifacts/models/*`
+- canonical dataset artifacts live under `apps/api/artifacts/datasets/*`
+- stale nested path `apps/api/apps/api/artifacts` was removed to avoid ambiguous lookup behavior
 
 ## Current Gaps
 

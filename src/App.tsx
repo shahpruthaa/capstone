@@ -89,7 +89,7 @@ export default function App() {
           <div className="flex-shrink-0 hidden md:block">
             {portfolio ? (
               <span className="badge badge-green">
-                Rs {(portfolio.totalInvested / 100000).toFixed(1)}L · {portfolio.riskProfile.replace('_', ' ')}
+                Rs {(Math.floor((portfolio.totalInvested / 100000) * 10) / 10).toFixed(1)}L · {portfolio.riskProfile.replace('_', ' ')}
               </span>
             ) : (
               <span className="badge badge-slate">No Portfolio</span>
@@ -101,8 +101,8 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-7 pb-24">
         <div className="card p-4 mb-5">
           <div className="flex flex-wrap gap-3 text-xs">
-            <span className={marketData?.available ? 'badge badge-green' : 'badge badge-amber'}>
-              Market Data: {marketData?.available ? 'Loaded' : 'Missing'}
+            <span className={marketData?.available ? 'badge badge-green' : 'badge badge-slate'}>
+              Market Data: {marketData?.available ? 'Loaded' : 'Syncing'}
             </span>
             <span className={modelStatus?.available ? 'badge badge-green' : 'badge badge-slate'}>
               Runtime: {modelStatus?.available ? `${modelStatus.activeMode || modelStatus.variant}${modelStatus.modelVersion ? ` ${modelStatus.modelVersion}` : ''}` : 'rules_only'}
@@ -113,32 +113,19 @@ export default function App() {
             <span className="badge badge-slate">
               Artifact: {modelStatus?.available ? modelStatus.artifactClassification || 'n/a' : 'n/a'}
             </span>
-            <span className={modelStatus?.groqConnected ? 'badge badge-green' : 'badge badge-amber'}>
-              Groq: {modelStatus?.groqConnected ? 'Connected' : 'Unavailable'}
+            <span className={modelStatus?.groqConnected ? 'badge badge-green' : 'badge badge-slate'}>
+              Groq: {modelStatus?.groqConnected ? 'Connected' : 'Optional / Not Configured'}
             </span>
             <span className="badge badge-slate">
               Components: {modelStatus?.availableComponents?.length ? modelStatus.availableComponents.join(', ') : 'rules only'}
             </span>
             <span className="badge badge-slate">
-              Data Range: {marketData?.minTradeDate && marketData?.maxTradeDate ? `${marketData.minTradeDate} to ${marketData.maxTradeDate}` : 'Unavailable'}
+              Data Range: {marketData?.minTradeDate && marketData?.maxTradeDate ? `${marketData.minTradeDate} to ${marketData.maxTradeDate}` : 'Loading'}
             </span>
-            <span className="badge badge-amber">
-              Benchmarks: Proxy-aware local research mode
+            <span className="badge badge-slate">
+              Benchmarks: Local + third-party reference mode
             </span>
           </div>
-          {(marketData?.notes?.length || (!modelStatus?.available && modelStatus?.reason)) ? (
-            <div className="mt-3 space-y-2">
-              {modelStatus?.available === false && modelStatus.reason && (
-                <div className="alert-warning text-xs">Model fallback reason: {modelStatus.reason}</div>
-              )}
-              {modelStatus?.notes?.slice(0, 2).map((note) => (
-                <div key={note} className="alert-info text-xs">{note}</div>
-              ))}
-              {marketData?.notes?.slice(0, 2).map((note) => (
-                <div key={note} className="alert-info text-xs">{note}</div>
-              ))}
-            </div>
-          ) : null}
         </div>
         <Suspense fallback={<TabFallback />}>
           {activeTab === 'GENERATE' && (

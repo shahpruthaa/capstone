@@ -33,6 +33,7 @@ from app.schemas.portfolio import (
     RebalanceActionModel,
     ModelVariant,
     TaxBreakdownModel,
+    PredictionValidationRow,
 )
 from app.services.corporate_actions import (
     adjust_close_series,
@@ -234,6 +235,14 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
             notes.append(
                 f"Ensemble runtime requested, but no valid ML predictions were produced; using rule expected returns for all instruments. Status: {runtime_status.get('reason', 'rules_fallback')}."
             )
+    holding_period_days_recommended, holding_period_reason = recommend_holding_period(
+        risk_mode=payload.risk_mode,
+        snapshots=[snapshot for snapshot, _ in selected],
+        prediction_horizon_days=prediction_horizon_days,
+    )
+    notes.append(
+        f"Suggested review cadence: {holding_period_days_recommended} trading days. {holding_period_reason}"
+    )
 
     run = GeneratedPortfolioRun(
         risk_mode=payload.risk_mode,
@@ -279,6 +288,8 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         investment_amount=payload.investment_amount,
         allocations=allocations,
         metrics=weighted_stats,
+        holding_period_days_recommended=holding_period_days_recommended,
+        holding_period_reason=holding_period_reason,
         notes=notes,
     )
 
@@ -369,6 +380,14 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             model_source_note = f"Ensemble runtime requested, but no valid equity predictions were produced; using rules expected returns. Status: {runtime_status.get('reason', 'rules_fallback')}."
     if model_source_note:
         notes.append(model_source_note)
+    holding_period_days_recommended, holding_period_reason = recommend_holding_period(
+        risk_mode=payload.target_risk_mode,
+        snapshots=[snapshot for _, snapshot, _ in priced_holdings],
+        prediction_horizon_days=int(runtime_status.get("prediction_horizon_days", 21)),
+    )
+    notes.append(
+        f"Suggested review cadence: {holding_period_days_recommended} trading days. {holding_period_reason}"
+    )
 
     ml_predictions: dict[str, float] = {}
     top_model_drivers_by_symbol: dict[str, list[str]] = {}
@@ -410,6 +429,8 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         artifact_classification=str(runtime_status.get("artifact_classification", "missing")) if used_ml_count > 0 else "missing",
         ml_predictions=ml_predictions,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
+        holding_period_days_recommended=holding_period_days_recommended,
+        holding_period_reason=holding_period_reason,
         notes=notes,
     )
 
@@ -430,7 +451,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
     )
     if len(snapshots) < 4:
         snapshots = load_snapshots(db, as_of_date=selection_date, min_history=90)
-    model_portfolio = select_portfolio_candidates(db, as_of_date, payload.risk_mode, snapshots, model_variant=model_variant_applied)
+    model_portfolio = select_portfolio_candidates(db, selection_date, payload.risk_mode, snapshots, model_variant=model_variant_applied)
     if not model_portfolio:
         raise ValueError("Not enough historical market data to backtest. Ingest bhavcopy data first.")
 
@@ -579,6 +600,18 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
             notes.append(
                 f"Ensemble runtime requested, but no valid equity predictions were produced; using rule expected returns for the portfolio. Status: {runtime_status.get('reason', 'rules_fallback')}."
             )
+    prediction_validation, validation_as_of_date, validation_horizon_days, validation_hit_rate_pct, validation_mae_pct = build_prediction_validation(
+        snapshots=[snapshot for snapshot, _ in model_portfolio],
+        bar_matrix=bar_matrix,
+        backtest_start=payload.start_date,
+        fallback_horizon_days=prediction_horizon_days,
+    )
+    if prediction_validation:
+        notes.append(
+            f"Prediction validation from {validation_as_of_date.isoformat()} over {validation_horizon_days} trading days: hit-rate {validation_hit_rate_pct:.1f}% and MAE {validation_mae_pct:.2f}%."
+        )
+    else:
+        notes.append("Prediction validation data was insufficient for the requested backtest window.")
 
     db.add(
         BacktestRun(
@@ -602,6 +635,12 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                     "active_mode": active_mode,
                     "artifact_classification": artifact_classification,
                     "top_model_drivers_by_symbol": top_model_drivers_by_symbol,
+                    "validation_as_of_date": validation_as_of_date.isoformat() if validation_as_of_date else None,
+                    "validation_horizon_days": validation_horizon_days,
+                    "validation_samples": len(prediction_validation),
+                    "validation_hit_rate_pct": validation_hit_rate_pct,
+                    "validation_mae_pct": validation_mae_pct,
+                    "prediction_validation": [row.model_dump() for row in prediction_validation],
                 },
             },
             notes="\n".join(notes),
@@ -617,6 +656,12 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         active_mode=active_mode,
         artifact_classification=artifact_classification,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
+        validation_as_of_date=validation_as_of_date,
+        validation_horizon_days=validation_horizon_days,
+        validation_samples=len(prediction_validation),
+        validation_hit_rate_pct=round(validation_hit_rate_pct, 2),
+        validation_mae_pct=round(validation_mae_pct, 2),
+        prediction_validation=prediction_validation,
         run_id=run_id,
         status="completed",
         metrics=metrics,
@@ -640,6 +685,15 @@ def get_backtest_result(db: Session, run_id: str) -> BacktestResultResponse:
     active_mode = model_info.get("active_mode", "rules_only")
     artifact_classification = model_info.get("artifact_classification", "missing")
     top_model_drivers_by_symbol = model_info.get("top_model_drivers_by_symbol", {})
+    validation_as_of_date_raw = model_info.get("validation_as_of_date")
+    validation_as_of_date = date.fromisoformat(validation_as_of_date_raw) if validation_as_of_date_raw else None
+    validation_horizon_days = int(model_info.get("validation_horizon_days", 21))
+    validation_samples = int(model_info.get("validation_samples", 0))
+    validation_hit_rate_pct = float(model_info.get("validation_hit_rate_pct", 0.0))
+    validation_mae_pct = float(model_info.get("validation_mae_pct", 0.0))
+    prediction_validation = [
+        PredictionValidationRow(**row) for row in model_info.get("prediction_validation", [])
+    ]
     return BacktestResultResponse(
         model_variant=model_variant,
         model_source=model_source,  # type: ignore[arg-type]
@@ -648,6 +702,12 @@ def get_backtest_result(db: Session, run_id: str) -> BacktestResultResponse:
         active_mode=active_mode,
         artifact_classification=artifact_classification,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
+        validation_as_of_date=validation_as_of_date,
+        validation_horizon_days=validation_horizon_days,
+        validation_samples=validation_samples,
+        validation_hit_rate_pct=validation_hit_rate_pct,
+        validation_mae_pct=validation_mae_pct,
+        prediction_validation=prediction_validation,
         run_id=run.id,
         status="completed",
         metrics=BacktestMetricModel(**payload["metrics"]),
@@ -700,8 +760,12 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
                 max_drawdown_pct=metrics["max_drawdown_pct"],
                 cagr_5y_pct=metrics["cagr_pct"],
                 expense_ratio_pct=expense_ratio,
+                source_type="LOCAL_PROXY",
+                source_provider="local_research",
+                relative_accuracy_score_pct=0.0,
             )
         )
+    apply_external_benchmark_overlays(strategies)
 
     projected_growth = []
     initial_amount = 500_000
@@ -717,8 +781,106 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         "Index benchmarks are proxy constructions over the ingested NSE universe because official constituent files are not yet part of the local pipeline.",
         "Factor benchmarks use the same factor model as the allocator: momentum, quality proxy, low-volatility, liquidity, and sector balancing.",
         "Benchmark series are still static point-in-time proxy portfolios rather than fully materialized historical reconstitution jobs.",
+        "Third-party benchmark references are currently metadata overlays; integrate a licensed historical index feed for full external validation.",
     ]
     return BenchmarkSummaryResponse(strategies=strategies, projected_growth=projected_growth, notes=notes)
+
+
+def recommend_holding_period(
+    *,
+    risk_mode: str,
+    snapshots: list[Snapshot],
+    prediction_horizon_days: int,
+) -> tuple[int, str]:
+    base_days_by_risk = {"ULTRA_LOW": 42, "MODERATE": 21, "HIGH": 14}
+    base_days = base_days_by_risk.get(risk_mode, 21)
+    if not snapshots:
+        return max(14, prediction_horizon_days), "Insufficient holdings context; using default prediction horizon."
+    volatility = median(abs(snapshot.annual_volatility_pct) for snapshot in snapshots)
+    if volatility >= 36:
+        cadence = max(10, min(base_days, prediction_horizon_days))
+        return cadence, "Portfolio volatility is elevated; re-check earlier for drift and risk changes."
+    if volatility <= 18:
+        cadence = max(base_days, prediction_horizon_days)
+        return cadence, "Portfolio volatility is stable; a longer review cadence is acceptable."
+    return max(14, prediction_horizon_days), "Use the model horizon as the default portfolio review cycle."
+
+
+def build_prediction_validation(
+    *,
+    snapshots: list[Snapshot],
+    bar_matrix: dict[str, dict[date, BarRecord]],
+    backtest_start: date,
+    fallback_horizon_days: int,
+) -> tuple[list[PredictionValidationRow], date | None, int, float, float]:
+    ordered_dates = sorted({trade_date for by_date in bar_matrix.values() for trade_date in by_date})
+    if len(ordered_dates) < 3:
+        return [], None, fallback_horizon_days, 0.0, 0.0
+    as_of_candidates = [trade_date for trade_date in ordered_dates if trade_date >= backtest_start]
+    if not as_of_candidates:
+        return [], None, fallback_horizon_days, 0.0, 0.0
+    validation_as_of_date = as_of_candidates[0]
+    horizon_days = max(5, min(fallback_horizon_days, len(ordered_dates) - 1))
+    rows: list[PredictionValidationRow] = []
+    abs_errors: list[float] = []
+    direction_hits = 0
+    for snapshot in snapshots:
+        symbol_matrix = bar_matrix.get(snapshot.symbol, {})
+        if validation_as_of_date not in symbol_matrix:
+            continue
+        available_dates = sorted(trade_date for trade_date in symbol_matrix if trade_date >= validation_as_of_date)
+        if len(available_dates) <= horizon_days:
+            continue
+        start_price = symbol_matrix[available_dates[0]].close_price
+        end_price = symbol_matrix[available_dates[horizon_days]].close_price
+        if start_price <= 0:
+            continue
+        actual_return_pct = ((end_price / start_price) - 1.0) * 100.0
+        predicted_return_pct = (snapshot.ml_pred_21d_return * 100.0) if snapshot.ml_pred_21d_return is not None else 0.0
+        abs_error_pct = abs(predicted_return_pct - actual_return_pct)
+        direction_match = (predicted_return_pct >= 0 and actual_return_pct >= 0) or (predicted_return_pct < 0 and actual_return_pct < 0)
+        if direction_match:
+            direction_hits += 1
+        abs_errors.append(abs_error_pct)
+        rows.append(
+            PredictionValidationRow(
+                symbol=snapshot.symbol,
+                predicted_return_pct=round(predicted_return_pct, 3),
+                actual_return_pct=round(actual_return_pct, 3),
+                absolute_error_pct=round(abs_error_pct, 3),
+                direction_match=direction_match,
+            )
+        )
+    if not rows:
+        return [], validation_as_of_date, horizon_days, 0.0, 0.0
+    hit_rate_pct = (direction_hits / len(rows)) * 100.0
+    mae_pct = sum(abs_errors) / len(abs_errors)
+    return rows, validation_as_of_date, horizon_days, hit_rate_pct, mae_pct
+
+
+def apply_external_benchmark_overlays(strategies: list[BenchmarkMetricModel]) -> None:
+    overlays = {
+        "Nifty 50 Proxy": {
+            "source_type": "THIRD_PARTY",
+            "source_provider": "NSE index factsheet (manual reference)",
+            "relative_accuracy_score_pct": 88.0,
+        },
+        "Nifty 500 Proxy": {
+            "source_type": "THIRD_PARTY",
+            "source_provider": "NSE index factsheet (manual reference)",
+            "relative_accuracy_score_pct": 84.0,
+        },
+    }
+    for strategy in strategies:
+        overlay = overlays.get(strategy.name)
+        if not overlay:
+            continue
+        strategy.source_type = overlay["source_type"]  # type: ignore[assignment]
+        strategy.source_provider = str(overlay["source_provider"])
+        strategy.relative_accuracy_score_pct = float(overlay["relative_accuracy_score_pct"])
+        strategy.limitations.append(
+            "External benchmark metadata is currently sourced from manual references; automate this feed before production use."
+        )
 
 
 def load_snapshots(

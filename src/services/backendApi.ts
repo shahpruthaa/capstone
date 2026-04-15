@@ -1,13 +1,15 @@
 import { LIQUID_ASSETS, NSE_STOCKS } from '../data/stocks';
-import { ComparisonResult, BenchmarkStrategy } from './benchmarkService';
-import { BacktestConfig, BacktestResult } from './backtestEngine';
-import {
+import type { ComparisonResult, BenchmarkStrategy } from './benchmarkService';
+import type { BacktestConfig, BacktestResult } from './backtestEngine';
+import type {
   AnalysisResult,
   Portfolio,
   RiskProfile,
 } from './portfolioService';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_TIMEOUT_MS = 10_000;
+const BENCHMARK_API_TIMEOUT_MS = 60_000;
 const ALL_STOCKS = [...NSE_STOCKS, ...LIQUID_ASSETS];
 
 type ApiRiskMode = 'ULTRA_LOW' | 'MODERATE' | 'HIGH';
@@ -61,6 +63,8 @@ interface ApiGeneratePortfolioResponse {
     beta: number;
     diversification_score: number;
   };
+  holding_period_days_recommended?: number;
+  holding_period_reason?: string;
   notes?: string[];
 }
 
@@ -80,6 +84,8 @@ interface ApiAnalyzePortfolioResponse {
   artifact_classification?: string;
   ml_predictions?: Record<string, number>;
   top_model_drivers_by_symbol?: Record<string, string[]>;
+  holding_period_days_recommended?: number;
+  holding_period_reason?: string;
   notes: string[];
 }
 
@@ -91,6 +97,18 @@ interface ApiBacktestResponse {
   active_mode?: string;
   artifact_classification?: string;
   top_model_drivers_by_symbol?: Record<string, string[]>;
+  validation_as_of_date?: string;
+  validation_horizon_days?: number;
+  validation_samples?: number;
+  validation_hit_rate_pct?: number;
+  validation_mae_pct?: number;
+  prediction_validation?: {
+    symbol: string;
+    predicted_return_pct: number;
+    actual_return_pct: number;
+    absolute_error_pct: number;
+    direction_match: boolean;
+  }[];
   metrics: {
     cagr_pct: number;
     total_return_pct: number;
@@ -143,6 +161,9 @@ interface ApiBenchmarkResponse {
     max_drawdown_pct: number;
     cagr_5y_pct: number;
     expense_ratio_pct: number;
+    source_type?: 'LOCAL_PROXY' | 'THIRD_PARTY';
+    source_provider?: string;
+    relative_accuracy_score_pct?: number;
   }[];
   projected_growth: { year: number; values: Record<string, number> }[];
   notes?: string[];
@@ -180,10 +201,40 @@ interface ApiMarketDataSummaryResponse {
   notes?: string[];
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+interface ApiChatResponse {
+  response: string;
+}
+
+interface ApiPortfolioExplainResponse {
+  explanation: string;
+}
+
+interface ExplainPortfolioAllocation {
+  symbol: string;
+  sector: string;
+  weight: number;
+  rationale?: string;
+  top_model_drivers?: string[];
+}
+
+let cachedModelStatus: { value: CurrentModelStatus; fetchedAt: number } | null = null;
+let cachedMarketSummary: { value: MarketDataSummary; fetchedAt: number } | null = null;
+const STATUS_CACHE_TTL_MS = 30_000;
+
+async function fetchJson<T>(
+  path: string,
+  init?: RequestInit,
+  options?: { timeoutMs?: number },
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = options?.timeoutMs ?? API_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    signal: controller.signal,
     ...init,
+  }).finally(() => {
+    clearTimeout(timeout);
   });
 
   if (!response.ok) {
@@ -246,6 +297,8 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile,
     predictionHorizonDays: response.prediction_horizon_days,
     activeMode: response.active_mode,
     artifactClassification: response.artifact_classification,
+    holdingPeriodDaysRecommended: response.holding_period_days_recommended,
+    holdingPeriodReason: response.holding_period_reason,
     metrics: {
       avgBeta: response.metrics.beta,
       estimatedAnnualReturn: response.metrics.estimated_return_pct,
@@ -306,6 +359,8 @@ export async function analyzePortfolioViaApi(
     artifactClassification: response.artifact_classification,
     mlPredictions: response.ml_predictions ?? {},
     topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
+    holdingPeriodDaysRecommended: response.holding_period_days_recommended,
+    holdingPeriodReason: response.holding_period_reason,
   };
 }
 
@@ -371,11 +426,27 @@ export async function runBacktestViaApi(
     activeMode: response.active_mode,
     artifactClassification: response.artifact_classification,
     topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
+    validationAsOfDate: response.validation_as_of_date,
+    validationHorizonDays: response.validation_horizon_days ?? 21,
+    validationSamples: response.validation_samples ?? 0,
+    validationHitRatePct: response.validation_hit_rate_pct ?? 0,
+    validationMaePct: response.validation_mae_pct ?? 0,
+    predictionValidation: (response.prediction_validation ?? []).map((row) => ({
+      symbol: row.symbol,
+      predictedReturnPct: row.predicted_return_pct,
+      actualReturnPct: row.actual_return_pct,
+      absoluteErrorPct: row.absolute_error_pct,
+      directionMatch: row.direction_match,
+    })),
   };
 }
 
 export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> {
-  const response = await fetchJson<ApiBenchmarkResponse>('/api/v1/benchmarks/summary');
+  const response = await fetchJson<ApiBenchmarkResponse>(
+    '/api/v1/benchmarks/summary',
+    undefined,
+    { timeoutMs: BENCHMARK_API_TIMEOUT_MS },
+  );
   const strategies: BenchmarkStrategy[] = response.strategies.map((strategy) => ({
     name: strategy.name,
     description: strategy.description,
@@ -392,6 +463,9 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
     cagr5Y: strategy.cagr_5y_pct,
     expenseRatio: strategy.expense_ratio_pct,
     type: strategy.category,
+    sourceType: strategy.source_type ?? 'LOCAL_PROXY',
+    sourceProvider: strategy.source_provider ?? 'local_research',
+    relativeAccuracyScorePct: strategy.relative_accuracy_score_pct ?? 0,
   }));
 
   const projectedGrowth = response.projected_growth.map((row) => ({
@@ -404,8 +478,11 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
 }
 
 export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus> {
+  if (cachedModelStatus && Date.now() - cachedModelStatus.fetchedAt < STATUS_CACHE_TTL_MS) {
+    return cachedModelStatus.value;
+  }
   const response = await fetchJson<ApiCurrentModelStatusResponse>('/api/v1/models/current');
-  return {
+  const mapped: CurrentModelStatus = {
     available: response.available,
     variant: response.variant,
     modelSource: response.model_source,
@@ -427,11 +504,16 @@ export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus>
     runtimeSitePackages: response.runtime_site_packages,
     reason: response.reason,
   };
+  cachedModelStatus = { value: mapped, fetchedAt: Date.now() };
+  return mapped;
 }
 
 export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
+  if (cachedMarketSummary && Date.now() - cachedMarketSummary.fetchedAt < STATUS_CACHE_TTL_MS) {
+    return cachedMarketSummary.value;
+  }
   const response = await fetchJson<ApiMarketDataSummaryResponse>('/api/v1/market-data/summary');
-  return {
+  const mapped: MarketDataSummary = {
     available: response.available,
     minTradeDate: response.min_trade_date,
     maxTradeDate: response.max_trade_date,
@@ -439,4 +521,36 @@ export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
     instrumentCount: response.instrument_count,
     notes: response.notes ?? [],
   };
+  cachedMarketSummary = { value: mapped, fetchedAt: Date.now() };
+  return mapped;
+}
+
+export async function explainPortfolioViaApi(payload: {
+  allocations: ExplainPortfolioAllocation[];
+  riskMode: string;
+  totalAmount: number;
+}): Promise<string> {
+  const response = await fetchJson<ApiPortfolioExplainResponse>('/api/v1/explain/portfolio', {
+    method: 'POST',
+    body: JSON.stringify({
+      allocations: payload.allocations,
+      risk_mode: payload.riskMode,
+      total_amount: payload.totalAmount,
+    }),
+  });
+  return response.explanation;
+}
+
+export async function chatWithAssistantViaApi(payload: {
+  message: string;
+  history: Array<{ role: 'assistant' | 'user'; content: string }>;
+}): Promise<string> {
+  const response = await fetchJson<ApiChatResponse>('/api/v1/explain/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: payload.message,
+      history: payload.history,
+    }),
+  });
+  return response.response;
 }

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from app.core.config import settings
+from app.services.news_intelligence import get_market_context
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,7 @@ def explain_stock(
     return completion or "LLM explanation temporarily unavailable."
 
 
-def explain_portfolio(allocations: list[dict[str, Any]], risk_mode: str, total_amount: float) -> str:
+async def explain_portfolio(allocations: list[dict[str, Any]], risk_mode: str, total_amount: float) -> str:
     if not settings.groq_api_key:
         return "LLM explanation unavailable."
 
@@ -156,6 +157,9 @@ def explain_portfolio(allocations: list[dict[str, Any]], risk_mode: str, total_a
         for allocation in allocations[:8]
     )
     sectors = sorted({allocation.get("sector", "Unknown") for allocation in allocations})
+    market_context = await get_market_context()
+    summary = market_context.get("market_context", {}).get("top_event_summary", "Market context unavailable")
+    sentiment = market_context.get("market_context", {}).get("overall_market_sentiment", 0.0)
 
     prompt = f"""You are an NSE portfolio analyst. Summarize this AI-generated portfolio in 2 paragraphs.
 
@@ -164,10 +168,14 @@ Investment Amount: Rs {total_amount:,.0f}
 Top Holdings: {symbols_summary}
 Sectors Covered: {", ".join(sectors)}
 Number of Holdings: {len(allocations)}
+Current market top event: {summary}
+Overall market sentiment score: {sentiment}
 
 Explain: (1) what the portfolio is trying to achieve given the risk mode,
 (2) what themes or factors are driving the selection,
-(3) key risks to watch. Be specific and quantitative. No bullet points."""
+(3) key risks to watch.
+Then add one short paragraph on how current market context/news could affect this exact portfolio mix.
+Be specific and quantitative. No bullet points."""
 
     completion = _sync_completion([{"role": "user", "content": prompt}], max_tokens=400, temperature=0.3)
     return completion or "Portfolio summary unavailable."

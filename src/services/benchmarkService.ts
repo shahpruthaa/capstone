@@ -17,6 +17,9 @@ export interface BenchmarkStrategy {
     cagr5Y: number;         // 5-year CAGR %
     expenseRatio: number;   // annual %
     type: 'AI' | 'INDEX' | 'FACTOR' | 'AMC_STYLE';
+    sourceType?: 'LOCAL_PROXY' | 'THIRD_PARTY';
+    sourceProvider?: string;
+    relativeAccuracyScorePct?: number;
 }
 
 export interface ComparisonResult {

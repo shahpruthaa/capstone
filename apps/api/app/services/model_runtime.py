@@ -11,12 +11,21 @@ from app.ml.lightgbm_alpha.runtime import import_lightgbm
 
 
 def api_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    # .../apps/api/app/services/model_runtime.py -> .../apps/api
+    return Path(__file__).resolve().parents[2]
 
 
 def resolve_artifact_dir(relative_or_absolute: str) -> Path:
     path = Path(relative_or_absolute)
-    return path if path.is_absolute() else api_root() / path
+    if path.is_absolute():
+        return path
+
+    # Prefer artifacts rooted at apps/api, with fallback to legacy apps/ root.
+    preferred = api_root() / path
+    legacy = api_root().parent / path
+    if preferred.exists() or not legacy.exists():
+        return preferred
+    return legacy
 
 
 def _safe_json(path: Path) -> dict[str, Any]:

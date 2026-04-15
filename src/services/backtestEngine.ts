@@ -33,6 +33,18 @@ export interface BacktestResult {
     activeMode?: string;
     artifactClassification?: string;
     topModelDriversBySymbol?: { [key: string]: string[] };
+    validationAsOfDate?: string;
+    validationHorizonDays?: number;
+    validationSamples?: number;
+    validationHitRatePct?: number;
+    validationMaePct?: number;
+    predictionValidation?: {
+        symbol: string;
+        predictedReturnPct: number;
+        actualReturnPct: number;
+        absoluteErrorPct: number;
+        directionMatch: boolean;
+    }[];
 }
 
 export interface TaxBreakdown {

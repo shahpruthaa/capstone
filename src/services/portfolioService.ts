@@ -22,6 +22,8 @@ export interface Portfolio {
   predictionHorizonDays?: number;
   activeMode?: string;
   artifactClassification?: string;
+  holdingPeriodDaysRecommended?: number;
+  holdingPeriodReason?: string;
 }
 
 export interface PortfolioMetrics {
@@ -52,6 +54,8 @@ export interface AnalysisResult {
   artifactClassification?: string;
   mlPredictions?: { [key: string]: number };
   topModelDriversBySymbol?: { [key: string]: string[] };
+  holdingPeriodDaysRecommended?: number;
+  holdingPeriodReason?: string;
 }
 
 export interface RebalancingAction {

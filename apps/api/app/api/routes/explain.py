@@ -58,7 +58,7 @@ async def chat_endpoint(req: ChatRequest) -> dict:
 
 @router.post("/portfolio")
 async def explain_portfolio_endpoint(req: PortfolioExplainRequest) -> dict:
-    explanation = explain_portfolio(
+    explanation = await explain_portfolio(
         allocations=req.allocations,
         risk_mode=req.risk_mode,
         total_amount=req.total_amount,

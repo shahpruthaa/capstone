@@ -13,6 +13,36 @@ It is a local-first, full-stack NSE portfolio research application with:
 
 This repo does not depend on QuantEngine or any external quant API.
 
+## April 2026 Stabilization Updates
+
+The current branch includes a post-demo stabilization pass focused on runtime reliability, Groq connectivity, and UI/backend parity:
+
+- fixed a backend backtest failure in `run_backtest` caused by an incorrect selection-date variable
+- aligned frontend and backend API usage so all tabs call the same FastAPI host contract
+- routed AI explanation/chat calls through the shared backend API client (no relative `/api` hard-coding)
+- added request timeout handling and short-lived status caching in the frontend API adapter to reduce perceived slowness
+- corrected Compare tab chart bindings to match backend payload keys
+- cleaned duplicate nested artifact path `apps/api/apps/api/artifacts` and moved dataset files into canonical `apps/api/artifacts/datasets/lightgbm_v1`
+- simplified tab-level messaging to use clean informational notices instead of warning-themed UI banners
+
+Current live status target:
+
+- `Generate`: full ensemble-aware runtime metadata
+- `Analyze`: backend-driven portfolio analysis and actions
+- `Backtest`: stable execution against `/api/v1/backtests/run`
+- `Compare`: backend benchmark summary rendering
+- `AIChat` and AI explanations: Groq-backed when `APP_GROQ_API_KEY` is configured
+
+## UI Clarity Policy
+
+To keep the interface clean and simple for demo and review sessions:
+
+- tab-level operational messages use neutral informational styling
+- warning-themed visual banners are avoided in normal UI flow
+- fallback and failure details remain available as text, but without alarm-heavy presentation
+
+This keeps runtime transparency intact while reducing visual noise.
+
 ## What The Project Does
 
 The app supports one end-to-end capstone flow:
@@ -31,23 +61,23 @@ The app supports one end-to-end capstone flow:
 
 The backend always reports its real runtime state. It does not silently mix hidden fallbacks.
 
-| Mode | When it is used | Quant behavior | Explanation behavior |
-| --- | --- | --- | --- |
-| `full_ensemble` | `LightGBM`, `LSTM`, `GNN`, and `death-risk` artifacts are all valid | Equities use the full ensemble scorer, ETFs stay on rules | Groq explanation works if configured |
-| `degraded_ensemble` | `LightGBM` is valid but one or more non-core ensemble components are missing | Equities use the available ensemble subset with normalized weights | Groq explanation works if configured |
-| `rules_only` | `LightGBM` is missing or invalid | Portfolio generation, analysis, and backtests continue with rules | Groq explanation may still work if configured |
+| Mode                | When it is used                                                              | Quant behavior                                                     | Explanation behavior                          |
+| ------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- |
+| `full_ensemble`     | `LightGBM`, `LSTM`, `GNN`, and `death-risk` artifacts are all valid          | Equities use the full ensemble scorer, ETFs stay on rules          | Groq explanation works if configured          |
+| `degraded_ensemble` | `LightGBM` is valid but one or more non-core ensemble components are missing | Equities use the available ensemble subset with normalized weights | Groq explanation works if configured          |
+| `rules_only`        | `LightGBM` is missing or invalid                                             | Portfolio generation, analysis, and backtests continue with rules  | Groq explanation may still work if configured |
 
 ## System Architecture
 
-| Layer | Technology | Responsibility |
-| --- | --- | --- |
-| Frontend | React, Vite, TypeScript | Generate, Analyze, Backtest, Compare, AI chat UI |
-| API | FastAPI | Portfolio, analysis, backtests, model status, stock detail, explain, news |
-| Quant runtime | Python services | Universe selection, factor scoring, ensemble orchestration, allocation, replay |
-| Data store | PostgreSQL + TimescaleDB | Instruments, daily bars, corporate actions, portfolio runs, backtests |
-| Cache/queue | Redis | Optional local support service |
-| ML artifacts | Local filesystem | `lightgbm_v1`, `lstm_v1`, `gnn_v1`, `death_risk_v1`, `ensemble_v1` |
-| LLM | Groq | Natural-language explanation only |
+| Layer         | Technology               | Responsibility                                                                 |
+| ------------- | ------------------------ | ------------------------------------------------------------------------------ |
+| Frontend      | React, Vite, TypeScript  | Generate, Analyze, Backtest, Compare, AI chat UI                               |
+| API           | FastAPI                  | Portfolio, analysis, backtests, model status, stock detail, explain, news      |
+| Quant runtime | Python services          | Universe selection, factor scoring, ensemble orchestration, allocation, replay |
+| Data store    | PostgreSQL + TimescaleDB | Instruments, daily bars, corporate actions, portfolio runs, backtests          |
+| Cache/queue   | Redis                    | Optional local support service                                                 |
+| ML artifacts  | Local filesystem         | `lightgbm_v1`, `lstm_v1`, `gnn_v1`, `death_risk_v1`, `ensemble_v1`             |
+| LLM           | Groq                     | Natural-language explanation only                                              |
 
 More detail: [docs/architecture.md](C:/Users/pruth/nse-ai-portfolio-manager/docs/architecture.md)
 
@@ -113,6 +143,17 @@ docker compose up -d --build
 Frontend: [http://localhost:3000](http://localhost:3000)
 
 Backend docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+### 1.1 Configure Groq (required for AI chat/explanations)
+
+Create `apps/api/.env` and set:
+
+```env
+APP_GROQ_API_KEY="<your-groq-key>"
+APP_GROQ_MODEL="llama-3.3-70b-versatile"
+```
+
+Then restart the API process/container.
 
 ### 2. Run database migrations
 
@@ -219,41 +260,41 @@ Important: the quant engine remains usable without Groq. Explanation routes degr
 
 ## Implementation Status
 
-| Workstream | Status | Notes |
-| --- | --- | --- |
-| Local React + FastAPI integration | Complete | Frontend uses backend routes directly |
-| Dockerized local stack | Complete | `web`, `api`, `postgres`, `redis` |
-| DB schema and migrations | Complete | Includes Timescale and corporate-action support |
-| NSE bhavcopy ingestion | Complete | Raw archive caching, instrument upsert, progress bar |
-| Corporate-action import path | Complete | Schema, import script, adjustment service |
-| Rule-based quant engine | Complete | Allocation, analysis, replay, taxes, fees |
-| Ensemble runtime contract | Complete | Full, degraded, and rules-only modes are explicit |
-| Model status surface | Complete | Component-level readiness, Groq, notes |
-| Stock detail and explanation boundary | Complete | Quant payload and Groq explanation separated |
-| Frontend runtime notices | Complete | Banner plus per-tab runtime metadata |
-| Benchmark comparison | Partial | Proxy-based local research benchmarks, not official constituent reconstruction |
-| Artifact training outputs | Partial | Training scripts exist; readiness depends on local artifacts actually being produced |
-| Automated tests | Partial | Manual verification path is stronger than test coverage right now |
+| Workstream                            | Status   | Notes                                                                                |
+| ------------------------------------- | -------- | ------------------------------------------------------------------------------------ |
+| Local React + FastAPI integration     | Complete | Frontend uses backend routes directly                                                |
+| Dockerized local stack                | Complete | `web`, `api`, `postgres`, `redis`                                                    |
+| DB schema and migrations              | Complete | Includes Timescale and corporate-action support                                      |
+| NSE bhavcopy ingestion                | Complete | Raw archive caching, instrument upsert, progress bar                                 |
+| Corporate-action import path          | Complete | Schema, import script, adjustment service                                            |
+| Rule-based quant engine               | Complete | Allocation, analysis, replay, taxes, fees                                            |
+| Ensemble runtime contract             | Complete | Full, degraded, and rules-only modes are explicit                                    |
+| Model status surface                  | Complete | Component-level readiness, Groq, notes                                               |
+| Stock detail and explanation boundary | Complete | Quant payload and Groq explanation separated                                         |
+| Frontend runtime notices              | Complete | Banner plus per-tab runtime metadata                                                 |
+| Benchmark comparison                  | Partial  | Proxy-based local research benchmarks, not official constituent reconstruction       |
+| Artifact training outputs             | Partial  | Training scripts exist; readiness depends on local artifacts actually being produced |
+| Automated tests                       | Partial  | Manual verification path is stronger than test coverage right now                    |
 
 ## Development Phases
 
-| Phase | Status | Outcome |
-| --- | --- | --- |
-| Phase 1: Frontend prototype | Complete | Generate, Analyze, Backtest, Compare UX exists |
-| Phase 2: Local backend and DB | Complete | FastAPI, Postgres, Timescale, Redis, Docker |
-| Phase 3: NSE data pipeline | Complete | Bhavcopy ingestion and market-data readiness endpoint |
-| Phase 4: Portfolio engine and simulator | Complete | Rule allocator, backtest, fees, taxes, rebalance |
-| Phase 5: ML alpha models | Complete | Local LightGBM, LSTM, GNN, death-risk code and loaders |
-| Phase 6: Ensemble runtime and status | Complete | Component-aware runtime detection and degraded behavior |
-| Phase 7: Explainability and capstone packaging | Complete | Groq boundary, stock detail, runtime UI, branch-specific docs |
-| Phase 8: Official benchmark reconstitution | Partial | Still proxy-based |
-| Phase 9: Production hardening and full automated testing | Partial | Good local demo path, lighter automated coverage than production systems |
+| Phase                                                    | Status   | Outcome                                                                  |
+| -------------------------------------------------------- | -------- | ------------------------------------------------------------------------ |
+| Phase 1: Frontend prototype                              | Complete | Generate, Analyze, Backtest, Compare UX exists                           |
+| Phase 2: Local backend and DB                            | Complete | FastAPI, Postgres, Timescale, Redis, Docker                              |
+| Phase 3: NSE data pipeline                               | Complete | Bhavcopy ingestion and market-data readiness endpoint                    |
+| Phase 4: Portfolio engine and simulator                  | Complete | Rule allocator, backtest, fees, taxes, rebalance                         |
+| Phase 5: ML alpha models                                 | Complete | Local LightGBM, LSTM, GNN, death-risk code and loaders                   |
+| Phase 6: Ensemble runtime and status                     | Complete | Component-aware runtime detection and degraded behavior                  |
+| Phase 7: Explainability and capstone packaging           | Complete | Groq boundary, stock detail, runtime UI, branch-specific docs            |
+| Phase 8: Official benchmark reconstitution               | Partial  | Still proxy-based                                                        |
+| Phase 9: Production hardening and full automated testing | Partial  | Good local demo path, lighter automated coverage than production systems |
 
 ## Known Limitations
 
 - Official index constituent reconstitution is not complete; benchmark strategies are proxy-based.
 - Ensemble quality depends on locally trained artifacts being present and valid.
-- Groq is required for the full explanation story, but not for the quant engine.
+- Groq is required for AI chat and natural-language explanation routes, but not for the quant engine.
 - Live market behavior is still EOD research-grade, not intraday execution-grade.
 - Fee and tax logic are detailed for listed delivery-equity research, but still need maintenance as regulations change.
 
@@ -261,3 +302,50 @@ Important: the quant engine remains usable without Groq. Explanation routes degr
 
 - [Architecture](C:/Users/pruth/nse-ai-portfolio-manager/docs/architecture.md)
 - [Technical Plan](C:/Users/pruth/nse-ai-portfolio-manager/docs/technical-plan.md)
+
+## Suggested Next Improvements
+
+### Core Functionality Enhancements
+
+- **Real-time Data Integration**: Add live NSE data feeds for intraday analysis and alerts
+- **Advanced ML Models**: Implement transformer-based models or reinforcement learning for alpha generation
+- **Portfolio Rebalancing**: Add automated rebalancing triggers based on drift thresholds
+- **Risk Management**: Implement VaR, CVaR, and stress testing capabilities
+- **Tax Optimization**: Enhanced tax-loss harvesting and dividend optimization strategies
+
+### User Experience Improvements
+
+- **Mobile Responsiveness**: Optimize UI for mobile devices and tablets
+- **Dark Mode**: Add theme switching capability
+- **Export Features**: PDF reports, Excel exports, and data visualization downloads
+- **Portfolio History**: Track portfolio performance over time with historical snapshots
+- **Custom Benchmarks**: Allow users to create and save custom benchmark portfolios
+
+### Technical Improvements
+
+- **Testing Suite**: Add comprehensive unit tests, integration tests, and end-to-end test automation
+- **Performance Optimization**: Implement caching, database indexing, and query optimization
+- **API Rate Limiting**: Add proper rate limiting and request throttling
+- **Security Hardening**: Implement authentication, authorization, and data encryption
+- **Monitoring & Logging**: Add application monitoring, error tracking, and performance metrics
+
+### Data & Analytics
+
+- **Alternative Data**: Integrate news sentiment, social media, and macroeconomic indicators
+- **Backtest Enhancements**: Add walk-forward analysis, monte carlo simulations, and scenario analysis
+- **Factor Analysis**: Deeper factor attribution and style analysis capabilities
+- **Peer Comparison**: Compare portfolios against similar investment styles or peer groups
+
+### Deployment & Operations
+
+- **CI/CD Pipeline**: Automated testing, building, and deployment workflows
+- **Container Orchestration**: Kubernetes deployment for production scalability
+- **Backup & Recovery**: Automated database backups and disaster recovery procedures
+- **Multi-environment Support**: Development, staging, and production environment configurations
+
+1. Add benchmark-result caching (short TTL) to reduce repeated compare-tab latency.
+2. Add endpoint-specific timeout controls in backend adapter settings via env vars.
+3. Add Playwright smoke test in CI (Generate -> Analyze -> Backtest -> Compare -> AIChat).
+4. Add structured API error codes and map them to concise UI status chips.
+5. Add lazy-loading skeletons for large chart cards to improve perceived responsiveness.
+6. Add automated benchmark reconstitution pipeline with licensed constituent history.

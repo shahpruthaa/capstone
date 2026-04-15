@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { ArrowRight, Calculator, Info, RefreshCw, Zap, ShieldCheck, TrendingUp } from 'lucide-react';
 import { calculateTransactionCosts, RiskProfile, Portfolio } from '../services/portfolioService';
-import { generatePortfolioViaApi, getCurrentModelStatusViaApi, ModelVariant } from '../services/backendApi';
+import { explainPortfolioViaApi, generatePortfolioViaApi, getCurrentModelStatusViaApi, ModelVariant } from '../services/backendApi';
 import { generatePortfolioInsight } from '../services/localAdvisor';
 import { MetricCard, SectorChip } from './MetricCard';
 
@@ -18,26 +18,20 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
     const generate = async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/v1/explain/portfolio', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    allocations: (portfolio.allocations || []).map(a => ({
-                        symbol: a.stock?.symbol || (a as any).symbol || 'UNKNOWN',
-                        sector: a.stock?.sector || (a as any).sector || 'Unknown',
-                        weight: a.weight || (a as any).weight || 0,
-                        rationale: (a as any).rationale || '',
-                        top_model_drivers: (a as any).drivers || (a as any).top_model_drivers || [],
-                    })),
-                    risk_mode: portfolio.riskProfile || 'MODERATE',
-                    total_amount: portfolio.totalInvested || 500000,
-                }),
+            const explanation = await explainPortfolioViaApi({
+                allocations: (portfolio.allocations || []).map(a => ({
+                    symbol: a.stock?.symbol || (a as any).symbol || 'UNKNOWN',
+                    sector: a.stock?.sector || (a as any).sector || 'Unknown',
+                    weight: a.weight || (a as any).weight || 0,
+                    rationale: (a as any).rationale || '',
+                    top_model_drivers: (a as any).drivers || (a as any).top_model_drivers || [],
+                })),
+                riskMode: portfolio.riskProfile || 'MODERATE',
+                totalAmount: portfolio.totalInvested || 500000,
             });
-            if (!res.ok) throw new Error('API error');
-            const data = await res.json();
-            setInsight(data.explanation || 'No explanation returned.');
+            setInsight(explanation || 'No explanation returned.');
         } catch {
-            setInsight('AI analysis temporarily unavailable.');
+            setInsight('AI analysis is getting ready. Please retry in a moment.');
         } finally {
             setLoading(false);
         }
@@ -54,6 +48,12 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
             ) : (
                 <p className="text-sm text-slate-500 mb-3">Get an AI-powered analysis of your portfolio using ensemble signals, sector trends, and market context.</p>
             )}
+            {portfolio.holdingPeriodDaysRecommended ? (
+                <p className="text-xs text-slate-500 mb-3">
+                    Suggested review cadence: every {portfolio.holdingPeriodDaysRecommended} trading days.
+                    {portfolio.holdingPeriodReason ? ` ${portfolio.holdingPeriodReason}` : ''}
+                </p>
+            ) : null}
             <button onClick={generate} disabled={loading} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
                 {loading ? <RefreshCw className="w-3 h-3 spin" /> : <Zap className="w-3 h-3" />}
                 {loading ? 'Analysing with AI...' : insight ? 'Regenerate AI Analysis' : 'Generate AI Analysis'}
@@ -74,7 +74,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [groqConnected, setGroqConnected] = useState(false);
     const [availableComponents, setAvailableComponents] = useState<string[]>([]);
     const [modelStatusReason, setModelStatusReason] = useState<string>('');
-    const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [generationNotice, setGenerationNotice] = useState<{ tone: 'info'; text: string } | null>(null);
 
     useEffect(() => {
         const loadModelStatus = async () => {
@@ -120,8 +120,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             });
         } catch (error) {
             setGenerationNotice({
-                tone: 'warning',
-                text: `Portfolio generation failed: ${error instanceof Error ? error.message : 'Unable to reach the local backend.'}`,
+                tone: 'info',
+                text: `Portfolio generation is still syncing: ${error instanceof Error ? error.message : 'Local backend connection is still initializing.'}`,
             });
         } finally {
             setGenerating(false);
@@ -157,25 +157,25 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                     <div className="space-y-5">
                         {generationNotice && (
-                            <div className={generationNotice.tone === 'info' ? 'alert-info text-xs' : 'alert-warning text-xs'}>
+                            <p className="text-xs text-slate-500">
                                 {generationNotice.text}
-                            </div>
+                            </p>
                         )}
-                        <div className="alert-info text-xs">
+                        <p className="text-xs text-slate-500">
                             Active local runtime: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `${activeMode}${activeModelVersion ? ` ${activeModelVersion}` : ''}` : 'rules_only'}
                             {activeModelVariant === 'RULES' && modelStatusReason ? ` (${modelStatusReason})` : ''}
-                        </div>
-                        <div className={groqConnected ? 'alert-success text-xs' : 'alert-warning text-xs'}>
-                            Groq explanations: {groqConnected ? 'connected' : 'unavailable'}.
+                        </p>
+                        <p className="text-xs text-slate-500">
+                            Groq explanations: {groqConnected ? 'connected' : 'optional (not configured)'}.
                             {availableComponents.length > 0 ? ` Components ready: ${availableComponents.join(', ')}.` : ' No ensemble components are loaded yet.'}
-                        </div>
+                        </p>
                         {activeModelVariant === 'LIGHTGBM_HYBRID' && (
-                            <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
+                            <p className="text-xs text-slate-500">
                                 Training mode: {activeTrainingMode || 'unknown'}.
                                 {artifactClassification === 'bootstrap'
                                     ? ' This is still a bootstrap artifact and should be treated as a development/demo model.'
                                     : ' This artifact passed the standard local validation flow.'}
-                            </div>
+                            </p>
                         )}
                         <div>
                             <label className="block text-xs font-600 text-slate-500 mb-1.5">Investment Amount (Rs)</label>
@@ -219,7 +219,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         {(portfolio.modelVariant || portfolio.modelSource) && (
                             <div className="card p-5">
                                 <h3 className="font-bold text-sm mb-3 text-slate-900">Model Runtime</h3>
-                                <div className="grid grid-cols-2 gap-3 text-xs">
+                                <div className="runtime-grid grid grid-cols-2 gap-3 text-xs">
                                     <div className="stat-row">
                                         <span className="stat-label">Variant</span>
                                         <span className="stat-value">{portfolio.modelVariant || 'RULES'}</span>
@@ -247,6 +247,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     <div className="stat-row">
                                         <span className="stat-label">Artifact</span>
                                         <span className="stat-value">{portfolio.artifactClassification || artifactClassification || 'n/a'}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Review Cadence</span>
+                                        <span className="stat-value">{portfolio.holdingPeriodDaysRecommended || portfolio.predictionHorizonDays || 21}D</span>
                                     </div>
                                 </div>
                             </div>
@@ -309,7 +313,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                 ) : (
                     <>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <MetricCard label="Total Invested" value={`Rs ${(portfolio.totalInvested / 100000).toFixed(2)}L`} sub="After rounding to whole shares" color="slate" />
+                            <MetricCard label="Total Invested" value={`Rs ${(Math.floor((portfolio.totalInvested / 100000) * 100) / 100).toFixed(2)}L`} sub="After rounding to whole shares" color="slate" />
                             <MetricCard label="Portfolio Beta" value={portfolio.metrics.avgBeta.toFixed(2)} sub="vs Nifty 50 = 1.00" color={portfolio.metrics.avgBeta > 1.3 ? 'red' : portfolio.metrics.avgBeta < 0.8 ? 'green' : 'blue'} trend={portfolio.metrics.avgBeta > 1.3 ? 'up' : 'down'} />
                             <MetricCard label="Sharpe Ratio" value={portfolio.metrics.sharpeRatio.toFixed(2)} sub="Risk-free rate: 7% pa" color={portfolio.metrics.sharpeRatio > 1.2 ? 'green' : 'amber'} trend="up" />
                             <MetricCard label="Exp. Annual Return" value={`${portfolio.metrics.estimatedAnnualReturn.toFixed(1)}%`} sub={`Volatility: ${portfolio.metrics.estimatedVolatility.toFixed(1)}%`} color="green" trend="up" />

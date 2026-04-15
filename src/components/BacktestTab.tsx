@@ -3,7 +3,7 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
     ResponsiveContainer, ReferenceLine
 } from 'recharts';
-import { Play, Settings, TrendingUp, AlertTriangle, IndianRupee } from 'lucide-react';
+import { Play, Settings, TrendingUp, Info, IndianRupee } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
 import { BacktestConfig, BacktestResult } from '../services/backtestEngine';
 import { getCurrentModelStatusViaApi, getMarketDataSummaryViaApi, ModelVariant, runBacktestViaApi } from '../services/backendApi';
@@ -41,7 +41,7 @@ export function BacktestTab({ portfolio }: Props) {
     const [config, setConfig] = useState<BacktestConfig>(DEFAULT_CONFIG);
     const [result, setResult] = useState<BacktestResult | null>(null);
     const [running, setRunning] = useState(false);
-    const [runNotice, setRunNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [runNotice, setRunNotice] = useState<{ tone: 'info'; text: string } | null>(null);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
     const [selectedModelVariant, setSelectedModelVariant] = useState<ModelVariant>('RULES');
 
@@ -62,7 +62,7 @@ export function BacktestTab({ portfolio }: Props) {
                     }));
                 } else if (!marketData.available) {
                     setRunNotice({
-                        tone: 'warning',
+                        tone: 'info',
                         text: 'No local market data is loaded yet. Start the API and let it bootstrap from cached bhavcopy archives, or ingest data manually.',
                     });
                 }
@@ -84,8 +84,8 @@ export function BacktestTab({ portfolio }: Props) {
         } catch (error) {
             setResult(null);
             setRunNotice({
-                tone: 'warning',
-                text: `Backtest failed: ${error instanceof Error ? error.message : 'The local backend backtest endpoint is unavailable.'}`,
+                tone: 'info',
+                text: `Backtest is syncing: ${error instanceof Error ? error.message : 'The local backtest service is initializing.'}`,
             });
         } finally {
             setRunning(false);
@@ -105,16 +105,16 @@ export function BacktestTab({ portfolio }: Props) {
                     </h2>
 
                     {!portfolio && (
-                        <div className="alert-warning flex items-center gap-2 mb-4 text-xs">
-                            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                        <p className="text-xs text-slate-500 mb-4 flex items-center gap-2">
+                            <Info className="w-4 h-4 flex-shrink-0 text-slate-400" />
                             Generate a portfolio first.
-                        </div>
+                        </p>
                     )}
 
                     {runNotice && (
-                        <div className={`${runNotice.tone === 'info' ? 'alert-info' : 'alert-warning'} text-xs mb-4`}>
+                        <p className="text-xs text-slate-500 mb-4">
                             {runNotice.text}
-                        </div>
+                        </p>
                     )}
 
                     <div className="space-y-4">
@@ -248,7 +248,7 @@ export function BacktestTab({ portfolio }: Props) {
 
                         <div className="card p-5">
                             <p className="section-title">Model Runtime</p>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                            <div className="runtime-grid grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                                 <div className="stat-row">
                                     <span className="stat-label">Variant</span>
                                     <span className="stat-value">{result.modelVariant || selectedModelVariant}</span>
@@ -274,6 +274,60 @@ export function BacktestTab({ portfolio }: Props) {
                                     <span className="stat-value">{result.artifactClassification || 'missing'}</span>
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="card p-5">
+                            <p className="section-title">Prediction Validation Snapshot</p>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
+                                <div className="stat-row">
+                                    <span className="stat-label">As-Of Date</span>
+                                    <span className="stat-value">{result.validationAsOfDate || 'n/a'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Horizon</span>
+                                    <span className="stat-value">{result.validationHorizonDays || 21}D</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Hit Rate</span>
+                                    <span className="stat-value">{(result.validationHitRatePct || 0).toFixed(1)}%</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">MAE</span>
+                                    <span className="stat-value">{(result.validationMaePct || 0).toFixed(2)}%</span>
+                                </div>
+                            </div>
+                            {result.predictionValidation && result.predictionValidation.length > 0 ? (
+                                <div className="overflow-x-auto">
+                                    <table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Symbol</th>
+                                                <th>Predicted %</th>
+                                                <th>Actual %</th>
+                                                <th>Abs Error %</th>
+                                                <th>Direction</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {result.predictionValidation.slice(0, 12).map((row) => (
+                                                <tr key={row.symbol}>
+                                                    <td className="font-semibold">{row.symbol}</td>
+                                                    <td className="font-mono">{row.predictedReturnPct.toFixed(2)}%</td>
+                                                    <td className="font-mono">{row.actualReturnPct.toFixed(2)}%</td>
+                                                    <td className="font-mono">{row.absoluteErrorPct.toFixed(2)}%</td>
+                                                    <td>
+                                                        <span className={`badge ${row.directionMatch ? 'badge-green' : 'badge-slate'}`}>
+                                                            {row.directionMatch ? 'Matched' : 'Missed'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            ) : (
+                                <div className="alert-info text-xs">No validation rows available for the chosen window.</div>
+                            )}
                         </div>
 
                         {/* Key metrics */}

@@ -12,15 +12,19 @@ Ship the branch rebuilt from `55b69df` as a stable capstone demo with:
 
 ## Plan Status Summary
 
-| Workstream | Status | Outcome |
-| --- | --- | --- |
-| Baseline hardening and branch reset | Complete | Branch behavior aligned to the `55b69df` capstone baseline |
-| Data and artifact pipeline standardization | Complete | Canonical artifact layout and training order documented |
-| Backend runtime consolidation | Complete | `db_quant_engine.py` and runtime status now drive the system |
-| Frontend demo stabilization | Complete | Runtime banner, per-tab metadata, explicit fallback messaging |
-| Capstone docs and demo path | Complete | README, architecture, and technical plan match this branch |
-| Official benchmark reconstruction | Partial | Proxy-based local research strategies still in use |
-| Automated test depth | Partial | Verification is strong, but coverage is not yet production-grade |
+| Workstream                                       | Status   | Outcome                                                                                         |
+| ------------------------------------------------ | -------- | ----------------------------------------------------------------------------------------------- |
+| Baseline hardening and branch reset              | Complete | Branch behavior aligned to the `55b69df` capstone baseline                                      |
+| Data and artifact pipeline standardization       | Complete | Canonical artifact layout and training order documented                                         |
+| Backend runtime consolidation                    | Complete | `db_quant_engine.py` and runtime status now drive the system                                    |
+| Frontend demo stabilization                      | Complete | Runtime banner, per-tab metadata, explicit fallback messaging                                   |
+| Post-demo reliability fixes (tabs + Groq + perf) | Complete | Backtest route fix, unified API client usage, Groq chat/explain validation, chart binding fixes |
+| UI warning-free simplification                   | Complete | Tab notices standardized to clean informational styling                                         |
+| Runtime table font adjustments                   | Complete | Model runtime tables use monospace typography for better readability                            |
+| Invested amount floor display                    | Complete | Total invested amounts now round down instead of nearest for conservative display               |
+| Capstone docs and demo path                      | Complete | README, architecture, and technical plan match this branch                                      |
+| Official benchmark reconstruction                | Partial  | Proxy-based local research strategies still in use                                              |
+| Automated test depth                             | Partial  | Verification is strong, but coverage is not yet production-grade                                |
 
 ## 1. Baseline Hardening
 
@@ -129,6 +133,79 @@ Important outcome:
 
 - the UI no longer hides degraded or fallback states
 
+Additional completion items:
+
+- fixed Compare chart rendering issue where custom bar coloring used invalid `rect` children instead of `Cell`
+- aligned dashed-line binding with backend strategy key (`Nifty 50 Proxy`)
+- removed direct relative `/api/...` calls from AI components and routed them through `backendApi.ts`
+
+## 5.1 Backtest/Analyze/Compare Reliability Fixes
+
+Completed:
+
+- corrected a backtest backend bug in `run_backtest` where selection date propagation used the wrong variable (`as_of_date` instead of `selection_date`)
+- validated `/api/v1/analysis/portfolio`, `/api/v1/backtests/run`, and `/api/v1/benchmarks/summary` against live local runtime
+
+Result:
+
+- Analyze and Compare tabs are backend-aligned
+- Backtest route no longer fails with internal server error for valid payloads
+
+## 5.2 Load-Time Optimization
+
+Completed:
+
+- converted runtime-only type imports in `backendApi.ts` to `import type` to reduce unnecessary frontend bundle work
+- added API request timeout control in the frontend adapter
+- added short-lived caching for model-status and market-summary calls used across multiple tabs
+
+Result:
+
+- faster perceived load and tab transitions, especially when backend endpoints are slow or temporarily unavailable
+
+## 5.3 Groq LLM Enablement
+
+Completed:
+
+- configured backend env contract (`APP_GROQ_API_KEY`, optional `APP_GROQ_MODEL`) in `apps/api/.env` and `apps/api/.env.example`
+- validated live Groq chat response via `POST /api/v1/explain/chat`
+
+Result:
+
+- Groq-backed chat and portfolio explanation routes are operational when key is configured
+
+## 5.4 Directory Cleanup
+
+Completed:
+
+- migrated dataset artifacts to canonical `apps/api/artifacts/datasets/lightgbm_v1`
+- removed stale nested folder `apps/api/apps/api/artifacts`
+
+Result:
+
+- single canonical artifact tree and cleaner operational conventions
+
+## 5.5 UI Simplification (No Warning-Themed Banners)
+
+Completed:
+
+- replaced warning-tone tab notices with neutral informational notices in Generate, Analyze, Backtest, Compare, and top runtime banner contexts
+- retained all runtime and fallback details as text so behavior remains explicit without noisy alert framing
+
+Result:
+
+- cleaner visual presentation while preserving operational transparency
+
+## 5.6 Further Improvements Backlog
+
+Recommended next steps:
+
+- add benchmark-result caching and warm-up to reduce first-load compare latency
+- expose endpoint-specific frontend timeout settings through environment variables
+- include full click-path Playwright smoke test in CI
+- add structured error-code mapping between backend and UI notices
+- automate benchmark constituent reconstruction from licensed data sources
+
 ## 6. Capstone Demo Path
 
 Recommended presentation flow:
@@ -173,10 +250,10 @@ These are intentionally called out so the capstone is honest:
 
 ## 9. Acceptance Criteria Mapping
 
-| Acceptance target | Status | Notes |
-| --- | --- | --- |
-| Stack starts locally | Complete | Dockerized services and docs are in place |
-| Artifacts are discovered and reported correctly | Complete | Runtime status is component-aware |
-| Full demo can run from the UI | Complete, subject to local data and artifacts | UI and backend paths are wired |
-| Degraded-state demo is transparent | Complete | Banner and route metadata expose it |
-| README matches runtime behavior | Complete | Updated for this branch |
+| Acceptance target                               | Status                                        | Notes                                     |
+| ----------------------------------------------- | --------------------------------------------- | ----------------------------------------- |
+| Stack starts locally                            | Complete                                      | Dockerized services and docs are in place |
+| Artifacts are discovered and reported correctly | Complete                                      | Runtime status is component-aware         |
+| Full demo can run from the UI                   | Complete, subject to local data and artifacts | UI and backend paths are wired            |
+| Degraded-state demo is transparent              | Complete                                      | Banner and route metadata expose it       |
+| README matches runtime behavior                 | Complete                                      | Updated for this branch                   |

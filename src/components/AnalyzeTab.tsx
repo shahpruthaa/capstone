@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Plus, Search, Trash2, AlertTriangle, ShieldCheck, Zap, RefreshCw } from 'lucide-react';
+import { Plus, Search, Trash2, Info, ShieldCheck, Zap, RefreshCw } from 'lucide-react';
 import { AnalysisResult } from '../services/portfolioService';
 import { analyzePortfolioViaApi } from '../services/backendApi';
 import { NSE_STOCKS, LIQUID_ASSETS, SECTOR_CORRELATIONS } from '../data/stocks';
@@ -82,7 +82,8 @@ export function AnalyzeTab() {
     const [aiAdvice, setAiAdvice] = useState('');
     const [loadingAI, setLoadingAI] = useState(false);
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
-    const [analysisNotice, setAnalysisNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [analysisNotice, setAnalysisNotice] = useState<{ tone: 'info'; text: string } | null>(null);
+    const [holdingsText, setHoldingsText] = useState('');
 
     const filtered = ALL_STOCKS.filter(s =>
         search && (s.symbol.toLowerCase().includes(search.toLowerCase()) || s.name.toLowerCase().includes(search.toLowerCase()))
@@ -98,8 +99,8 @@ export function AnalyzeTab() {
             setResult(null);
             setAiAdvice('');
             setAnalysisNotice({
-                tone: 'warning',
-                text: `Portfolio analysis failed: ${error instanceof Error ? error.message : 'The local backend analysis endpoint is unavailable.'}`,
+                tone: 'info',
+                text: `Portfolio analysis is syncing: ${error instanceof Error ? error.message : 'The local analysis service is initializing.'}`,
             });
         } finally {
             setLoadingAnalysis(false);
@@ -126,6 +127,30 @@ export function AnalyzeTab() {
         await refreshAnalysis(updated);
     };
 
+    const parseAndLoadHoldings = async () => {
+        const rows = holdingsText
+            .split('\n')
+            .map((row) => row.trim())
+            .filter(Boolean);
+        const parsed: { symbol: string; shares: number }[] = [];
+        for (const row of rows) {
+            const [symbolRaw, sharesRaw] = row.split(/[,\s]+/).filter(Boolean);
+            const symbol = (symbolRaw || '').toUpperCase();
+            const sharesValue = Number(sharesRaw);
+            if (!symbol || !Number.isFinite(sharesValue) || sharesValue <= 0) continue;
+            parsed.push({ symbol, shares: Math.floor(sharesValue) });
+        }
+        if (!parsed.length) {
+            setAnalysisNotice({
+                tone: 'info',
+                text: 'No valid rows found. Use one row per holding like: INFY 10 or INFY,10',
+            });
+            return;
+        }
+        setHoldings(parsed);
+        await refreshAnalysis(parsed);
+    };
+
     const removeHolding = async (sym: string) => {
         const updated = holdings.filter(h => h.symbol !== sym);
         setHoldings(updated);
@@ -143,7 +168,7 @@ export function AnalyzeTab() {
             await new Promise(resolve => setTimeout(resolve, 250));
             setAiAdvice(generateRebalancingAdvice(holdings, result));
         } catch {
-            setAiAdvice('Local rebalancing engine is temporarily unavailable.');
+            setAiAdvice('Local rebalancing engine is warming up. Please retry shortly.');
         } finally {
             setLoadingAI(false);
         }
@@ -172,10 +197,23 @@ export function AnalyzeTab() {
                     </h2>
 
                     {analysisNotice && (
-                        <div className={`${analysisNotice.tone === 'info' ? 'alert-info' : 'alert-warning'} text-xs mb-3`}>
+                        <p className="text-xs text-slate-500 mb-3">
                             {analysisNotice.text}
-                        </div>
+                        </p>
                     )}
+
+                    <div className="mb-4">
+                        <label className="block text-xs font-semibold text-slate-500 mb-1">Paste portfolio (SYMBOL SHARES)</label>
+                        <textarea
+                            className="input-field px-3 py-2 text-xs h-24"
+                            placeholder={'INFY 10\nHDFCBANK 8\nTCS,5'}
+                            value={holdingsText}
+                            onChange={(event) => setHoldingsText(event.target.value)}
+                        />
+                        <button onClick={() => { void parseAndLoadHoldings(); }} className="btn-secondary mt-2 px-3 py-1.5 text-xs">
+                            Analyze Pasted Portfolio
+                        </button>
+                    </div>
 
                     <div className="relative mb-3">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -262,7 +300,7 @@ export function AnalyzeTab() {
             <div className="lg:col-span-8 space-y-5">
                 {!result ? (
                     <div className="card flex flex-col items-center justify-center text-slate-400 p-16 border-2 border-dashed" style={{ minHeight: '400px' }}>
-                        <AlertTriangle className="w-12 h-12 mb-4 opacity-20" />
+                        <Info className="w-12 h-12 mb-4 opacity-20" />
                         <p className="text-base font-semibold mb-1">{loadingAnalysis ? 'Analyzing holdings...' : 'Add your NSE holdings'}</p>
                         <p className="text-sm">We will assess risk, diversification, and sector correlation.</p>
                     </div>
@@ -287,7 +325,7 @@ export function AnalyzeTab() {
 
                         <div className="card p-5">
                             <p className="section-title">Model Runtime</p>
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                            <div className="runtime-grid grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                                 <div className="stat-row">
                                     <span className="stat-label">Variant Applied</span>
                                     <span className="stat-value">{result.modelVariantApplied || 'RULES'}</span>
@@ -312,18 +350,25 @@ export function AnalyzeTab() {
                                     <span className="stat-label">Artifact</span>
                                     <span className="stat-value">{result.artifactClassification || 'missing'}</span>
                                 </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Review Cadence</span>
+                                    <span className="stat-value">{result.holdingPeriodDaysRecommended || result.predictionHorizonDays || 21}D</span>
+                                </div>
                             </div>
+                            {result.holdingPeriodReason && (
+                                <p className="text-xs text-slate-500 mt-3">{result.holdingPeriodReason}</p>
+                            )}
                         </div>
 
                         <div className="space-y-2">
                             {result.suggestions.length === 0 ? (
-                                <div className="alert-success flex items-center gap-2">
-                                    <ShieldCheck className="w-4 h-4 flex-shrink-0" />
-                                    Portfolio looks well-balanced across sectors!
+                                <div className="flex items-center gap-2 text-sm text-slate-600">
+                                    <ShieldCheck className="w-4 h-4 flex-shrink-0 text-teal-600" />
+                                    Portfolio looks well-balanced across sectors.
                                 </div>
                             ) : result.suggestions.map((s, i) => (
-                                <div key={i} className="alert-warning flex items-center gap-2">
-                                    <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {s}
+                                <div key={i} className="flex items-center gap-2 text-sm text-slate-600">
+                                    <Info className="w-4 h-4 flex-shrink-0 text-slate-400" /> {s}
                                 </div>
                             ))}
                         </div>

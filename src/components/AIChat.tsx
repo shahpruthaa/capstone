@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
+import { chatWithAssistantViaApi } from '../services/backendApi';
 
 interface Message {
     role: 'user' | 'ai';
@@ -44,22 +45,15 @@ export function AIChat({ portfolio }: AIChatProps) {
 
             const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContext}]`;
 
-            const response = await fetch('/api/v1/explain/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: enrichedMessage,
-                    history,
-                }),
+            const reply = await chatWithAssistantViaApi({
+                message: enrichedMessage,
+                history,
             });
-
-            if (!response.ok) throw new Error('API error');
-            const data = await response.json();
-            setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
+            setMessages(prev => [...prev, { role: 'ai', text: reply }]);
         } catch {
             setMessages(prev => [...prev, {
                 role: 'ai',
-                text: 'AI assistant is temporarily unavailable. Please try again in a moment.',
+                text: 'AI assistant is still warming up. Please try again in a moment.',
             }]);
         } finally {
             setLoading(false);
