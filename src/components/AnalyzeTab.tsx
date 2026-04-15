@@ -287,14 +287,30 @@ export function AnalyzeTab() {
 
                         <div className="card p-5">
                             <p className="section-title">Model Runtime</p>
-                            <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                                 <div className="stat-row">
                                     <span className="stat-label">Variant Applied</span>
                                     <span className="stat-value">{result.modelVariantApplied || 'RULES'}</span>
                                 </div>
                                 <div className="stat-row">
+                                    <span className="stat-label">Source</span>
+                                    <span className="stat-value">{result.modelSource || 'RULES'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Mode</span>
+                                    <span className="stat-value">{result.activeMode || 'rules_only'}</span>
+                                </div>
+                                <div className="stat-row">
                                     <span className="stat-label">ML Scores</span>
                                     <span className="stat-value">{Object.keys(result.mlPredictions || {}).length}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Version</span>
+                                    <span className="stat-value">{result.modelVersion || 'rules'}</span>
+                                </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Artifact</span>
+                                    <span className="stat-value">{result.artifactClassification || 'missing'}</span>
                                 </div>
                             </div>
                         </div>

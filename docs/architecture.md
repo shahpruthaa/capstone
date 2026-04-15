@@ -2,263 +2,239 @@
 
 ## Objective
 
-Document the current local-first architecture after removing reliance on any external quant API. The active system is:
+Describe the capstone architecture on the branch rebuilt from `55b69df`.
 
-- React/Vite UI
-- local FastAPI backend
-- PostgreSQL + TimescaleDB market store
-- NSE bhavcopy ingestion
-- local LightGBM hybrid alpha model
-- local benchmark, analysis, and backtest services
-- readiness/status surfaces for model and market-data health
+This branch targets a reliable local demo where:
 
-## Runtime Architecture
+- the core quant engine is fully local
+- ML artifacts are loaded from disk
+- Groq is required only for explanation features
+- the system exposes its runtime state honestly as `full_ensemble`, `degraded_ensemble`, or `rules_only`
+
+## Topology
 
 ```mermaid
 flowchart LR
-    U["User Browser"] --> WEB["React / Vite UI"]
+    U["User Browser"] --> WEB["React + Vite UI"]
     WEB --> API["FastAPI API"]
 
-    API --> QE["Local Quant Engine"]
-    API --> ML["LightGBM Inference"]
+    API --> RUNTIME["db_quant_engine.py"]
+    API --> STATUS["model_runtime.py"]
+    API --> EXPLAIN["groq_explainer.py"]
+    API --> NEWS["news_intelligence.py"]
     API --> PG["PostgreSQL + TimescaleDB"]
     API --> REDIS["Redis"]
 
-    ING["Bhavcopy / Corporate Actions Ingestion"] --> PG
-    RAW["Raw NSE Archives"] --> ING
-    MLTRAIN["Offline LightGBM Training"] --> ART["Model Artifacts"]
-    ART --> ML
+    RUNTIME --> ENS["ensemble_scorer.py"]
+    ENS --> LGB["LightGBM artifact"]
+    ENS --> LSTM["LSTM artifact"]
+    ENS --> GNN["GNN artifact"]
+    ENS --> DR["Death-risk artifact"]
+
+    ING["Bhavcopy ingestion"] --> PG
+    CA["Corporate-action import"] --> PG
+    TRAIN["Offline ML training scripts"] --> ART["artifacts/models/*"]
+    ART --> STATUS
+    ART --> ENS
+    EXPLAIN --> GROQ["Groq API"]
+    NEWS --> GROQ
 ```
 
-## Core Principles
+## Design Principles
 
-- The UI is presentation and orchestration only; portfolio math lives in Python.
-- Portfolio generation, analysis, backtests, and benchmarks all use the same local market store.
-- ML training is offline and local. Runtime uses inference only.
-- The active expected-return engine is `LIGHTGBM_HYBRID` when a valid artifact exists, otherwise `RULES`.
-- The UI derives readiness and valid backtest ranges from backend summary endpoints instead of hardcoded assumptions.
-- Raw files are preserved before transformation.
-- Historical replay uses dated rules instead of one timeless fee/tax assumption.
+- One backend owns the portfolio, analysis, benchmark, and backtest logic.
+- One runtime-status endpoint tells the UI exactly what is available.
+- The quant workflow never depends on Groq.
+- ETFs remain on rule logic unless a proven ML path exists for them.
+- Failure states are visible in the API and UI instead of silently hidden.
 
-## Main Components
+## Runtime Contracts
 
-### Frontend
+### Model status contract
 
-Responsibilities:
+`GET /api/v1/models/current` returns:
 
-- submit generation, analysis, backtest, and benchmark requests
-- call the model-status endpoint to decide whether the UI should default to `RULES` or `LIGHTGBM_HYBRID`
-- call the market-data summary endpoint to constrain valid backtest windows
-- surface model runtime info such as variant, source, version, and horizon
-- surface training mode and bootstrap-vs-standard artifact classification
-- show backend notes and top model drivers
-- show benchmark construction notes and proxy labels
-- display endpoint failures directly instead of silently switching to a different simulation path
+- `variant`
+- `model_source`
+- `active_mode`
+- `model_version`
+- `prediction_horizon_days`
+- `training_mode`
+- `artifact_classification`
+- `available_components`
+- `missing_components`
+- `components`
+- `groq_connected`
+- `reason`
+- `notes`
 
-Current endpoint mapping:
+This endpoint is the source of truth for runtime readiness.
 
-- `App` readiness panel -> `GET /api/v1/models/current`, `GET /api/v1/market-data/summary`
-- `GenerateTab` -> `GET /api/v1/models/current`, `POST /api/v1/portfolio/generate`
-- `AnalyzeTab` -> `POST /api/v1/analysis/portfolio`
-- `BacktestTab` -> `GET /api/v1/models/current`, `GET /api/v1/market-data/summary`, `POST /api/v1/backtests/run`
-- `CompareTab` -> `GET /api/v1/benchmarks/summary`
+### Ensemble contract
 
-### FastAPI Backend
+Each model component feeds a symbol-keyed prediction payload into the ensemble scorer.
 
-Responsibilities:
+Common expectations:
 
-- `POST /api/v1/portfolio/generate`
-- `POST /api/v1/analysis/portfolio`
-- `POST /api/v1/backtests/run`
-- `GET /api/v1/benchmarks/summary`
-- `GET /api/v1/models/current`
-- `GET /api/v1/market-data/summary`
-- market-data ingestion endpoints
+- input: `db`, `snapshots`, `as_of_date`
+- output per symbol:
+  - score
+  - model source
+  - model version
+  - prediction horizon
+  - top drivers
+  - component scores when available
 
-### Local Quant Engine
+The ensemble scorer:
 
-Responsibilities:
+- normalizes component weights
+- applies death-risk penalty
+- emits final expected-return overrides for equities
+- exposes whether the runtime was full or degraded
 
-- load adjusted histories from the database
-- compute factor scores
-- estimate expected returns
-- estimate shrinkage covariance
-- optimize long-only constrained portfolios
-- analyze holdings and produce rebalance actions
-- run historical replay with dated taxes and fees
+### Groq boundary
 
-Primary implementation:
+Groq sits behind `groq_explainer.py`.
 
-- `apps/api/app/services/db_quant_engine.py`
+Routes that use it:
 
-### LightGBM Alpha Layer
+- stock explanation
+- portfolio explanation
+- AI chat
 
-Responsibilities:
+If Groq is unavailable:
 
-- build supervised monthly decision datasets
-- train a local LightGBM regressor
-- load validated artifacts at API startup
-- score equity snapshots at runtime
-- expose model metadata to the UI
-- expose validation summaries and evaluation-report metadata
+- the quant workflow continues
+- explanation routes return graceful degradation messages
+- the runtime banner reports Groq as unavailable
 
-Primary implementation:
+## Core Backend Components
 
-- `apps/api/app/ml/lightgbm_alpha/dataset.py`
-- `apps/api/app/ml/lightgbm_alpha/train.py`
-- `apps/api/app/ml/lightgbm_alpha/predict.py`
-- `apps/api/app/ml/lightgbm_alpha/artifact_loader.py`
-- `apps/api/scripts/ml/evaluate_lightgbm_model.py`
+### `db_quant_engine.py`
 
-## Expected Return Architecture
+This is the main orchestration layer for:
 
-### Rule Engine
+- portfolio generation
+- holdings analysis
+- backtests
+- expected-return estimation
+- covariance estimation
+- constrained allocation
+- rebalance logic
+- runtime-aware fallback behavior
 
-Inputs:
+### `ensemble_scorer.py`
 
-- adjusted total-return history
-- risk-mode configuration
-- momentum, quality proxy, low-volatility, liquidity, sector strength, size, and beta factors
-- simple regime overlay
+This service:
 
-Output:
+- loads and invokes `LightGBM`, `LSTM`, `GNN`, and `death-risk`
+- reads `ensemble_v1` manifest metadata
+- computes final alpha and model drivers
+- returns degraded-mode metadata when some components are missing
 
-- bounded annualized expected return per instrument
+### `model_runtime.py`
 
-### LightGBM Hybrid Engine
+This service:
 
-Inputs:
+- validates local artifact directories
+- reports component-level readiness
+- inspects Groq connectivity
+- computes the current runtime mode
+- feeds the frontend runtime banner and preflight decisions
 
-- monthly decision-date snapshots
-- trailing return / volatility / drawdown / moving-average / liquidity / beta / factor features
-- sector and market-cap categorical features
+### `stock_detail.py`
 
-Training target:
+This route combines:
 
-- next `21` trading-day adjusted return
+- quantitative stock payload
+- ensemble score and component scores
+- factor and beta metadata
+- death-risk and news sentiment
+- optional Groq explanation
 
-Runtime behavior:
-
-- equities use LightGBM when a valid score is available
-- ETFs stay on the rule model
-- final equity expected return is a blend of ML and rules
-- UI receives top contributing model drivers per selected symbol
-- model status exposes `training_mode`, `artifact_classification`, and a compact validation summary
-
-## Risk Model and Allocation
-
-Current flow:
-
-1. shortlist candidates by risk mode
-2. align total-return history
-3. estimate expected returns
-4. build annualized shrunk covariance
-5. optimize under long-only, asset-cap, and sector-cap constraints
-6. persist portfolio run and return notes to the UI
-
-Risk modes:
-
-- `ULTRA_LOW`
-- `MODERATE`
-- `HIGH`
-
-## Holdings Analysis Architecture
-
-Current flow:
-
-1. price user holdings from the local DB
-2. compute sector weights, beta proxy, pairwise correlation, and factor exposures
-3. build the optimizer target for the chosen risk mode
-4. compare current vs target weights
-5. return ranked rebalance actions plus ML scores when available
-
-## Backtest Architecture
-
-Current replay loop:
-
-1. generate the starting portfolio using data available at the selected start date
-2. load adjusted OHLC bars and dividend cash events
-3. initialize positions with dated transaction costs
-4. evaluate stop-loss / take-profit with gap-aware fills
-5. rebalance on the configured schedule
-6. realize tax lots using FIFO
-7. compute STCG, LTCG, cess, fee drag, and cost drag
-8. persist backtest run and return the equity curve to the UI
-
-## Tax and Fee Layer
-
-Current scope:
-
-- listed delivery-equity research simulation
-- dated schedules for taxes and fees
-- FY-wise LTCG exemption handling
-- liquidity- and volatility-aware slippage
-
-Important engineering note:
-
-- the fee/tax layer is versioned and already uses a true `12-month` listed-equity LTCG eligibility rule
-- it still needs continuous maintenance against new exchange circulars and budget changes
-
-## Benchmark Architecture
-
-Current backend benchmark endpoint is local and active, but still proxy-based.
-
-Implemented today:
-
-- `NSE AI Portfolio`
-- `Nifty 50 Proxy`
-- `Nifty 500 Proxy`
-- `Momentum Factor`
-- `Quality Factor`
-- `AMC Multi Factor`
-
-Known limitation:
-
-- these are locally computed research benchmarks over the ingested universe, not official historical constituent reconstitution jobs yet
-- the benchmark endpoint now returns `construction_method`, `is_proxy`, `source_window`, `constituent_method`, and `limitations` per strategy
+It is intentionally read-only and must not block generation or backtests.
 
 ## Data Architecture
 
-Bronze:
+### Stores
 
-- raw bhavcopy ZIP files
-- corporate-action CSV files
+PostgreSQL + TimescaleDB holds:
 
-Silver:
-
-- normalized instruments
+- instruments
 - daily bars
 - corporate actions
-- ingestion runs
-
-Gold:
-
-- adjusted total-return histories
-- factor snapshots
 - portfolio runs
 - backtest runs
-- ML datasets and model artifacts
-- model evaluation reports
+- ingestion runs
 
-## Operational Modes
+Filesystem artifact storage holds:
 
-### Rules Only
+- `lightgbm_v1`
+- `lstm_v1`
+- `gnn_v1`
+- `death_risk_v1`
+- `ensemble_v1`
 
-- artifact missing, invalid, or unavailable
-- backend still serves portfolio, analysis, backtest, and benchmark endpoints
+### Data flow
 
-### LightGBM Hybrid
+1. bhavcopy ingestion loads raw EOD data into the market store
+2. corporate actions enrich and adjust replay histories
+3. training scripts create local model artifacts
+4. `model_runtime.py` validates those artifacts
+5. `db_quant_engine.py` and `ensemble_scorer.py` use them at runtime
 
-- artifact present and loadable
-- UI shows active model version, training mode, artifact classification, and horizon
-- portfolio generation and backtests expose model drivers and source metadata
+## Frontend Architecture
 
-## Verification Status
+The existing tabs remain the core capstone surfaces:
 
-Verified in the current local code path:
+- `Generate`
+- `Analyze`
+- `Backtest`
+- `Compare`
+- `AIChat`
 
-- frontend production build succeeds
-- model status endpoint reports local artifact availability
-- market-data summary endpoint reports the active local data range
-- benchmark summary endpoint returns per-strategy provenance metadata
-- generate, analyze, backtest, and benchmark UI flows all reach FastAPI endpoints directly
+Frontend responsibilities:
+
+- preflight runtime readiness
+- submit backend requests directly
+- show fallback reasons and component availability
+- surface model version, artifact classification, and top drivers
+- distinguish quant output from Groq-generated text
+
+## Local Demo Path
+
+1. start Docker services
+2. run migrations
+3. ingest bhavcopy data
+4. import corporate actions
+5. train or materialize artifacts
+6. check `/api/v1/models/current`
+7. open the UI and confirm the top runtime banner
+8. run Generate, Analyze, Backtest, and Compare
+9. use stock detail or chat explanations if Groq is configured
+
+## Failure Behavior
+
+### Missing LightGBM
+
+- runtime becomes `rules_only`
+- generation, analysis, and backtests still work
+- UI must show the fallback clearly
+
+### Missing non-core ensemble components
+
+- runtime becomes `degraded_ensemble`
+- available components are used with normalized weights
+- UI must list missing components
+
+### Missing Groq
+
+- quant APIs remain healthy
+- explanation routes degrade gracefully
+- runtime banner shows Groq as unavailable
+
+## Current Gaps
+
+- official benchmark constituent reconstruction is not yet implemented
+- ensemble quality depends on the presence of trained local artifacts
+- live execution is EOD research-grade, not broker-integrated execution-grade
