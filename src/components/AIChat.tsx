@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
+import { postExplainChat } from '../services/backendApi';
 
 interface Message {
     role: 'user' | 'ai';
@@ -39,22 +40,12 @@ export function AIChat({ portfolio }: AIChatProps) {
             }));
 
             const portfolioContext = portfolio
-                ? `Current portfolio: ${portfolio.allocations?.slice(0, 5).map(a => `${a.symbol} (${a.weight?.toFixed(1)}%)`).join(', ')} | Risk: ${portfolio.risk_mode} | Amount: ₹${portfolio.investment_amount?.toLocaleString('en-IN')}`
+                ? `Portfolio: ${portfolio.mandate?.risk_attitude ?? portfolio.riskProfile}, horizon ${portfolio.mandate?.investment_horizon_weeks ?? 'n/a'} weeks, ₹${portfolio.totalInvested.toLocaleString('en-IN')}, ${portfolio.allocations.length} stocks (${portfolio.allocations.slice(0, 5).map(a => `${a.stock.symbol} (${a.weight.toFixed(1)}%)`).join(', ')})`
                 : 'No portfolio generated yet.';
 
             const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContext}]`;
 
-            const response = await fetch('/api/v1/explain/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    message: enrichedMessage,
-                    history,
-                }),
-            });
-
-            if (!response.ok) throw new Error('API error');
-            const data = await response.json();
+            const data = await postExplainChat(enrichedMessage, history);
             setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
         } catch {
             setMessages(prev => [...prev, {

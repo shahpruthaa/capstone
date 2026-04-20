@@ -1,12 +1,66 @@
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 RiskMode = Literal["ULTRA_LOW", "MODERATE", "HIGH"]
 RebalanceFrequency = Literal["MONTHLY", "QUARTERLY", "ANNUALLY", "NONE"]
 ModelVariant = Literal["RULES", "LIGHTGBM_HYBRID"]
+RiskAttitude = Literal["capital_preservation", "balanced", "growth"]
+InvestmentHorizon = Literal["2-4", "4-8", "8-24"]
+
+
+class UserMandate(BaseModel):
+    investment_horizon_weeks: InvestmentHorizon
+    max_portfolio_drawdown_pct: float = Field(..., gt=0, le=100)
+    max_position_size_pct: float = Field(..., gt=0, le=100)
+    preferred_num_positions: int = Field(..., gt=0, le=50)
+    sector_inclusions: list[str] = Field(default_factory=list)
+    sector_exclusions: list[str] = Field(default_factory=list)
+    allow_small_caps: bool = False
+    risk_attitude: RiskAttitude
+
+    @field_validator("investment_horizon_weeks", mode="before")
+    @classmethod
+    def normalize_horizon(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = (
+            value.strip()
+            .lower()
+            .replace("weeks", "")
+            .replace("week", "")
+            .replace(" ", "")
+            .replace("to", "-")
+            .replace("–", "-")
+        )
+        return normalized
+
+    @field_validator("sector_inclusions", "sector_exclusions", mode="before")
+    @classmethod
+    def normalize_sector_lists(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value.strip()]
+        return value
+
+    @field_validator("sector_inclusions", "sector_exclusions")
+    @classmethod
+    def dedupe_sectors(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = value.strip()
+            if not cleaned:
+                continue
+            key = cleaned.lower()
+            if key in seen:
+                continue
+            normalized.append(cleaned)
+            seen.add(key)
+        return normalized
 
 
 class AllocationModel(BaseModel):
@@ -19,6 +73,11 @@ class AllocationModel(BaseModel):
     ml_pred_annual_return: float | None = None
     death_risk: float | None = None
     lstm_signal: float | None = None
+    news_risk_score: float = 0.0
+    news_opportunity_score: float = 0.0
+    news_sentiment: float = 0.0
+    news_impact: float = 0.0
+    news_explanation: str = ""
 
 
 class PortfolioMetricsModel(BaseModel):
@@ -29,8 +88,8 @@ class PortfolioMetricsModel(BaseModel):
 
 
 class GeneratePortfolioRequest(BaseModel):
-    investment_amount: float = Field(..., gt=0)
-    risk_mode: RiskMode
+    capital_amount: float = Field(..., gt=0)
+    mandate: UserMandate
     as_of_date: date | None = None
     model_variant: ModelVariant = "LIGHTGBM_HYBRID"
 
@@ -40,11 +99,20 @@ class GeneratePortfolioResponse(BaseModel):
     model_source: Literal["RULES", "LIGHTGBM"]
     model_version: str
     prediction_horizon_days: int
-    risk_mode: RiskMode
-    investment_amount: float
+    capital_amount: float
+    mandate: UserMandate
+    lookback_window_days: int
+    expected_holding_period_days: int
     allocations: list[AllocationModel]
     metrics: PortfolioMetricsModel
     notes: list[str]
+
+
+class MandateQuestionnaireResponse(BaseModel):
+    investment_horizon_weeks_options: list[InvestmentHorizon]
+    risk_attitude_options: list[RiskAttitude]
+    sector_codes: list[str]
+    defaults: UserMandate
 
 
 class HoldingModel(BaseModel):
@@ -86,7 +154,9 @@ class BacktestRequest(BaseModel):
     strategy_name: str = "nse-ai-portfolio"
     start_date: date
     end_date: date
-    risk_mode: RiskMode
+    risk_mode: RiskMode | None = None
+    mandate: UserMandate | None = None
+    capital_amount: float | None = Field(default=None, gt=0)
     rebalance_frequency: RebalanceFrequency = "QUARTERLY"
     stop_loss_pct: float = Field(default=0.15, ge=0, le=1)
     take_profit_pct: float = Field(default=0.3, ge=0, le=3)

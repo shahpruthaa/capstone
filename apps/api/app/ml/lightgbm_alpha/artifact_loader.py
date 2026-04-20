@@ -88,13 +88,15 @@ def get_lightgbm_model_status() -> dict[str, Any]:
     if artifact is None:
         return {"available": False, "variant": "LIGHTGBM_HYBRID", "reason": "artifact_missing"}
 
-    lgb, runtime_site_packages = import_lightgbm()
-    if lgb is None:
+    _lgb, runtime_site_packages = import_lightgbm()
+    if _lgb is None:
         return {"available": False, "variant": "LIGHTGBM_HYBRID", "reason": "lightgbm_import_failed"}
 
+    # Avoid loading Booster at startup (slow); manifest + file presence are enough for status.
     try:
-        lgb.Booster(model_file=str(artifact.model_file_path))
-    except Exception:
+        if not artifact.model_file_path.is_file() or artifact.model_file_path.stat().st_size == 0:
+            return {"available": False, "variant": "LIGHTGBM_HYBRID", "reason": "model_load_failed"}
+    except OSError:
         return {"available": False, "variant": "LIGHTGBM_HYBRID", "reason": "model_load_failed"}
 
     training_mode = str(artifact.metadata.get("training_mode") or artifact.metrics.get("training_mode") or "unknown")

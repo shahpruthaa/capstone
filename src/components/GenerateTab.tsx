@@ -4,9 +4,16 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { ArrowRight, Calculator, Info, RefreshCw, Zap, ShieldCheck, TrendingUp } from 'lucide-react';
-import { calculateTransactionCosts, RiskProfile, Portfolio } from '../services/portfolioService';
-import { generatePortfolioViaApi, getCurrentModelStatusViaApi, ModelVariant } from '../services/backendApi';
-import { generatePortfolioInsight } from '../services/localAdvisor';
+import { calculateTransactionCosts, Portfolio } from '../services/portfolioService';
+import {
+    generatePortfolioViaApi,
+    getCurrentModelStatusViaApi,
+    getMandateQuestionnaireViaApi,
+    ModelVariant,
+    postExplainPortfolio,
+    RiskAttitude,
+    UserMandate,
+} from '../services/backendApi';
 import { MetricCard, SectorChip } from './MetricCard';
 
 const COLORS = ['#14b8a6', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#10b981', '#6366f1', '#84cc16', '#f43f5e', '#0ea5e9', '#a855f7'];
@@ -18,27 +25,7 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
     const generate = async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/v1/explain/portfolio', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    allocations: (portfolio.allocations || []).map(a => ({
-                        symbol: a.stock?.symbol || (a as any).symbol || 'UNKNOWN',
-                        sector: a.stock?.sector || (a as any).sector || 'Unknown',
-                        weight: a.weight || (a as any).weight || 0,
-                        rationale: (a as any).rationale || '',
-                        top_model_drivers: (a as any).drivers || (a as any).top_model_drivers || [],
-                        ml_pred_21d_return: (a as any).ml_pred_21d_return ?? null,
-                        ml_pred_annual_return: (a as any).ml_pred_annual_return ?? null,
-                        death_risk: (a as any).death_risk ?? null,
-                        lstm_signal: (a as any).lstm_signal ?? null,
-                    })),
-                    risk_mode: portfolio.riskProfile || 'MODERATE',
-                    total_amount: portfolio.totalInvested || 500000,
-                }),
-            });
-            if (!res.ok) throw new Error('API error');
-            const data = await res.json();
+            const data = await postExplainPortfolio(portfolio);
             setInsight(data.explanation || 'No explanation returned.');
         } catch {
             setInsight('AI analysis temporarily unavailable.');
@@ -47,16 +34,16 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
         }
     };
     return (
-        <div className="card p-5" style={{ background: 'linear-gradient(135deg,#f0fdf9,#e0f2fe)', borderColor: '#99f6de' }}>
+        <div className="card p-5" style={{ background: 'linear-gradient(135deg, rgba(14, 116, 144, 0.24), rgba(21, 94, 117, 0.1))', borderColor: 'rgba(103, 232, 249, 0.2)' }}>
             <div className="flex items-center gap-2 mb-2">
                 <Zap className="w-4 h-4 text-teal-600" />
-                <h3 className="font-bold text-sm text-teal-800">AI Portfolio Analysis</h3>
-                <span className="text-xs text-teal-600 bg-teal-100 px-2 py-0.5 rounded-full">Powered by Groq LLM</span>
+                <h3 className="font-bold text-sm text-slate-50">AI Portfolio Analysis</h3>
+                <span className="text-xs text-cyan-200 bg-cyan-500/10 px-2 py-0.5 rounded-full">Powered by Groq LLM</span>
             </div>
             {insight ? (
-                <p className="text-sm text-slate-700 leading-relaxed mb-3 whitespace-pre-wrap">{insight}</p>
+                <p className="text-sm text-slate-200 leading-relaxed mb-3 whitespace-pre-wrap">{insight}</p>
             ) : (
-                <p className="text-sm text-slate-500 mb-3">Get an AI-powered analysis of your portfolio using ensemble signals, sector trends, and market context.</p>
+                <p className="text-sm text-slate-300 mb-3">Get an AI-powered analysis of your portfolio using ensemble signals, sector trends, and market context.</p>
             )}
             <button onClick={generate} disabled={loading} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
                 {loading ? <RefreshCw className="w-3 h-3 spin" /> : <Zap className="w-3 h-3" />}
@@ -68,7 +55,19 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
 
 export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [amount, setAmount] = useState(500000);
-    const [risk, setRisk] = useState<RiskProfile>('LOW_RISK');
+    const [mandate, setMandate] = useState<UserMandate>({
+        investment_horizon_weeks: '4-8',
+        max_portfolio_drawdown_pct: 12,
+        max_position_size_pct: 12.5,
+        preferred_num_positions: 10,
+        sector_inclusions: [],
+        sector_exclusions: [],
+        allow_small_caps: false,
+        risk_attitude: 'balanced',
+    });
+    const [sectorIncludeInput, setSectorIncludeInput] = useState('');
+    const [sectorExcludeInput, setSectorExcludeInput] = useState('');
+    const [sectorCodes, setSectorCodes] = useState<string[]>([]);
     const [generating, setGenerating] = useState(false);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
     const [activeModelVersion, setActiveModelVersion] = useState<string>('');
@@ -101,19 +100,41 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             }
         };
         void loadModelStatus();
+
+        const loadQuestionnaire = async () => {
+            try {
+                const questionnaire = await getMandateQuestionnaireViaApi();
+                setMandate(questionnaire.defaults);
+                setSectorCodes(questionnaire.sector_codes);
+                setSectorIncludeInput(questionnaire.defaults.sector_inclusions.join(', '));
+                setSectorExcludeInput(questionnaire.defaults.sector_exclusions.join(', '));
+            } catch {
+                setSectorCodes([]);
+            }
+        };
+        void loadQuestionnaire();
     }, []);
+
+    const updateMandate = <K extends keyof UserMandate>(key: K, value: UserMandate[K]) => {
+        setMandate(current => ({ ...current, [key]: value }));
+    };
 
     const handleGenerate = async () => {
         setGenerating(true);
         setGenerationNotice(null);
         try {
-            const p = await generatePortfolioViaApi(amount, risk, activeModelVariant);
+            const payload: UserMandate = {
+                ...mandate,
+                sector_inclusions: sectorIncludeInput.split(',').map(item => item.trim()).filter(Boolean),
+                sector_exclusions: sectorExcludeInput.split(',').map(item => item.trim()).filter(Boolean),
+            };
+            const p = await generatePortfolioViaApi(amount, payload, activeModelVariant);
             onPortfolioGenerated(p);
             setGenerationNotice({
                 tone: 'info',
                 text:
                     p.modelSource === 'LIGHTGBM'
-                        ? `Using local LightGBM hybrid expected returns${p.modelVersion ? ` (v${p.modelVersion})` : ''}${p.predictionHorizonDays ? ` over ${p.predictionHorizonDays} trading days` : ''}.`
+                        ? `Using local LightGBM hybrid expected returns${p.modelVersion ? ` (v${p.modelVersion})` : ''}${p.predictionHorizonDays ? ` over ${p.predictionHorizonDays} trading days` : ''}, with a ${p.lookbackWindowDays ?? '--'}-day lookback and ${p.expectedHoldingPeriodDays ?? '--'}-day holding target.`
                         : 'Using the local rule-based portfolio allocator because no active LightGBM artifact is available.',
             });
         } catch (error) {
@@ -139,10 +160,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const costs = useMemo(() =>
         portfolio ? calculateTransactionCosts(portfolio.totalInvested, true) : null, [portfolio]);
 
-    const riskOpts = [
-        { id: 'NO_RISK', label: 'Ultra-Safe', icon: <ShieldCheck className="w-5 h-5" />, desc: 'Capital Preservation' },
-        { id: 'LOW_RISK', label: 'Balanced', icon: <TrendingUp className="w-5 h-5" />, desc: 'Growth + Stability' },
-        { id: 'HIGH_RISK', label: 'Aggressive', icon: <Zap className="w-5 h-5" />, desc: 'Maximum Growth' },
+    const riskOpts: { id: RiskAttitude; label: string; icon: React.ReactNode; desc: string }[] = [
+        { id: 'capital_preservation', label: 'Preserve', icon: <ShieldCheck className="w-5 h-5" />, desc: 'Strict downside control' },
+        { id: 'balanced', label: 'Balanced', icon: <TrendingUp className="w-5 h-5" />, desc: 'Risk and upside in balance' },
+        { id: 'growth', label: 'Growth', icon: <Zap className="w-5 h-5" />, desc: 'Higher upside within caps' },
     ] as const;
 
     return (
@@ -185,14 +206,63 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </p>
                         </div>
 
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Horizon (weeks)</label>
+                                <select
+                                    value={mandate.investment_horizon_weeks}
+                                    onChange={e => updateMandate('investment_horizon_weeks', e.target.value as UserMandate['investment_horizon_weeks'])}
+                                    className="input-field px-4 py-2.5"
+                                >
+                                    {['2-4', '4-8', '8-24'].map(option => (
+                                        <option key={option} value={option}>{option}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Target Positions</label>
+                                <input
+                                    type="number"
+                                    value={mandate.preferred_num_positions}
+                                    onChange={e => updateMandate('preferred_num_positions', Number(e.target.value))}
+                                    className="input-field px-4 py-2.5"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Max Drawdown %</label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    value={mandate.max_portfolio_drawdown_pct}
+                                    onChange={e => updateMandate('max_portfolio_drawdown_pct', Number(e.target.value))}
+                                    className="input-field px-4 py-2.5"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Max Position %</label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={100}
+                                    value={mandate.max_position_size_pct}
+                                    onChange={e => updateMandate('max_position_size_pct', Number(e.target.value))}
+                                    className="input-field px-4 py-2.5"
+                                />
+                            </div>
+                        </div>
+
                         <div>
-                            <label className="block text-xs font-600 text-slate-500 mb-2">Risk Preference</label>
+                            <label className="block text-xs font-600 text-slate-500 mb-2">Risk Attitude</label>
                             <div className="grid grid-cols-3 gap-2">
                                 {riskOpts.map(r => (
                                     <button
                                         key={r.id}
-                                        onClick={() => setRisk(r.id)}
-                                        className={`risk-btn ${risk === r.id ? 'active-risk' : ''}`}
+                                        onClick={() => updateMandate('risk_attitude', r.id)}
+                                        className={`risk-btn ${mandate.risk_attitude === r.id ? 'active-risk' : ''}`}
                                     >
                                         {r.icon}
                                         <span>{r.label}</span>
@@ -201,6 +271,40 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 ))}
                             </div>
                         </div>
+
+                        <div>
+                            <label className="block text-xs font-600 text-slate-500 mb-1.5">Sector Inclusions</label>
+                            <input
+                                value={sectorIncludeInput}
+                                onChange={e => setSectorIncludeInput(e.target.value)}
+                                className="input-field px-4 py-2.5"
+                                placeholder="e.g. Banking, IT, Pharma"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-600 text-slate-500 mb-1.5">Sector Exclusions</label>
+                            <input
+                                value={sectorExcludeInput}
+                                onChange={e => setSectorExcludeInput(e.target.value)}
+                                className="input-field px-4 py-2.5"
+                                placeholder="e.g. Energy, Real Estate"
+                            />
+                            {sectorCodes.length > 0 && (
+                                <p className="text-[10px] text-slate-400 mt-1">
+                                    Available sectors: {sectorCodes.join(', ')}
+                                </p>
+                            )}
+                        </div>
+
+                        <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                            <span>Allow small caps</span>
+                            <input
+                                type="checkbox"
+                                checked={mandate.allow_small_caps}
+                                onChange={e => updateMandate('allow_small_caps', e.target.checked)}
+                            />
+                        </label>
 
                         <button onClick={handleGenerate} disabled={generating} className="btn-primary w-full py-3 text-sm flex items-center justify-center gap-2">
                             {generating ? 'Generating...' : 'Generate AI Portfolio'} <ArrowRight className="w-4 h-4" />
@@ -229,6 +333,14 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     <div className="stat-row">
                                         <span className="stat-label">Horizon</span>
                                         <span className="stat-value">{portfolio.predictionHorizonDays || 21}D</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Lookback</span>
+                                        <span className="stat-value">{portfolio.lookbackWindowDays || '--'}D</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Holding</span>
+                                        <span className="stat-value">{portfolio.expectedHoldingPeriodDays || '--'}D</span>
                                     </div>
                                     <div className="stat-row">
                                         <span className="stat-label">Training</span>
@@ -293,8 +405,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
                             <TrendingUp className="w-8 h-8 opacity-30" />
                         </div>
-                        <p className="text-base font-semibold mb-1">Enter amount and select risk mode</p>
-                        <p className="text-sm">The generator will diversify across sectors to reduce correlation risk.</p>
+                        <p className="text-base font-semibold mb-1">Set the mandate questionnaire and generate</p>
+                        <p className="text-sm">The allocator will respect horizon, drawdown, sector, and news constraints.</p>
                     </div>
                 ) : (
                     <>
@@ -304,6 +416,30 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             <MetricCard label="Sharpe Ratio" value={portfolio.metrics.sharpeRatio.toFixed(2)} sub="Risk-free rate: 7% pa" color={portfolio.metrics.sharpeRatio > 1.2 ? 'green' : 'amber'} trend="up" />
                             <MetricCard label="Exp. Annual Return" value={`${portfolio.metrics.estimatedAnnualReturn.toFixed(1)}%`} sub={`Volatility: ${portfolio.metrics.estimatedVolatility.toFixed(1)}%`} color="green" trend="up" />
                         </div>
+
+                        {portfolio.mandate && (
+                            <div className="card p-5">
+                                <p className="section-title">Mandate In Effect</p>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                    <div className="stat-row">
+                                        <span className="stat-label">Attitude</span>
+                                        <span className="stat-value">{portfolio.mandate.risk_attitude.replace('_', ' ')}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Horizon</span>
+                                        <span className="stat-value">{portfolio.mandate.investment_horizon_weeks} weeks</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Drawdown</span>
+                                        <span className="stat-value">{portfolio.mandate.max_portfolio_drawdown_pct}%</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Max Position</span>
+                                        <span className="stat-value">{portfolio.mandate.max_position_size_pct}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                             <div className="card p-5">
@@ -342,7 +478,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 <table className="data-table">
                                     <thead>
                                         <tr>
-                                            <th>Stock</th><th>Sector</th><th>Wt%</th><th>Beta</th><th>Shares</th><th className="text-right">Amount</th>
+                                            <th>Stock</th><th>Sector</th><th>Wt%</th><th>News</th><th>Shares</th><th className="text-right">Amount</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -366,7 +502,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                                         <span className="font-mono text-xs">{a.weight}%</span>
                                                     </div>
                                                 </td>
-                                                <td><span className={`badge ${a.stock.beta > 1.3 ? 'badge-red' : a.stock.beta < 0.8 ? 'badge-green' : 'badge-blue'}`}>{a.stock.beta}</span></td>
+                                                <td>
+                                                    <div className="text-xs text-slate-600">
+                                                        <div className="font-medium">S {a.news_sentiment?.toFixed(2) ?? '0.00'} · I {a.news_impact?.toFixed(1) ?? '0.0'}</div>
+                                                        <div className="text-[10px] text-slate-400 max-w-52">{a.news_explanation ?? 'No mapped news.'}</div>
+                                                    </div>
+                                                </td>
                                                 <td className="font-mono text-sm">{a.shares}</td>
                                                 <td className="text-right font-semibold font-mono">Rs {a.amount.toLocaleString()}</td>
                                             </tr>

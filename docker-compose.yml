@@ -8,6 +8,8 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       VITE_API_BASE_URL: "http://localhost:8000"
+      # Vite dev proxy: resolve the `api` service inside the Compose network
+      VITE_API_PROXY_TARGET: "http://api:8000"
     volumes:
       - .:/workspace
       - /workspace/node_modules
@@ -32,8 +34,10 @@ services:
       - ./apps/api:/app
       - ./data:/workspace/data
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -45,6 +49,12 @@ services:
       POSTGRES_PASSWORD: "postgres"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d nse_portfolio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   redis:
     image: redis:7-alpine

@@ -104,7 +104,7 @@ export function CompareTab() {
     if (!cmp) {
         return (
             <div className="space-y-8 animate-fade-in">
-                <div className="card p-6" style={{ background: 'linear-gradient(135deg,#f0fdf9,#eff6ff)' }}>
+                <div className="card p-6" style={{ background: 'linear-gradient(135deg, rgba(15, 118, 110, 0.18), rgba(30, 41, 59, 0.2))' }}>
                     <div className="flex items-center gap-3 mb-2">
                         <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
                             <TrendingUp className="w-5 h-5 text-teal-700" />
@@ -139,7 +139,7 @@ export function CompareTab() {
     return (
         <div className="space-y-8 animate-fade-in">
             {/* Header */}
-            <div className="card p-6" style={{ background: 'linear-gradient(135deg,#f0fdf9,#eff6ff)' }}>
+            <div className="card p-6" style={{ background: 'linear-gradient(135deg, rgba(15, 118, 110, 0.18), rgba(30, 41, 59, 0.2))' }}>
                 <div className="flex items-center gap-3 mb-2">
                     <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
                         <TrendingUp className="w-5 h-5 text-teal-700" />

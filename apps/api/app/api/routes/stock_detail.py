@@ -25,7 +25,7 @@ async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
     from app.core.config import settings
 
     as_of_date = get_effective_trade_date(db)
-    snapshots = loasnapshots(db, as_of_date=as_of_date, min_history=90)
+    snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
     snap = next((s for s in snapshots if s.symbol == symbol), None)
 
     if not snap:
@@ -55,7 +55,11 @@ async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
     death_risk = 0.0
     try:
         from app.ml.death_risk.train import predict_death_risk
-        dr =redict_death_risk([snap], settings.ml_death_risk_artifact_dir)
+        dr = predict_death_risk(
+            symbols=[symbol],
+            db=db,
+            artifact_dir=settings.ml_death_risk_artifact_dir,
+        )
         death_risk = dr.get(symbol, 0.0)
     except Exception:
         pass

@@ -118,10 +118,15 @@ class EnsembleScorer:
             return {s: 0.0 for s in scores}
         return {s: float((v - mean) / std) for s, v in zip(scores.keys(), vals)}
 
-    def _get_death_risks(self, snapshots):
+    def _get_death_risks(self, snapshots, db: Session):
         try:
             from app.ml.death_risk.train import predict_death_risk
-            return predict_death_risk(snapshots, settings.ml_death_risk_artifact_dir)
+            symbols = [snapshot.symbol for snapshot in snapshots]
+            return predict_death_risk(
+                symbols=symbols,
+                db=db,
+                artifact_dir=settings.ml_death_risk_artifact_dir,
+            )
         except Exception:
             return {s.symbol: 0.0 for s in snapshots}
 
@@ -133,7 +138,7 @@ class EnsembleScorer:
         gnn_z   = self._zscore(gnn_raw)
         lstm_raw = self._get_lstm_scores(snapshots)
         lstm_z   = self._zscore(lstm_raw)
-        death_risks = self._get_death_risks(snapshots)
+        death_risks = self._get_death_risks(snapshots, db)
 
         results = {}
         for sym in lgb_z:

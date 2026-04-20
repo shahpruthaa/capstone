@@ -2,20 +2,21 @@ import { useState } from "react";
 import { Home, PieChart, Lightbulb, FlaskConical, GitCompare } from "lucide-react";
 import "./index.css";
 import { Portfolio } from "./services/portfolioService";
-import { GenerateTab } from "./components/GenerateTab";
-import { AnalyzeTab } from "./components/AnalyzeTab";
 import { BacktestTab } from "./components/BacktestTab";
 import { CompareTab } from "./components/CompareTab";
 import { AIChat } from "./components/AIChat";
+import { TradeIdeasTab } from "./components/TradeIdeasTab";
+import { MarketTab } from "./components/MarketTab";
+import { PortfolioWorkspace } from "./components/PortfolioWorkspace";
 
 type Tab = "MARKET" | "PORTFOLIO" | "IDEAS" | "BACKTEST" | "COMPARE";
 
 const PAGE_META: Record<Tab, { title: string; subtitle: string }> = {
-  MARKET: { title: "Market", subtitle: "Conditions · Heatmap · Factor weather · News" },
-  PORTFOLIO: { title: "Portfolio", subtitle: "Step 1 to Step 4: Build and review picks" },
-  IDEAS: { title: "Trade Ideas", subtitle: "Individual setups · 10-point checklist" },
-  BACKTEST: { title: "Research Backtest", subtitle: "Step 5: Run strategy inline" },
-  COMPARE: { title: "Research Compare", subtitle: "Compare vs benchmark strategies" },
+  MARKET: { title: "Market", subtitle: "Regime · Sectors · Factor weather · News pulse" },
+  PORTFOLIO: { title: "Portfolio", subtitle: "Mandate questionnaire · Recommended basket · Holdings review" },
+  IDEAS: { title: "Trade Ideas", subtitle: "Why now checklist · Entries · Stops · News context" },
+  BACKTEST: { title: "Backtest", subtitle: "Replay the exact AI mandate portfolio vs Nifty" },
+  COMPARE: { title: "Compare", subtitle: "AI strategy vs Nifty and factor-style benchmarks" },
 };
 
 function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
@@ -74,29 +75,6 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
   );
 }
 
-function MarketPanel() {
-  return (
-    <div className="grid-2">
-      <div className="card">
-        <div className="card-header"><span className="card-title">Market Conditions</span></div>
-        <div className="card-body text-muted">Regime, trend, and macro pulse will appear here.</div>
-      </div>
-      <div className="card">
-        <div className="card-header"><span className="card-title">Sector Heatmap</span></div>
-        <div className="card-body text-muted">Sector breadth and relative strength map.</div>
-      </div>
-      <div className="card">
-        <div className="card-header"><span className="card-title">Factor Weather</span></div>
-        <div className="card-body text-muted">Momentum, quality, value, and low-vol factors.</div>
-      </div>
-      <div className="card">
-        <div className="card-header"><span className="card-title">News + Accio Tip</span></div>
-        <div className="card-body text-muted">Top events plus one actionable guidance tip.</div>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const [tab, setTab] = useState<Tab>("MARKET");
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
@@ -112,13 +90,14 @@ export default function App() {
           </div>
           <div className="topbar-right">
             <span className="badge badge-neutral">{PAGE_META[tab].subtitle}</span>
+            {portfolio && <span className="badge badge-green">{portfolio.allocations.length} live picks</span>}
           </div>
         </header>
 
         <main className="app-main">
-          {tab === "MARKET" && <MarketPanel />}
-          {tab === "PORTFOLIO" && <GenerateTab onPortfolioGenerated={setPortfolio} portfolio={portfolio} />}
-          {tab === "IDEAS" && <AnalyzeTab />}
+          {tab === "MARKET" && <MarketTab />}
+          {tab === "PORTFOLIO" && <PortfolioWorkspace onPortfolioGenerated={setPortfolio} portfolio={portfolio} />}
+          {tab === "IDEAS" && <TradeIdeasTab portfolio={portfolio} />}
           {tab === "BACKTEST" && <BacktestTab portfolio={portfolio} />}
           {tab === "COMPARE" && <CompareTab />}
         </main>
