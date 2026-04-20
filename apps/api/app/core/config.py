@@ -3,7 +3,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "NSE AI Portfolio Manager API"
     app_env: str = "development"
-    cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5433/nse_portfolio"
     redis_url: str = "redis://localhost:6379/0"
     raw_data_dir: str = "../../data/raw"
