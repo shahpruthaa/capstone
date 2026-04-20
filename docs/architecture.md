@@ -2,7 +2,7 @@
 
 ## Objective
 
-Describe the current merged snapshot checked out in this directory at `e9e88097f2dbc798a1dc97796dbd929c0c19e655`.
+Describe the current merged snapshot checked out in this directory at `6f36924ad85bbca4fa2cf6284a71a5404f832482`.
 
 The architecture is a local-first NSE research demo with three hard requirements:
 
@@ -115,6 +115,8 @@ This split reflects the current product design: generation and holdings analysis
 - expected-return routing
 - constrained allocation
 - fallback behavior when artifacts are missing
+
+In this snapshot, `generate_portfolio` also injects LightGBM ensemble prediction fields into selected names for `LIGHTGBM_HYBRID` runs when model artifacts are available. This stamps model-source metadata (`LIGHTGBM`), horizon, and model version onto selected snapshots before weighted scoring.
 
 `ensemble_scorer.py` handles multi-model combination across:
 
