@@ -1,233 +1,196 @@
 # NSE AI Portfolio Manager
 
-Frontend + local API capstone system for NSE portfolio generation, holdings analysis, backtesting, benchmark comparison, and AI-assisted explanations.
+Current snapshot: the checked-out merge commit `e9e88097f2dbc798a1dc97796dbd929c0c19e655`, which combines the portfolio engine, runtime-status work, CORS fixes, UI improvements, and smoke-test additions into a single local-first demo stack.
 
-This README reflects what is implemented in the current codebase.
+This repository is organized as a React + Vite frontend, a FastAPI backend, local model artifacts, and a small amount of supporting data, infra, and smoke-test tooling.
 
-## What Has Been Built So Far
-
-### 1) App shell and navigation
-
-The React app (`src/App.tsx`) now has a fixed sidebar + topbar layout with five tabs:
-
-- `Market`
-- `Portfolio` (portfolio generation flow)
-- `Trade Ideas` (currently backed by holdings analysis UI)
-- `Backtest`
-- `Compare`
-
-The sidebar also shows status placeholders for:
-
-- NSE market status
-- model/ensemble status
-- latest data date
-
-### 2) Portfolio generation tab (`GenerateTab`)
-
-Implemented:
-
-- Investment amount input
-- Three risk profiles: `NO_RISK`, `LOW_RISK`, `HIGH_RISK`
-- Runtime model status fetch (`GET /api/v1/models/current`)
-- Portfolio generation call (`POST /api/v1/portfolio/generate`)
-- Response mapping to frontend portfolio model
-- Portfolio metrics cards (beta, sharpe proxy, expected return/vol)
-- Allocation visualizations (pie + sector bar chart via Recharts)
-- Allocation table with model drivers
-- Transaction-cost breakdown using Indian fee assumptions
-- AI explanation trigger (`POST /api/v1/explain/portfolio`)
-
-### 3) Holdings analysis / trade-ideas tab (`AnalyzeTab`)
-
-Implemented:
-
-- Add/remove holdings workflow
-- NSE symbol search over local universe (`src/data/stocks.ts`)
-- Portfolio analysis call (`POST /api/v1/analysis/portfolio`)
-- Risk/diversification and warning metrics
-- Sector exposure chart
-- Factor exposure bars (when returned)
-- ML scores by holding (when returned)
-- Sector correlation matrix (based on local sector-correlation map)
-- Rebalancing actions panel
-- Local advisory text generation (`generateRebalancingAdvice`)
-
-### 4) Backtest tab (`BacktestTab`)
-
-Implemented:
-
-- Date window, stop-loss, take-profit, rebalance frequency controls
-- Model variant selection (`RULES` or `LIGHTGBM_HYBRID`)
-- Runtime model/data context fetch:
-  - `GET /api/v1/models/current`
-  - `GET /api/v1/market-data/summary`
-- Backtest execution (`POST /api/v1/backtests/run`)
-- Full metrics dashboard (return, CAGR, sharpe/sortino/calmar, drawdown, win rate, trades)
-- Tax liability and transaction-cost panels
-- Equity curve vs benchmark chart
-
-### 5) Benchmark comparison tab (`CompareTab`)
-
-Implemented:
-
-- Benchmark summary fetch (`GET /api/v1/benchmarks/summary`)
-- Strategy cards with type/proxy metadata
-- Return vs drawdown and sharpe comparison charts
-- 10-year projected growth line chart
-- Metrics table and benchmark construction notes
-
-### 6) AI chat widget (`AIChat`)
-
-Implemented:
-
-- Floating chat launcher
-- Message history and typing state
-- Chat endpoint integration (`POST /api/v1/explain/chat`)
-- Context injection from current portfolio state
-- Graceful fallback response on API failure
-
-### 7) Frontend API layer (`src/services/backendApi.ts`)
-
-Implemented adapters for:
-
-- Portfolio generation
-- Holdings analysis
-- Backtesting
-- Benchmark comparison
-- Current model status
-- Market data summary
-
-This layer handles request/response shape mapping between backend DTOs and frontend typed models.
-
-### 8) Local deterministic fallback/service logic
-
-Local services still exist and are used for utility and fallback behavior:
-
-- `portfolioService.ts`: risk profiles, allocation model types, fee/tax constants, local rule-based generation and analysis helpers
-- `backtestEngine.ts`: legacy GBM-based offline backtest engine (marked as legacy note)
-- `benchmarkService.ts`: local deterministic benchmark strategy set and growth projection helpers
-- `localAdvisor.ts`: deterministic text insight/advice functions
-
-### 9) Styling and design system (`src/index.css`)
-
-Implemented:
-
-- Theme variables and typography tokens
-- Sidebar/topbar shell tokens (`--sidebar-w`, `--topbar-h`)
-- Card/button/badge/input primitives
-- Chart and table utility classes
-- Chat UI, step indicators, and status chips
-
-Note: the prior CSS parser crash caused by a broken font token has been fixed.
-
-## Current Product Flow
-
-1. User opens app -> sees sidebar shell with primary navigation.
-2. In `Portfolio`, user chooses capital + risk and generates model-backed allocations.
-3. User reviews metrics, sector diversification, and AI-generated portfolio explanation.
-4. In `Trade Ideas`, user tests a holdings basket and receives diversification + rebalancing guidance.
-5. In `Backtest`, user runs historical simulation with model variant and trading-rule knobs.
-6. In `Compare`, user evaluates strategies across return, risk, drawdown, and projected growth.
-7. At any point, user can open the AI assistant for guided questions.
-
-## What Is Placeholder / In Progress
-
-- `Market` tab currently renders placeholder cards (structure is ready, live wiring pending).
-- Some UI labels are stage labels rather than fully dynamic data in sidebar footer.
-- Components contain a mix of dark-theme utility classes and light Tailwind-like classes; functional, but not yet fully unified.
-
-## Tech Stack
-
-- Frontend: React 19 + TypeScript + Vite
-- Charts: Recharts
-- Icons: Lucide React
-- API: FastAPI (local service in `apps/api`)
-- Data/infra references: Postgres + Redis (for API runtime)
-
-## Repository Structure
+## What Exists In This Directory
 
 ```text
 .
+├── README.md
+├── docker-compose.yml
+├── index.html
+├── package.json
+├── package-lock.json
+├── tsconfig.json
+├── vite.config.ts
 ├── src/
-│   ├── App.tsx
-│   ├── main.tsx
-│   ├── index.css
-│   ├── components/
-│   │   ├── GenerateTab.tsx
-│   │   ├── AnalyzeTab.tsx
-│   │   ├── BacktestTab.tsx
-│   │   ├── CompareTab.tsx
-│   │   ├── AIChat.tsx
-│   │   └── MetricCard.tsx
-│   ├── services/
-│   │   ├── backendApi.ts
-│   │   ├── portfolioService.ts
-│   │   ├── backtestEngine.ts
-│   │   ├── benchmarkService.ts
-│   │   └── localAdvisor.ts
-│   └── data/
-│       └── stocks.ts
-└── apps/api/
-    └── README.md
+├── apps/
+│   └── api/
+├── data/
+├── docs/
+├── infra/
+├── scripts/
+└── tmp/
 ```
 
-## API Endpoints Used by Frontend
+The main working areas are:
 
-| Method | Endpoint | Used In |
-|---|---|---|
-| `GET` | `/api/v1/models/current` | Portfolio tab, Backtest tab |
-| `GET` | `/api/v1/market-data/summary` | Backtest tab |
-| `POST` | `/api/v1/portfolio/generate` | Portfolio generation |
-| `POST` | `/api/v1/analysis/portfolio` | Trade Ideas / holdings analysis |
-| `POST` | `/api/v1/backtests/run` | Backtesting |
-| `GET` | `/api/v1/benchmarks/summary` | Compare tab |
-| `POST` | `/api/v1/explain/portfolio` | Portfolio AI explanation |
-| `POST` | `/api/v1/explain/chat` | Floating AI assistant |
+- `src/`: the browser app, tab layout, shared services, and styling.
+- `apps/api/`: the FastAPI service, ingestion utilities, model runtime code, and local artifacts.
+- `docs/`: architecture, technical plan, and proof notes for the current snapshot.
+- `infra/docker/`: Dockerfiles used by `docker compose`.
+- `scripts/`: maintenance and smoke-test utilities.
+- `tmp/ui-smoke/`: screenshots and ad hoc smoke-test artifacts created during validation runs.
+
+## Product Surface
+
+The current frontend shell in `src/App.tsx` exposes five main product tabs plus the persistent chat widget:
+
+- `Market`
+- `Portfolio`
+- `Trade Ideas`
+- `Backtest`
+- `Compare`
+- `AI Chat`
+
+The `Portfolio` tab is a workspace with two modes:
+
+- Build Portfolio
+- Analyze Holdings
+
+The app now presents a stable sidebar/topbar shell, runtime badges, and a live “live picks” count when a portfolio has been generated.
+
+## Core Frontend Files
+
+```text
+src/
+├── App.tsx
+├── index.css
+├── main.tsx
+├── components/
+│   ├── AIChat.tsx
+│   ├── AnalyzeTab.tsx
+│   ├── BacktestTab.tsx
+│   ├── CompareTab.tsx
+│   ├── GenerateTab.tsx
+│   ├── MarketTab.tsx
+│   ├── PortfolioWorkspace.tsx
+│   ├── TradeIdeasTab.tsx
+│   └── MetricCard.tsx
+├── data/
+│   └── stocks.ts
+└── services/
+    ├── backendApi.ts
+    ├── backtestEngine.ts
+    ├── benchmarkService.ts
+    ├── localAdvisor.ts
+    └── portfolioService.ts
+```
+
+### Frontend responsibilities
+
+- `GenerateTab.tsx` builds a portfolio from capital, risk attitude, and sector constraints.
+- `AnalyzeTab.tsx` lets the user paste or assemble holdings and produces risk/diversification analysis.
+- `BacktestTab.tsx` runs historical replay with model-variant selection and trading-friction controls.
+- `CompareTab.tsx` shows benchmark comparison and projected-growth charts.
+- `AIChat.tsx` is a floating assistant that sends portfolio-aware prompts to the backend explanation API.
+- `backendApi.ts` is the single request/response adapter between UI types and backend DTOs.
+
+## Backend Surface
+
+```text
+apps/api/
+├── README.md
+├── alembic.ini
+├── alembic/
+├── app/
+│   ├── main.py
+│   ├── api/
+│   │   ├── router.py
+│   │   └── routes/
+│   ├── core/
+│   ├── db/
+│   ├── ingestion/
+│   ├── ml/
+│   ├── models/
+│   ├── schemas/
+│   └── services/
+├── artifacts/
+└── scripts/
+```
+
+### Backend responsibilities
+
+- `app/main.py` boots the API, applies CORS, preloads local bootstrap state, and records model-runtime readiness.
+- `app/api/router.py` wires together the route modules for portfolio, analysis, backtests, benchmarks, market data, models, news, explanations, stock detail, and trade ideas.
+- `app/services/db_quant_engine.py` remains the main orchestration layer for portfolio generation, analysis, and backtesting.
+- `app/services/model_runtime.py` reports what is available on disk and whether the runtime is `full_ensemble`, `degraded_ensemble`, or `rules_only`.
+- `app/services/ensemble_scorer.py` combines component predictions and emits runtime-aware metadata.
+- `app/services/groq_explainer.py` owns the explanation/chat boundary.
+- `app/services/news_intelligence.py` and `app/api/routes/news.py` support market-context narration.
+
+## API Endpoints In Use
+
+| Method | Endpoint                      | Purpose                                 |
+| ------ | ----------------------------- | --------------------------------------- |
+| `GET`  | `/api/v1/models/current`      | Runtime readiness and component status  |
+| `GET`  | `/api/v1/market-data/summary` | Available local market data window      |
+| `POST` | `/api/v1/portfolio/generate`  | Generate a portfolio                    |
+| `POST` | `/api/v1/analysis/portfolio`  | Analyze holdings                        |
+| `POST` | `/api/v1/backtests/run`       | Run a backtest                          |
+| `GET`  | `/api/v1/benchmarks/summary`  | Benchmark comparison summary            |
+| `GET`  | `/api/v1/trade-ideas`         | Trade-idea shortlist                    |
+| `POST` | `/api/v1/explain/portfolio`   | Portfolio explanation                   |
+| `POST` | `/api/v1/explain/chat`        | AI chat assistant                       |
+| `GET`  | `/api/v1/stock/...`           | Stock detail / stock narrative surfaces |
+
+## Runtime Behavior
+
+The current codebase is explicitly local-first:
+
+- The API reads local artifacts from `apps/api/artifacts/models/*`.
+- The backend reports runtime status before the UI asks for model-backed behavior.
+- If the model path is unavailable, the system falls back to rule-based behavior rather than failing silently.
+- Groq is used only for explanation/chat surfaces and is not required for the quant path.
+- CORS is configured for local browser origins used by the dev and smoke workflows, including ports `3000`, `3001`, `4173`, and `5173` on `localhost` and `127.0.0.1`.
 
 ## Local Setup
 
 ### Frontend
 
 ```bash
-cd capstone
 npm install
 npm run dev
 ```
 
-Default frontend URL: [http://localhost:3000](http://localhost:3000)
+Default dev server: `http://localhost:3000`
 
-### Backend (summary)
-
-Detailed backend setup is in `apps/api/README.md`.
-
-Quick path:
+### Backend
 
 ```bash
 cd apps/api
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app.main:app --reload --port 8000
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\uvicorn app.main:app --reload --port 8000
 ```
 
-API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+API docs: `http://localhost:8000/docs`
 
-### Optional environment variable
-
-If backend runs elsewhere:
+### Docker
 
 ```bash
-VITE_API_BASE_URL=http://localhost:8000
+docker compose up -d api postgres redis
 ```
 
-## npm Scripts
+The compose stack is the easiest way to keep the frontend and backend aligned with the current snapshot.
 
-- `npm run dev` - start Vite dev server on port 3000
-- `npm run build` - production build
-- `npm run preview` - preview built app
-- `npm run lint` - TypeScript no-emit check
+## Smoke Validation
 
-## Known Notes
+This directory includes a smoke runner at `scripts/ui-smoke-playwright.mjs` and a current ad hoc runner in `tmp/ui-smoke/quick-smoke-current.mjs`.
 
-- The frontend is strongly API-coupled; if backend endpoints are unavailable, relevant panels show warning notices.
-- Data in `src/data/stocks.ts` is a curated local universe used for local mapping/search and fallback utilities.
-- Backtest, benchmark, and advisory local services remain in repo and are useful for deterministic/offline behavior, but main UI path prefers backend endpoints.
+Current validated flows:
+
+- Generate
+- Analyze
+- Backtest
+- Compare
+- AI Chat
+
+## Notes
+
+- `Market` and `Trade Ideas` are first-class tabs in the shell even when individual panels are still presentation-heavy.
+- `CompareTab` uses backend benchmark summaries and local proxy metadata.
+- `GenerateTab` and `BacktestTab` both expose runtime status, artifact classification, and model-version context.
+- `apps/api/README.md` contains the backend-specific setup and data pipeline notes.
