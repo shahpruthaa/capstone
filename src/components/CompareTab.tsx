@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-    ResponsiveContainer, LineChart, Line
+    ResponsiveContainer, LineChart, Line, Cell
 } from 'recharts';
 import { Award, TrendingUp } from 'lucide-react';
 import { BenchmarkStrategy, ComparisonResult } from '../services/benchmarkService';
 import { getBenchmarkComparisonViaApi } from '../services/backendApi';
 
-const TYPE_BADGES: Record<string, string> = { AI: 'badge-green', INDEX: 'badge-blue', FACTOR: 'badge-purple', AMC_STYLE: 'badge-amber' };
+const TYPE_BADGES: Record<string, string> = { AI: 'badge-green', INDEX: 'badge-blue', FACTOR: 'badge-purple', AMC_STYLE: 'badge-slate' };
 const TYPE_LABELS: Record<string, string> = { AI: 'AI', INDEX: 'Index', FACTOR: 'Factor', AMC_STYLE: 'AMC Style' };
 
 const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s, isWinner }) => {
@@ -18,7 +18,7 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
                     <div className="flex items-center gap-2">
                         <p className="font-bold text-sm text-slate-900">{s.name}</p>
                         {isWinner && <Award className="w-4 h-4 text-amber-500" />}
-                        {s.isProxy && <span className="badge badge-amber">Proxy</span>}
+                        {s.isProxy && <span className="badge badge-slate">Proxy</span>}
                     </div>
                     <span className={`badge ${TYPE_BADGES[s.type]} mt-1`}>{TYPE_LABELS[s.type]}</span>
                 </div>
@@ -32,6 +32,13 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
                 <p className="text-[11px] text-slate-500"><span className="font-semibold text-slate-700">Construction:</span> {s.constructionMethod}</p>
                 <p className="text-[11px] text-slate-500"><span className="font-semibold text-slate-700">Constituents:</span> {s.constituentMethod}</p>
                 <p className="text-[11px] text-slate-500"><span className="font-semibold text-slate-700">Source Window:</span> {s.sourceWindow}</p>
+                <p className="text-[11px] text-slate-500">
+                    <span className="font-semibold text-slate-700">Data Source:</span> {s.sourceProvider || 'local_research'}
+                    {s.sourceType === 'THIRD_PARTY' ? ' (3rd-party)' : ' (local proxy)'}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                    <span className="font-semibold text-slate-700">Relative Accuracy:</span> {(s.relativeAccuracyScorePct || 0).toFixed(1)}%
+                </p>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 {[
@@ -51,7 +58,7 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
             {s.limitations.length > 0 && (
                 <div className="mt-4 space-y-1">
                     {s.limitations.slice(0, 2).map((limitation) => (
-                        <div key={limitation} className="alert-warning text-[11px]">{limitation}</div>
+                        <p key={limitation} className="text-[11px] text-slate-500">- {limitation}</p>
                     ))}
                 </div>
             )}
@@ -62,7 +69,7 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
 export function CompareTab() {
     const [cmp, setCmp] = useState<ComparisonResult | null>(null);
     const [loading, setLoading] = useState(true);
-    const [compareNotice, setCompareNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [compareNotice, setCompareNotice] = useState<{ tone: 'info'; text: string } | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -78,8 +85,8 @@ export function CompareTab() {
             .catch((error) => {
                 if (active) {
                     setCompareNotice({
-                        tone: 'warning',
-                        text: `Benchmark comparison failed: ${error instanceof Error ? error.message : 'The local backend benchmark endpoint is unavailable.'}`,
+                        tone: 'info',
+                        text: `Benchmark comparison is syncing: ${error instanceof Error ? error.message : 'The benchmark service is initializing.'}`,
                     });
                 }
             })
@@ -115,9 +122,9 @@ export function CompareTab() {
                         </div>
                     </div>
                     {compareNotice && (
-                        <div className={`${compareNotice.tone === 'info' ? 'alert-info' : 'alert-warning'} mt-3 text-xs`}>
+                        <p className="mt-3 text-xs text-slate-500">
                             {compareNotice.text}
-                        </div>
+                        </p>
                     )}
                 </div>
             </div>
@@ -149,18 +156,18 @@ export function CompareTab() {
                         <p className="text-sm text-slate-500">AI Portfolio vs Standard Indian Market Strategies · Backend Research Results</p>
                     </div>
                 </div>
-                <div className="alert-info mt-3 text-xs">
-                    <strong>Disclaimer:</strong> This comparison view is for research/demo use. Proxy labels indicate locally reconstructed approximations rather than official published index or AMC return series.
-                </div>
+                <p className="mt-3 text-xs text-slate-500">
+                    Disclaimer: This comparison view is for research/demo use. It mixes local proxy series with external benchmark references where available.
+                </p>
                 {compareNotice && (
-                    <div className={`${compareNotice.tone === 'info' ? 'alert-info' : 'alert-warning'} mt-3 text-xs`}>
+                    <p className="mt-3 text-xs text-slate-500">
                         {compareNotice.text}
-                    </div>
+                    </p>
                 )}
                 {cmp.notes && cmp.notes.length > 0 && (
                     <div className="mt-3 space-y-2">
                         {cmp.notes.map((note, index) => (
-                            <div key={index} className="alert-info text-xs">{note}</div>
+                            <p key={index} className="text-xs text-slate-500">- {note}</p>
                         ))}
                     </div>
                 )}
@@ -210,7 +217,7 @@ export function CompareTab() {
                                 <Bar dataKey="Sharpe" name="Sharpe ×10" radius={[4, 4, 0, 0]}>
                                     {barData.map((_, i) => {
                                         const colors = ['#14b8a6', '#94a3b8', '#3b82f6', '#f59e0b', '#8b5cf6', '#f43f5e', '#10b981'];
-                                        return <rect key={i} fill={colors[i % colors.length]} />;
+                                        return <Cell key={i} fill={colors[i % colors.length]} />;
                                     })}
                                 </Bar>
                             </BarChart>
@@ -238,7 +245,7 @@ export function CompareTab() {
                                     stroke={LINE_COLORS[i]}
                                     strokeWidth={name === 'NSE AI Portfolio' ? 3 : 1.5}
                                     dot={false}
-                                    strokeDasharray={name === 'Nifty 50 Index' ? '5 5' : undefined}
+                                    strokeDasharray={name === 'Nifty 50 Proxy' ? '5 5' : undefined}
                                 />
                             ))}
                         </LineChart>
@@ -254,6 +261,7 @@ export function CompareTab() {
                             <tr>
                                 <th>Strategy</th><th>Type</th><th>Annual Ret%</th><th>Volatility%</th>
                                 <th>Sharpe</th><th>Sortino</th><th>Max DD%</th><th>5Y CAGR%</th><th>Expense%</th>
+                                <th>Source</th><th>Rel. Accuracy%</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -263,7 +271,7 @@ export function CompareTab() {
                                         <div className="flex items-center gap-2 font-semibold">
                                             {s.name === cmp.winner && <Award className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
                                             {s.name}
-                                            {s.isProxy && <span className="badge badge-amber">Proxy</span>}
+                                            {s.isProxy && <span className="badge badge-slate">Proxy</span>}
                                         </div>
                                     </td>
                                     <td><span className={`badge ${TYPE_BADGES[s.type]}`}>{TYPE_LABELS[s.type]}</span></td>
@@ -274,6 +282,8 @@ export function CompareTab() {
                                     <td className="text-rose-500 font-mono">{s.maxDrawdown}%</td>
                                     <td className="font-mono">{s.cagr5Y}%</td>
                                     <td className="font-mono text-slate-400">{s.expenseRatio}%</td>
+                                    <td className="font-mono text-[11px]">{s.sourceType === 'THIRD_PARTY' ? '3P Ref' : 'Local'}</td>
+                                    <td className="font-mono">{(s.relativeAccuracyScorePct || 0).toFixed(1)}%</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -288,7 +298,7 @@ export function CompareTab() {
                         <div key={`${strategy.name}-notes`} className="border border-slate-100 rounded-xl p-4">
                             <div className="flex items-center gap-2 mb-2">
                                 <p className="font-semibold text-sm text-slate-900">{strategy.name}</p>
-                                {strategy.isProxy && <span className="badge badge-amber">Proxy</span>}
+                                {strategy.isProxy && <span className="badge badge-slate">Proxy</span>}
                             </div>
                             <p className="text-xs text-slate-600 mb-1"><span className="font-semibold text-slate-700">Method:</span> {strategy.constructionMethod}</p>
                             <p className="text-xs text-slate-600 mb-1"><span className="font-semibold text-slate-700">Constituent Policy:</span> {strategy.constituentMethod}</p>
@@ -296,7 +306,7 @@ export function CompareTab() {
                             {strategy.limitations.length > 0 && (
                                 <div className="space-y-1">
                                     {strategy.limitations.map((limitation) => (
-                                        <div key={limitation} className="alert-warning text-[11px]">{limitation}</div>
+                                        <p key={limitation} className="text-[11px] text-slate-500">- {limitation}</p>
                                     ))}
                                 </div>
                             )}

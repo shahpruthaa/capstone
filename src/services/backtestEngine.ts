@@ -27,10 +27,24 @@ export interface BacktestResult {
     initialInvestment: number;
     notes?: string[];
     modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
-    modelSource?: 'RULES' | 'LIGHTGBM';
+    modelSource?: 'RULES' | 'LIGHTGBM' | 'ENSEMBLE';
     modelVersion?: string;
     predictionHorizonDays?: number;
+    activeMode?: string;
+    artifactClassification?: string;
     topModelDriversBySymbol?: { [key: string]: string[] };
+    validationAsOfDate?: string;
+    validationHorizonDays?: number;
+    validationSamples?: number;
+    validationHitRatePct?: number;
+    validationMaePct?: number;
+    predictionValidation?: {
+        symbol: string;
+        predictedReturnPct: number;
+        actualReturnPct: number;
+        absoluteErrorPct: number;
+        directionMatch: boolean;
+    }[];
 }
 
 export interface TaxBreakdown {
