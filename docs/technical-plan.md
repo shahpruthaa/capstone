@@ -2,181 +2,120 @@
 
 ## Goal
 
-Ship the branch rebuilt from `55b69df` as a stable capstone demo with:
+Keep the current `e9e88097f2dbc798a1dc97796dbd929c0c19e655` snapshot stable as a local capstone demo with:
 
 - a local quant engine
-- ensemble-aware runtime detection
-- explicit degraded behavior
-- Groq-assisted explanations
-- one reproducible UI demo path
+- runtime-aware model reporting
+- explicit fallback modes
+- explanation/chat as an optional dependency
+- repeatable UI validation
 
 ## Plan Status Summary
 
-| Workstream | Status | Outcome |
-| --- | --- | --- |
-| Baseline hardening and branch reset | Complete | Branch behavior aligned to the `55b69df` capstone baseline |
-| Data and artifact pipeline standardization | Complete | Canonical artifact layout and training order documented |
-| Backend runtime consolidation | Complete | `db_quant_engine.py` and runtime status now drive the system |
-| Frontend demo stabilization | Complete | Runtime banner, per-tab metadata, explicit fallback messaging |
-| Capstone docs and demo path | Complete | README, architecture, and technical plan match this branch |
-| Official benchmark reconstruction | Partial | Proxy-based local research strategies still in use |
-| Automated test depth | Partial | Verification is strong, but coverage is not yet production-grade |
+| Workstream                        | Status   | Outcome                                                                                     |
+| --------------------------------- | -------- | ------------------------------------------------------------------------------------------- |
+| Runtime and CORS stabilization    | Complete | Browser requests from local dev ports succeed consistently                                  |
+| Backend runtime consolidation     | Complete | `db_quant_engine.py`, `ensemble_scorer.py`, and `model_runtime.py` define the core behavior |
+| Frontend shell and tab structure  | Complete | `Market`, `Portfolio`, `Trade Ideas`, `Backtest`, `Compare`, and `AI Chat` are wired        |
+| Explanation boundary cleanup      | Complete | Groq remains a non-blocking helper for chat/explanations only                               |
+| UI smoke validation               | Complete | Generate, Analyze, Backtest, Compare, and AI Chat pass in the current snapshot              |
+| Official benchmark reconstruction | Partial  | Proxy-based benchmark output is still used for local demo continuity                        |
+| Regression automation depth       | Partial  | Smoke coverage exists, but broader test automation still needs expansion                    |
 
-## 1. Baseline Hardening
+## 1. Current Branch Snapshot
 
-Completed:
+This plan applies to the checked-out merge state in this directory, not the earlier 55b69df-only baseline.
 
-- restarted implementation from `55b69df6b0bf941abdef15e0f551b2175d7d93d2`
-- kept the ensemble product as the target runtime
-- separated explanation concerns from core quant concerns
-- removed silent ambiguity around which model path is active
+Current characteristics:
 
-Result:
+- frontend shell is fully tabbed and runtime-aware
+- backend startup includes local bootstrap and model-status inspection
+- CORS is tuned for local UI ports used by dev and smoke workflows
+- current docs match the live file layout and current routes
 
-- the project now exposes one honest runtime state instead of implying full ensemble availability when artifacts are missing
-
-## 2. Data and Artifact Pipeline
+## 2. Backend Runtime Model
 
 Completed:
 
-- standardized the artifact layout under:
-  - `artifacts/models/lightgbm_v1`
-  - `artifacts/models/lstm_v1`
-  - `artifacts/models/gnn_v1`
-  - `artifacts/models/death_risk_v1`
-  - `artifacts/models/ensemble_v1`
-- added a canonical ensemble manifest materializer:
-  - [materialize_ensemble_artifact.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/scripts/ml/materialize_ensemble_artifact.py)
-- preserved the training dependency chain:
-  1. LightGBM dataset
-  2. LightGBM
-  3. LSTM
-  4. GNN
-  5. death-risk
-  6. ensemble manifest
+- `app/main.py` bootstraps local state and loads model runtime metadata at startup
+- `model_runtime.py` exposes component readiness, artifact classification, and runtime mode
+- `db_quant_engine.py` remains the orchestration layer for generation, analysis, and backtests
+- `ensemble_scorer.py` combines LightGBM, LSTM, GNN, and death-risk signals when available
+- `groq_explainer.py` is isolated behind explanation routes so quant behavior is not coupled to LLM availability
 
-Current expectation:
+Runtime rule in force:
 
-- the runtime reads artifacts from disk and reports component-level readiness
-- missing artifacts no longer produce unclear behavior
+- `full_ensemble` when the required artifacts are present and the optional set is healthy
+- `degraded_ensemble` when the core ML path exists but not every optional component is available
+- `rules_only` when the ML artifact path is unavailable
 
-## 3. Backend Runtime Consolidation
+## 3. Frontend Product Flow
 
 Completed:
 
-- centralized runtime readiness in [model_runtime.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/model_runtime.py)
-- made [db_quant_engine.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/db_quant_engine.py) the main orchestration layer for:
-  - portfolio generation
-  - holdings analysis
-  - backtests
-  - expected-return routing
-  - fallback decisions
-- upgraded [ensemble_scorer.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/ensemble_scorer.py) to:
-  - work with aligned component payloads
-  - compute degraded ensemble behavior explicitly
-  - expose component scores and drivers
-- moved Groq behind [groq_explainer.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/groq_explainer.py)
+- `Market` is a first-class entry point in the shell
+- `Portfolio` is split into build and analysis views
+- `Trade Ideas` exists as a dedicated tab in the nav
+- `Backtest` includes runtime context, tax, and cost framing
+- `Compare` renders benchmark and growth views from backend summaries
+- `AIChat` uses the current portfolio context and shared backend adapter
 
-Runtime rule now:
+The current product flow is:
 
-- `LightGBM` is the core requirement for any ML-backed runtime
-- if `LightGBM` is available and some non-core models are missing, the app uses `degraded_ensemble`
-- if `LightGBM` is not available, the app uses `rules_only`
+1. open the app and inspect runtime badges
+2. generate a portfolio
+3. inspect model runtime and allocations
+4. analyze holdings
+5. run a backtest
+6. compare strategies
+7. ask the assistant for narrative context
 
-## 4. Public API Contract
+## 4. API and Data Plan
 
 Completed:
 
-- `GET /api/v1/models/current` now exposes:
-  - active mode
-  - available and missing components
-  - model version
-  - artifact classification
-  - training mode
-  - Groq connectivity
-  - fallback notes
-- portfolio, analysis, and backtest responses now include:
-  - `model_variant_applied`
-  - `model_source`
-  - `model_version`
-  - `prediction_horizon_days`
-  - `active_mode`
-  - `artifact_classification`
-- stock detail now includes:
-  - final ensemble score
-  - component scores
-  - feature drivers
-  - death-risk
-  - optional explanation
+- endpoint coverage now includes the current model status, market-data summary, portfolio generation, analysis, backtest, benchmark summary, trade ideas, stock detail, and explanation routes
+- the frontend consumes a single typed adapter layer in `src/services/backendApi.ts`
+- local market data, corporate actions, and artifact files remain the source of truth for offline/demo behavior
 
-## 5. Frontend Stabilization
+Data and artifact locations that matter in the current tree:
 
-Completed:
+- `data/raw/` for NSE source archives
+- `apps/api/artifacts/models/lightgbm_v1/`
+- `apps/api/artifacts/models/lstm_v1/`
+- `apps/api/artifacts/models/gnn_v1/`
+- `apps/api/artifacts/models/death_risk_v1/`
+- `apps/api/artifacts/models/ensemble_v1/`
 
-- top runtime banner now shows:
-  - market data readiness
-  - runtime mode
-  - training mode
-  - artifact classification
-  - Groq availability
-  - available components
-- `Generate` now shows runtime metadata and model-driver context
-- `Analyze` now surfaces model source, mode, version, and ML score counts
-- `Backtest` now shows ensemble runtime details instead of vague hybrid wording
-- `AIChat` now uses the correct portfolio shape and passes clean context
+## 5. Validation Plan
 
-Important outcome:
+Completed in the current snapshot:
 
-- the UI no longer hides degraded or fallback states
+- backend import/startup verification
+- backend health and CORS preflight checks
+- frontend production build validation
+- one-pass UI smoke validation for all major screens
 
-## 6. Capstone Demo Path
+The smoke runner is currently represented in the repository by:
 
-Recommended presentation flow:
+- `scripts/ui-smoke-playwright.mjs`
+- `tmp/ui-smoke/quick-smoke-current.mjs`
 
-1. `docker compose up -d --build`
-2. `docker compose exec api alembic upgrade head`
-3. ingest bhavcopy data
-4. import corporate actions
-5. train or copy artifacts into the canonical directories
-6. run `GET /api/v1/models/current`
-7. open the UI
-8. generate a portfolio
-9. analyze a holdings basket
-10. run a backtest
-11. compare benchmarks
-12. show stock detail and AI explanations if Groq is configured
+## 6. Remaining Work
 
-## 7. Verification
+Still partial:
 
-Completed locally during this stabilization pass:
+- official benchmark reconstruction from a fully authoritative constituent history
+- broader regression automation beyond the smoke pass
+- artifact quality improvements from fresh training runs
+- execution-grade integrations outside the research/local-demo scope
 
-- backend Python compile check
-- frontend lint
-- frontend production build
+## 7. Acceptance Criteria Mapping
 
-Verification commands:
-
-```powershell
-python -m compileall apps/api/app apps/api/scripts
-npm run lint
-npm run build
-```
-
-## 8. Remaining Partial Areas
-
-These are intentionally called out so the capstone is honest:
-
-- official benchmark constituent reconstruction
-- deeper automated testing
-- live intraday execution behavior
-- artifact quality itself, which still depends on locally training or supplying the models
-
-## 9. Acceptance Criteria Mapping
-
-| Acceptance target | Status | Notes |
-| --- | --- | --- |
-| Stack starts locally | Complete | Dockerized services and docs are in place |
-| Artifacts are discovered and reported correctly | Complete | Runtime status is component-aware |
-| Full demo can run from the UI | Complete, subject to local data and artifacts | UI and backend paths are wired |
-| Degraded-state demo is transparent | Complete | Banner and route metadata expose it |
-| README matches runtime behavior | Complete | Updated for this branch |
+| Acceptance target                                        | Status   | Notes                                                                 |
+| -------------------------------------------------------- | -------- | --------------------------------------------------------------------- |
+| Local stack starts                                       | Complete | Dockerized backend and frontend are aligned with the current snapshot |
+| Runtime readiness is visible                             | Complete | `/api/v1/models/current` drives the UI banner and fallback display    |
+| Browser fetches work from local dev ports                | Complete | CORS is enabled for local UI origins used in this directory           |
+| Generate/Analyze/Backtest/Compare/AI Chat are functional | Complete | Verified by current smoke pass                                        |
+| Documentation matches the current tree                   | Complete | README, architecture, technical plan, and proof notes are aligned     |

@@ -2,14 +2,13 @@
 
 ## Objective
 
-Describe the capstone architecture on the branch rebuilt from `55b69df`.
+Describe the current merged snapshot checked out in this directory at `e9e88097f2dbc798a1dc97796dbd929c0c19e655`.
 
-This branch targets a reliable local demo where:
+The architecture is a local-first NSE research demo with three hard requirements:
 
-- the core quant engine is fully local
-- ML artifacts are loaded from disk
-- Groq is required only for explanation features
-- the system exposes its runtime state honestly as `full_ensemble`, `degraded_ensemble`, or `rules_only`
+- the quant path works without any external API dependency
+- model/artifact readiness is exposed explicitly to the UI
+- Groq is confined to explanation/chat surfaces and never gates core portfolio math
 
 ## Topology
 
@@ -18,147 +17,165 @@ flowchart LR
     U["User Browser"] --> WEB["React + Vite UI"]
     WEB --> API["FastAPI API"]
 
-    API --> RUNTIME["db_quant_engine.py"]
-    API --> STATUS["model_runtime.py"]
-    API --> EXPLAIN["groq_explainer.py"]
-    API --> NEWS["news_intelligence.py"]
-    API --> PG["PostgreSQL + TimescaleDB"]
-    API --> REDIS["Redis"]
+    API --> MAIN["app/main.py"]
+    MAIN --> ROUTER["app/api/router.py"]
+    ROUTER --> PORT["portfolio.py"]
+    ROUTER --> ANALYSIS["analysis.py"]
+    ROUTER --> BACKTESTS["backtests.py"]
+    ROUTER --> BENCH["benchmarks.py"]
+    ROUTER --> MODELS["models.py"]
+    ROUTER --> NEWS["news.py"]
+    ROUTER --> EXPLAIN["explain.py"]
+    ROUTER --> STOCK["stock_detail.py"]
+    ROUTER --> IDEAS["trade_ideas.py"]
 
-    RUNTIME --> ENS["ensemble_scorer.py"]
-    ENS --> LGB["LightGBM artifact"]
-    ENS --> LSTM["LSTM artifact"]
-    ENS --> GNN["GNN artifact"]
-    ENS --> DR["Death-risk artifact"]
+    PORT --> ENGINE["db_quant_engine.py"]
+    ANALYSIS --> ENGINE
+    BACKTESTS --> ENGINE
+    STOCK --> ENGINE
+    STOCK --> SCORER["ensemble_scorer.py"]
+    MODELS --> RUNTIME["model_runtime.py"]
 
-    ING["Bhavcopy ingestion"] --> PG
-    CA["Corporate-action import"] --> PG
-    TRAIN["Offline ML training scripts"] --> ART["artifacts/models/*"]
-    ART --> STATUS
-    ART --> ENS
+    ENGINE --> PG["PostgreSQL + TimescaleDB"]
+    ENGINE --> REDIS["Redis"]
+    NEWS --> PG
+
+    RUNTIME --> ART["artifacts/models/*"]
+    SCORER --> ART
     EXPLAIN --> GROQ["Groq API"]
-    NEWS --> GROQ
+
+    INGRESS["bhavcopy ingestion scripts"] --> PG
+    CA["corporate action import"] --> PG
+    TRAIN["offline ML scripts"] --> ART
 ```
 
-## Design Principles
+## Directory Map
 
-- One backend owns the portfolio, analysis, benchmark, and backtest logic.
-- One runtime-status endpoint tells the UI exactly what is available.
-- The quant workflow never depends on Groq.
-- ETFs remain on rule logic unless a proven ML path exists for them.
-- Failure states are visible in the API and UI instead of silently hidden.
+The directory layout currently supports the architecture above:
 
-## Runtime Contracts
+```text
+.
+├── src/                         # Frontend app, tabs, shared UI services
+├── apps/api/                    # FastAPI service, ML runtime, ingestion, models
+├── data/raw/                    # NSE raw input archives
+├── docs/                        # Architecture, plan, proof notes
+├── infra/docker/                # Compose Dockerfiles
+├── scripts/                     # Smoke tests and maintenance helpers
+├── tmp/ui-smoke/                # Local validation screenshots and helper scripts
+└── docker-compose.yml           # Local stack wiring
+```
 
-### Model status contract
+## Frontend Surface
 
-`GET /api/v1/models/current` returns:
+The shell in `src/App.tsx` now exposes these first-class tabs:
 
-- `variant`
-- `model_source`
-- `active_mode`
-- `model_version`
-- `prediction_horizon_days`
-- `training_mode`
-- `artifact_classification`
-- `available_components`
-- `missing_components`
-- `components`
-- `groq_connected`
-- `reason`
-- `notes`
+- `Market`
+- `Portfolio`
+- `Trade Ideas`
+- `Backtest`
+- `Compare`
 
-This endpoint is the source of truth for runtime readiness.
+The persistent `AIChat` widget stays available regardless of the active tab.
 
-### Ensemble contract
+### Portfolio workspace
 
-Each model component feeds a symbol-keyed prediction payload into the ensemble scorer.
+`PortfolioWorkspace.tsx` has two views:
 
-Common expectations:
+- `Build Portfolio` uses `GenerateTab.tsx`
+- `Analyze Holdings` uses `AnalyzeTab.tsx`
 
-- input: `db`, `snapshots`, `as_of_date`
-- output per symbol:
-  - score
-  - model source
-  - model version
-  - prediction horizon
-  - top drivers
-  - component scores when available
+This split reflects the current product design: generation and holdings analysis are related, but they are not the same workflow.
 
-The ensemble scorer:
+### Current tab responsibilities
 
-- normalizes component weights
-- applies death-risk penalty
-- emits final expected-return overrides for equities
-- exposes whether the runtime was full or degraded
+- `MarketTab.tsx` presents market/regime context and navigational utility.
+- `GenerateTab.tsx` handles mandate entry, runtime status, portfolio generation, and explanation hooks.
+- `AnalyzeTab.tsx` handles pasted or manually assembled holdings and rebalancing guidance.
+- `BacktestTab.tsx` handles historical replay with runtime awareness, taxes, and costs.
+- `CompareTab.tsx` handles benchmark summaries and comparative charts.
+- `AIChat.tsx` provides a floating assistant that passes current portfolio context to the backend.
 
-### Groq boundary
+## Backend Runtime
 
-Groq sits behind `groq_explainer.py`.
+### Boot sequence
 
-Routes that use it:
+`app/main.py` now performs three important startup actions:
 
-- stock explanation
-- portfolio explanation
-- AI chat
+1. local bootstrap of DB/runtime state
+2. local artifact readiness detection through `model_runtime.py`
+3. scheduler startup attempt for auto-ingestion when the scheduler dependency is present
 
-If Groq is unavailable:
+### Core orchestration
 
-- the quant workflow continues
-- explanation routes return graceful degradation messages
-- the runtime banner reports Groq as unavailable
-
-## Core Backend Components
-
-### `db_quant_engine.py`
-
-This is the main orchestration layer for:
+`db_quant_engine.py` remains the single orchestration layer for:
 
 - portfolio generation
 - holdings analysis
-- backtests
-- expected-return estimation
-- covariance estimation
+- backtesting
+- expected-return routing
 - constrained allocation
-- rebalance logic
-- runtime-aware fallback behavior
+- fallback behavior when artifacts are missing
 
-### `ensemble_scorer.py`
+`ensemble_scorer.py` handles multi-model combination across:
 
-This service:
+- LightGBM
+- LSTM
+- GNN
+- death-risk
 
-- loads and invokes `LightGBM`, `LSTM`, `GNN`, and `death-risk`
-- reads `ensemble_v1` manifest metadata
-- computes final alpha and model drivers
-- returns degraded-mode metadata when some components are missing
+`model_runtime.py` is the readiness authority for:
 
-### `model_runtime.py`
+- component availability
+- artifact versioning
+- training mode reporting
+- active mode classification
+- Groq connectivity visibility
 
-This service:
+### Runtime modes
 
-- validates local artifact directories
-- reports component-level readiness
-- inspects Groq connectivity
-- computes the current runtime mode
-- feeds the frontend runtime banner and preflight decisions
+The backend now exposes runtime state honestly instead of implying one fixed model path:
 
-### `stock_detail.py`
+- `full_ensemble` when required and optional components are available
+- `degraded_ensemble` when the core path exists but some optional components are missing
+- `rules_only` when the ML artifact path is not available
 
-This route combines:
+## API Contract
 
-- quantitative stock payload
-- ensemble score and component scores
-- factor and beta metadata
-- death-risk and news sentiment
-- optional Groq explanation
+`app/api/router.py` registers the current route set:
 
-It is intentionally read-only and must not block generation or backtests.
+- `GET /healthz`
+- `GET /api/v1/models/current`
+- `GET /api/v1/portfolio/...`
+- `GET /api/v1/analysis/...`
+- `GET /api/v1/backtests/...`
+- `GET /api/v1/benchmarks/...`
+- `GET /api/v1/market-data/...`
+- `GET /api/v1/news/...`
+- `GET /api/v1/explain/...`
+- `GET /api/v1/stock/...`
+- `GET /api/v1/trade-ideas/...`
+
+### Model status endpoint
+
+`GET /api/v1/models/current` is the single source of truth for runtime readiness. It drives the runtime banner in the frontend and informs whether generation/backtest should be labeled as rules-only, degraded, or fully ensemble-backed.
+
+The response now carries the current mode, active components, missing components, model version, artifact classification, training mode, and Groq availability.
+
+### Explanation boundary
+
+Groq-backed text generation is confined to `groq_explainer.py` and the explain/chat routes.
+
+Important boundary behavior:
+
+- quant routes continue even when Groq is missing
+- explanation routes degrade gracefully
+- the UI shows the degraded state explicitly
 
 ## Data Architecture
 
-### Stores
+### Persistence
 
-PostgreSQL + TimescaleDB holds:
+PostgreSQL + TimescaleDB stores:
 
 - instruments
 - daily bars
@@ -167,7 +184,13 @@ PostgreSQL + TimescaleDB holds:
 - backtest runs
 - ingestion runs
 
-Filesystem artifact storage holds:
+Redis remains available for runtime support and future task/workflow coordination.
+
+### Artifact storage
+
+Artifacts live under `apps/api/artifacts/models/` and are consumed by the runtime on disk.
+
+Current artifact families:
 
 - `lightgbm_v1`
 - `lstm_v1`
@@ -177,64 +200,40 @@ Filesystem artifact storage holds:
 
 ### Data flow
 
-1. bhavcopy ingestion loads raw EOD data into the market store
-2. corporate actions enrich and adjust replay histories
-3. training scripts create local model artifacts
-4. `model_runtime.py` validates those artifacts
-5. `db_quant_engine.py` and `ensemble_scorer.py` use them at runtime
+1. NSE bhavcopy ingestion loads raw history.
+2. Corporate actions enrich and adjust historical replay data.
+3. Training or materialization scripts populate local model artifacts.
+4. `model_runtime.py` validates the artifact tree.
+5. `db_quant_engine.py` and `ensemble_scorer.py` consume the artifacts at request time.
 
-## Frontend Architecture
+## Docker and Local Dev
 
-The existing tabs remain the core capstone surfaces:
+`docker-compose.yml` wires the current local stack:
 
-- `Generate`
-- `Analyze`
-- `Backtest`
-- `Compare`
-- `AIChat`
+- `web` on port `3000`
+- `api` on port `8000`
+- `postgres` on port `5433`
+- `redis` on port `6379`
 
-Frontend responsibilities:
+The current API CORS policy includes the local dev origins used during browser testing, including `3000`, `3001`, `4173`, and `5173` on both `localhost` and `127.0.0.1`.
 
-- preflight runtime readiness
-- submit backend requests directly
-- show fallback reasons and component availability
-- surface model version, artifact classification, and top drivers
-- distinguish quant output from Groq-generated text
+## UI Smoke Validation
 
-## Local Demo Path
+The repository now also contains a UI smoke runner under `scripts/ui-smoke-playwright.mjs` and validation artifacts in `tmp/ui-smoke/`.
 
-1. start Docker services
-2. run migrations
-3. ingest bhavcopy data
-4. import corporate actions
-5. train or materialize artifacts
-6. check `/api/v1/models/current`
-7. open the UI and confirm the top runtime banner
-8. run Generate, Analyze, Backtest, and Compare
-9. use stock detail or chat explanations if Groq is configured
+The smoke pass validates the same flows the app exposes in the browser:
 
-## Failure Behavior
-
-### Missing LightGBM
-
-- runtime becomes `rules_only`
-- generation, analysis, and backtests still work
-- UI must show the fallback clearly
-
-### Missing non-core ensemble components
-
-- runtime becomes `degraded_ensemble`
-- available components are used with normalized weights
-- UI must list missing components
-
-### Missing Groq
-
-- quant APIs remain healthy
-- explanation routes degrade gracefully
-- runtime banner shows Groq as unavailable
+- Generate
+- Analyze
+- Backtest
+- Compare
+- AI Chat
 
 ## Current Gaps
 
-- official benchmark constituent reconstruction is not yet implemented
-- ensemble quality depends on the presence of trained local artifacts
-- live execution is EOD research-grade, not broker-integrated execution-grade
+The architecture is stable for a local capstone demo, but a few areas remain intentionally non-final:
+
+- official benchmark reconstruction is still proxy-based
+- model quality depends on what artifacts are present locally
+- the system is research-grade EOD analysis, not broker execution infrastructure
+- broader automated regression coverage still needs to grow beyond the smoke pass

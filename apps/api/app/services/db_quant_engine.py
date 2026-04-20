@@ -213,7 +213,48 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
             "No securities cleared the mandate filters. Loosen the sector, small-cap, drawdown, or position-size constraints."
         )
 
-    weighted_stats = build_weighted_statistics(selected)
+    # Inject ML predictions into snapshots before scoring
+    if payload.model_variant == "LIGHTGBM_HYBRID":
+        ml_status = get_lightgbm_model_status()
+        if ml_status.get("available"):
+            try:
+                from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
+                ml_snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
+                predictor = EnsembleAlphaPredictor()
+                pred_map, _ = predictor.predict(db, ml_snapshots, as_of_date)
+                for snapshot, _ in selected:
+                    if snapshot.symbol in pred_map:
+                        pred = pred_map[snapshot.symbol]
+                        snapshot.expected_return_source = "LIGHTGBM"
+                        snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
+                        snapshot.ml_pred_annual_return = float(pred.pred_annual_return)
+                        snapshot.model_version = "lightgbm_v1"
+                        snapshot.prediction_horizon_days = 21
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"ML injection failed, falling back to rules: {e}")
+
+    # Inject ML predictions into selected snapshots before scoring
+    if payload.model_variant == "LIGHTGBM_HYBRID":
+        _ml_status = get_lightgbm_model_status()
+        if _ml_status.get("available"):
+            try:
+                from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
+                _predictor = EnsembleAlphaPredictor()
+                _pred_map, _ = _predictor.predict(db, snapshots, as_of_date)
+                for _snap, _ in selected:
+                    if _snap.symbol in _pred_map:
+                        _p = _pred_map[_snap.symbol]
+                        _snap.expected_return_source = "LIGHTGBM"
+                        _snap.ml_pred_21d_return = float(_p.pred_21d_return)
+                        _snap.ml_pred_annual_return = float(_p.pr_annual_return)
+                        _snap.model_version = "lightgbm_v1"
+                        _snap.prediction_horizon_days = 21
+            except Exception as _e:
+                import logging
+                logging.getLogger(__name__).warning(f"ML injection failed: {_e}")
+
+        weighted_stats = build_weighted_statistics(selected)
     factor_exposures = compute_factor_exposures([(snapshot, weight / 100.0) for snapshot, weight in selected])
     adjusted_names = sum(1 for snapshot, _ in selected if snapshot.corporate_action_count > 0)
     average_news_risk = sum(snapshot.news_risk_score * (weight / 100.0) for snapshot, weight in selected)
