@@ -3,6 +3,7 @@ Updated: 2026-04-20
 
 Scope
 - This document records the current assumptions used by the checked-out snapshot and ties each one to code or validation evidence in this directory.
+- The current checked-out snapshot for this proof is `6f36924ad85bbca4fa2cf6284a71a5404f832482`.
 - The citations below explain why the current methods and constants were chosen. They do not claim live-market superiority.
 
 ## 1) Risk-aware portfolio construction
@@ -216,6 +217,7 @@ This section explains the main assumed constants that appear in the current dire
 - `component_weights: { lightgbm: 0.50, lstm: 0.25, gnn: 0.15 }` in [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py#L73) gives the strongest weight to the tabular model because it is the most direct and inspectable local signal, while the sequence/graph models act as supplements.
 - `death_risk_penalty: 1.5` in [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py#L74) makes the crash-risk term a meaningful negative adjustment without fully overwhelming the expected-return model.
 - `prediction_horizon_days: 21` in [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py#L80) aligns with a roughly one-month trading horizon and is consistent across the component metadata and frontend displays.
+- In `LIGHTGBM_HYBRID` generation, selected names are stamped with `expected_return_source = LIGHTGBM`, `model_version = lightgbm_v1`, and `prediction_horizon_days = 21` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py). This keeps attribution explicit by showing when ML values are actually used in generated outputs.
 
 ### Portfolio engine defaults
 

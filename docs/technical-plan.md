@@ -2,7 +2,7 @@
 
 ## Goal
 
-Keep the current `e9e88097f2dbc798a1dc97796dbd929c0c19e655` snapshot stable as a local capstone demo with:
+Keep the current `6f36924ad85bbca4fa2cf6284a71a5404f832482` snapshot stable as a local capstone demo with:
 
 - a local quant engine
 - runtime-aware model reporting
@@ -16,6 +16,7 @@ Keep the current `e9e88097f2dbc798a1dc97796dbd929c0c19e655` snapshot stable as a
 | --------------------------------- | -------- | ------------------------------------------------------------------------------------------- |
 | Runtime and CORS stabilization    | Complete | Browser requests from local dev ports succeed consistently                                  |
 | Backend runtime consolidation     | Complete | `db_quant_engine.py`, `ensemble_scorer.py`, and `model_runtime.py` define the core behavior |
+| LIGHTGBM hybrid injection path    | Complete | `generate_portfolio` stamps selected names with ML return source/horizon/version metadata   |
 | Frontend shell and tab structure  | Complete | `Market`, `Portfolio`, `Trade Ideas`, `Backtest`, `Compare`, and `AI Chat` are wired        |
 | Explanation boundary cleanup      | Complete | Groq remains a non-blocking helper for chat/explanations only                               |
 | UI smoke validation               | Complete | Generate, Analyze, Backtest, Compare, and AI Chat pass in the current snapshot              |
@@ -40,6 +41,7 @@ Completed:
 - `app/main.py` bootstraps local state and loads model runtime metadata at startup
 - `model_runtime.py` exposes component readiness, artifact classification, and runtime mode
 - `db_quant_engine.py` remains the orchestration layer for generation, analysis, and backtests
+- `db_quant_engine.py` now injects LightGBM ensemble predictions into selected securities for `LIGHTGBM_HYBRID` generation when artifacts are available, then scores with that model-source metadata
 - `ensemble_scorer.py` combines LightGBM, LSTM, GNN, and death-risk signals when available
 - `groq_explainer.py` is isolated behind explanation routes so quant behavior is not coupled to LLM availability
 

@@ -1,6 +1,6 @@
 # NSE AI Portfolio Manager
 
-Current snapshot: the checked-out merge commit `e9e88097f2dbc798a1dc97796dbd929c0c19e655`, which combines the portfolio engine, runtime-status work, CORS fixes, UI improvements, and smoke-test additions into a single local-first demo stack.
+Current snapshot: the checked-out merge commit `6f36924ad85bbca4fa2cf6284a71a5404f832482`, which combines the documentation refactor baseline with the LIGHTGBM_HYBRID generate-path ML injection update in `db_quant_engine.py`.
 
 This repository is organized as a React + Vite frontend, a FastAPI backend, local model artifacts, and a small amount of supporting data, infra, and smoke-test tooling.
 
@@ -115,7 +115,7 @@ apps/api/
 
 - `app/main.py` boots the API, applies CORS, preloads local bootstrap state, and records model-runtime readiness.
 - `app/api/router.py` wires together the route modules for portfolio, analysis, backtests, benchmarks, market data, models, news, explanations, stock detail, and trade ideas.
-- `app/services/db_quant_engine.py` remains the main orchestration layer for portfolio generation, analysis, and backtesting.
+- `app/services/db_quant_engine.py` remains the main orchestration layer for portfolio generation, analysis, and backtesting, and now injects LIGHTGBM predictions into selected securities during `LIGHTGBM_HYBRID` generation when artifacts are available.
 - `app/services/model_runtime.py` reports what is available on disk and whether the runtime is `full_ensemble`, `degraded_ensemble`, or `rules_only`.
 - `app/services/ensemble_scorer.py` combines component predictions and emits runtime-aware metadata.
 - `app/services/groq_explainer.py` owns the explanation/chat boundary.
@@ -142,6 +142,7 @@ The current codebase is explicitly local-first:
 
 - The API reads local artifacts from `apps/api/artifacts/models/*`.
 - The backend reports runtime status before the UI asks for model-backed behavior.
+- In `LIGHTGBM_HYBRID` generation, selected names can be stamped with ML fields (`expected_return_source`, prediction horizon, model version) before scoring.
 - If the model path is unavailable, the system falls back to rule-based behavior rather than failing silently.
 - Groq is used only for explanation/chat surfaces and is not required for the quant path.
 - CORS is configured for local browser origins used by the dev and smoke workflows, including ports `3000`, `3001`, `4173`, and `5173` on `localhost` and `127.0.0.1`.
