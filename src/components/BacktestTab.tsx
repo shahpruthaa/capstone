@@ -3,13 +3,17 @@ import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
     ResponsiveContainer, ReferenceLine
 } from 'recharts';
-import { Play, Settings, TrendingUp, AlertTriangle, IndianRupee } from 'lucide-react';
+import { Play, Settings, TrendingUp, AlertTriangle, IndianRupee, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
 import { BacktestConfig, BacktestResult } from '../services/backtestEngine';
-import { getCurrentModelStatusViaApi, getMarketDataSummaryViaApi, ModelVariant, runBacktestViaApi } from '../services/backendApi';
+import { getCurrentModelStatusViaApi, getMarketDataSummaryViaApi, ModelVariant, postExplainBacktest, runBacktestViaApi } from '../services/backendApi';
 import { MetricCard } from './MetricCard';
 
-interface Props { portfolio: Portfolio | null; }
+interface Props {
+    portfolio: Portfolio | null;
+    initialResult?: BacktestResult | null;
+    onBacktestCompleted?: (result: BacktestResult | null) => void;
+}
 
 const DEFAULT_CONFIG: BacktestConfig = {
     startDate: '2025-01-01',
@@ -37,13 +41,15 @@ function deriveBacktestWindow(minTradeDate: string, maxTradeDate: string): Pick<
     };
 }
 
-export function BacktestTab({ portfolio }: Props) {
+export function BacktestTab({ portfolio, initialResult = null, onBacktestCompleted }: Props) {
     const [config, setConfig] = useState<BacktestConfig>(DEFAULT_CONFIG);
-    const [result, setResult] = useState<BacktestResult | null>(null);
+    const [result, setResult] = useState<BacktestResult | null>(initialResult);
     const [running, setRunning] = useState(false);
     const [runNotice, setRunNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
     const [selectedModelVariant, setSelectedModelVariant] = useState<ModelVariant>('RULES');
+    const [aiExplanation, setAiExplanation] = useState('');
+    const [explaining, setExplaining] = useState(false);
 
     useEffect(() => {
         const loadRuntimeContext = async () => {
@@ -74,21 +80,42 @@ export function BacktestTab({ portfolio }: Props) {
         void loadRuntimeContext();
     }, []);
 
+    useEffect(() => {
+        setResult(initialResult);
+    }, [initialResult]);
+
     const handleRun = async () => {
         if (!portfolio) return;
         setRunning(true);
         setRunNotice(null);
         try {
-            setResult(await runBacktestViaApi(portfolio, config, selectedModelVariant));
+            const nextResult = await runBacktestViaApi(portfolio, config, selectedModelVariant);
+            setResult(nextResult);
+            onBacktestCompleted?.(nextResult);
+            setAiExplanation('');
             setRunNotice({ tone: 'info', text: 'Using the local backend historical replay with persisted market data, Indian taxes, and versioned fee logic.' });
         } catch (error) {
             setResult(null);
+            onBacktestCompleted?.(null);
             setRunNotice({
                 tone: 'warning',
                 text: `Backtest failed: ${error instanceof Error ? error.message : 'The local backend backtest endpoint is unavailable.'}`,
             });
         } finally {
             setRunning(false);
+        }
+    };
+
+    const explainResult = async () => {
+        if (!result) return;
+        setExplaining(true);
+        try {
+            const response = await postExplainBacktest(result, portfolio);
+            setAiExplanation(response.explanation);
+        } catch (error) {
+            setAiExplanation(error instanceof Error ? error.message : 'Backtest explanation is temporarily unavailable.');
+        } finally {
+            setExplaining(false);
         }
     };
 
@@ -274,6 +301,24 @@ export function BacktestTab({ portfolio }: Props) {
                                     <span className="stat-value">{result.predictionHorizonDays || 21}D</span>
                                 </div>
                             </div>
+                        </div>
+
+                        <div className="card p-5">
+                            <div className="flex items-start justify-between gap-4 mb-3">
+                                <div>
+                                    <p className="section-title">AI Backtest Reading</p>
+                                    <p className="text-xs text-slate-500">Translate the replay into plain-English performance and risk context.</p>
+                                </div>
+                                <button onClick={explainResult} disabled={explaining} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
+                                    <Sparkles className={`w-3 h-3 ${explaining ? 'spin' : ''}`} />
+                                    {explaining ? 'Explaining...' : aiExplanation ? 'Refresh Explanation' : 'Explain Backtest'}
+                                </button>
+                            </div>
+                            {aiExplanation ? (
+                                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{aiExplanation}</p>
+                            ) : (
+                                <p className="text-sm text-slate-500">Generate an AI read of the result once the replay is complete.</p>
+                            )}
                         </div>
 
                         {portfolio?.mandate && (

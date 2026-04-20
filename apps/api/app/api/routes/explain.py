@@ -1,8 +1,11 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
-from app.db.session import get_db
+
+from typing import Any
+
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
+
+from app.services.ai_assistant import chat_with_copilot, explain_backtest, explain_trade_idea
 from app.services.groq_explainer import explain_stock, explain_portfolio
 
 router = APIRouter()
@@ -21,8 +24,8 @@ class StockExplainRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    history: list[dict] = []
-    portfolio_context: dict = {}
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    grounded_context: dict[str, Any] = Field(default_factory=dict)
 
 @router.post("/stock")
 async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
@@ -42,29 +45,14 @@ async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
 
 @router.post("/chat")
 async def chat_endpoint(req: ChatRequest) -> dict:
-    import httpx
-    from app.core.config import settings
-    if not settings.groq_api_key:
-        return {"response": "AI unavailable — no API key configured."}
-    messages = [{"role": "system", "content": "You are an expert NSE trading assistant helping Indian investors understand AI-generated portfolio recommendations. Be concise, accurate, and reference specific stocks and sectors when relevant."}]
-    for h in req.history[-6:]:
-        messages.append(h)
-    messages.append({"role": "user", "content": req.message})
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
-                json={"model": settings.groq_model, "max_tokens": 500, "messages": messages, "temperature": 0.4},
-            )
-            if r.status_code == 200:
-                return {"response": r.json()["choices"][0]["message"]["content"].strip()}
-        return {"response": "AI temporarily unavailable."}
-    except Exception as e:
-        return {"response": "AI temporarily unavailable."}
+    return await chat_with_copilot(
+        message=req.message,
+        history=req.history,
+        grounded_context=req.grounded_context,
+    )
 
 class PortfolioExplainRequest(BaseModel):
-    allocations: list[dict] = []
+    allocations: list[dict] = Field(default_factory=list)
     risk_mode: str = "MODERATE"
     total_amount: float = 500000
 
@@ -76,4 +64,26 @@ async def explain_portfolio_endpoint(req: PortfolioExplainRequest) -> dict:
         risk_mode=req.risk_mode,
         total_amount=req.total_amount,
     )
+    return {"explanation": explanation}
+
+
+class TradeIdeaExplainRequest(BaseModel):
+    idea: dict[str, Any] = Field(default_factory=dict)
+    portfolio_context: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/trade-idea")
+async def explain_trade_idea_endpoint(req: TradeIdeaExplainRequest) -> dict:
+    explanation = await explain_trade_idea(req.idea, req.portfolio_context)
+    return {"explanation": explanation}
+
+
+class BacktestExplainRequest(BaseModel):
+    result: dict[str, Any] = Field(default_factory=dict)
+    portfolio_context: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/backtest")
+async def explain_backtest_endpoint(req: BacktestExplainRequest) -> dict:
+    explanation = await explain_backtest(req.result, req.portfolio_context)
     return {"explanation": explanation}

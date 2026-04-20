@@ -53,6 +53,24 @@ export interface MarketContext {
   sector_sentiment: Record<string, number>;
   overall_market_sentiment: number;
   top_event_summary: string;
+  briefing: string;
+  actionableTakeaways: string[];
+  summarySource: 'llm' | 'rules';
+}
+
+export type CopilotActionType = 'generate_portfolio' | 'run_backtest' | 'load_trade_ideas' | 'refresh_market';
+
+export interface CopilotAction {
+  type: CopilotActionType;
+  label: string;
+  auto_execute: boolean;
+  blocked_reason?: string | null;
+  params?: Record<string, unknown>;
+}
+
+export interface CopilotChatResponse {
+  response: string;
+  action?: CopilotAction | null;
 }
 
 export interface CurrentModelStatus {
@@ -267,6 +285,9 @@ interface ApiMarketContextResponse {
   sector_sentiment: Record<string, number>;
   overall_market_sentiment: number;
   top_event_summary: string;
+  briefing: string;
+  actionable_takeaways?: string[];
+  summary_source?: 'llm' | 'rules';
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -313,7 +334,17 @@ export async function getMandateQuestionnaireViaApi(): Promise<MandateQuestionna
 }
 
 export async function getMarketContextViaApi(): Promise<MarketContext> {
-  return fetchJson<ApiMarketContextResponse>('/api/v1/news/market-context');
+  const response = await fetchJson<ApiMarketContextResponse>('/api/v1/news/market-context');
+  return {
+    generated_at: response.generated_at,
+    articles: response.articles,
+    sector_sentiment: response.sector_sentiment,
+    overall_market_sentiment: response.overall_market_sentiment,
+    top_event_summary: response.top_event_summary,
+    briefing: response.briefing,
+    actionableTakeaways: response.actionable_takeaways ?? [],
+    summarySource: response.summary_source ?? 'rules',
+  };
 }
 
 export async function generatePortfolioViaApi(
@@ -567,17 +598,69 @@ export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
 
 export type ExplainChatHistoryItem = { role: 'assistant' | 'user'; content: string };
 
-export async function postExplainChat(message: string, history: ExplainChatHistoryItem[]): Promise<{ response: string }> {
+function buildPortfolioContextPayload(portfolio: Portfolio | null) {
+  if (!portfolio) return {};
+  return {
+    total_invested: portfolio.totalInvested,
+    risk_profile: portfolio.riskProfile,
+    mandate: portfolio.mandate ?? null,
+    metrics: {
+      avg_beta: portfolio.metrics.avgBeta,
+      estimated_annual_return: portfolio.metrics.estimatedAnnualReturn,
+      estimated_volatility: portfolio.metrics.estimatedVolatility,
+      sharpe_ratio: portfolio.metrics.sharpeRatio,
+      diversification_score: portfolio.metrics.correlationScore,
+    },
+    allocations: portfolio.allocations.map((allocation) => ({
+      symbol: allocation.stock.symbol,
+      sector: allocation.stock.sector,
+      weight: allocation.weight,
+      drivers: allocation.drivers ?? [],
+      rationale: allocation.rationale ?? '',
+      ml_pred_21d_return: allocation.ml_pred_21d_return ?? null,
+      ml_pred_annual_return: allocation.ml_pred_annual_return ?? null,
+      death_risk: allocation.death_risk ?? null,
+      lstm_signal: allocation.lstm_signal ?? null,
+      news_sentiment: allocation.news_sentiment ?? null,
+      news_impact: allocation.news_impact ?? null,
+    })),
+  };
+}
+
+function buildBacktestContextPayload(backtest: BacktestResult | null) {
+  if (!backtest) return {};
+  return {
+    total_return: backtest.totalReturn,
+    cagr: backtest.cagr,
+    max_drawdown: backtest.maxDrawdown,
+    sharpe: backtest.sharpe,
+    sortino: backtest.sortino,
+    calmar: backtest.calmar,
+    win_rate: backtest.winRate,
+    total_trades: backtest.totalTrades,
+    final_value: backtest.finalValue,
+    initial_investment: backtest.initialInvestment,
+    model_variant: backtest.modelVariant ?? null,
+    model_source: backtest.modelSource ?? null,
+    notes: backtest.notes ?? [],
+  };
+}
+
+export async function postExplainChat(
+  message: string,
+  history: ExplainChatHistoryItem[],
+  groundedContext: Record<string, unknown>,
+): Promise<CopilotChatResponse> {
   const response = await fetch(`${API_BASE_URL}/api/v1/explain/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history }),
+    body: JSON.stringify({ message, history, grounded_context: groundedContext }),
   });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`API ${response.status}: ${body}`);
   }
-  return response.json() as Promise<{ response: string }>;
+  return response.json() as Promise<CopilotChatResponse>;
 }
 
 export async function postExplainPortfolio(portfolio: Portfolio): Promise<{ explanation: string }> {
@@ -598,6 +681,44 @@ export async function postExplainPortfolio(portfolio: Portfolio): Promise<{ expl
       })),
       risk_mode: toApiRiskModeFromMandate(portfolio.mandate as UserMandate | undefined),
       total_amount: portfolio.totalInvested || 500000,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body}`);
+  }
+  return response.json() as Promise<{ explanation: string }>;
+}
+
+export async function postExplainTradeIdea(
+  idea: TradeIdea,
+  portfolio: Portfolio | null,
+): Promise<{ explanation: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/explain/trade-idea`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      idea,
+      portfolio_context: buildPortfolioContextPayload(portfolio),
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body}`);
+  }
+  return response.json() as Promise<{ explanation: string }>;
+}
+
+export async function postExplainBacktest(
+  backtest: BacktestResult,
+  portfolio: Portfolio | null,
+): Promise<{ explanation: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/explain/backtest`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      result: buildBacktestContextPayload(backtest),
+      portfolio_context: buildPortfolioContextPayload(portfolio),
     }),
   });
   if (!response.ok) {

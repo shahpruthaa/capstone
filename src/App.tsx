@@ -2,12 +2,14 @@ import { useState } from "react";
 import { Home, PieChart, Lightbulb, FlaskConical, GitCompare } from "lucide-react";
 import "./index.css";
 import { Portfolio } from "./services/portfolioService";
+import { BacktestResult } from "./services/backtestEngine";
 import { BacktestTab } from "./components/BacktestTab";
 import { CompareTab } from "./components/CompareTab";
 import { AIChat } from "./components/AIChat";
 import { TradeIdeasTab } from "./components/TradeIdeasTab";
 import { MarketTab } from "./components/MarketTab";
 import { PortfolioWorkspace } from "./components/PortfolioWorkspace";
+import { MarketContext, TradeIdea } from "./services/backendApi";
 
 type Tab = "MARKET" | "PORTFOLIO" | "IDEAS" | "BACKTEST" | "COMPARE";
 
@@ -78,6 +80,9 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
 export default function App() {
   const [tab, setTab] = useState<Tab>("MARKET");
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [tradeIdeas, setTradeIdeas] = useState<TradeIdea[]>([]);
+  const [backtestResult, setBacktestResult] = useState<BacktestResult | null>(null);
+  const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
 
   return (
     <div className="app-shell">
@@ -95,15 +100,26 @@ export default function App() {
         </header>
 
         <main className="app-main">
-          {tab === "MARKET" && <MarketTab />}
+          {tab === "MARKET" && <MarketTab initialMarketContext={marketContext} onMarketContextLoaded={setMarketContext} />}
           {tab === "PORTFOLIO" && <PortfolioWorkspace onPortfolioGenerated={setPortfolio} portfolio={portfolio} />}
-          {tab === "IDEAS" && <TradeIdeasTab portfolio={portfolio} />}
-          {tab === "BACKTEST" && <BacktestTab portfolio={portfolio} />}
+          {tab === "IDEAS" && <TradeIdeasTab portfolio={portfolio} ideas={tradeIdeas} onIdeasLoaded={setTradeIdeas} />}
+          {tab === "BACKTEST" && <BacktestTab portfolio={portfolio} initialResult={backtestResult} onBacktestCompleted={setBacktestResult} />}
           {tab === "COMPARE" && <CompareTab />}
         </main>
       </div>
 
-      <AIChat portfolio={portfolio} />
+      <AIChat
+        activeTab={tab}
+        portfolio={portfolio}
+        tradeIdeas={tradeIdeas}
+        backtestResult={backtestResult}
+        marketContext={marketContext}
+        onPortfolioGenerated={setPortfolio}
+        onTradeIdeasLoaded={setTradeIdeas}
+        onBacktestCompleted={setBacktestResult}
+        onMarketContextLoaded={setMarketContext}
+        onNavigate={setTab}
+      />
     </div>
   );
 }

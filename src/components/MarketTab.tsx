@@ -9,13 +9,18 @@ import {
 } from '../services/backendApi';
 import { MetricCard } from './MetricCard';
 
+interface Props {
+    initialMarketContext?: MarketContext | null;
+    onMarketContextLoaded?: (context: MarketContext) => void;
+}
+
 function formatSentiment(value: number): string {
     return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
 }
 
-export function MarketTab() {
+export function MarketTab({ initialMarketContext = null, onMarketContextLoaded }: Props) {
     const [marketData, setMarketData] = useState<MarketDataSummary | null>(null);
-    const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
+    const [marketContext, setMarketContext] = useState<MarketContext | null>(initialMarketContext);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -29,6 +34,7 @@ export function MarketTab() {
             ]);
             setMarketData(summary);
             setMarketContext(context);
+            onMarketContextLoaded?.(context);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Unable to load market context.');
         } finally {
@@ -105,12 +111,24 @@ export function MarketTab() {
                 <div className="lg:col-span-7 card p-5">
                     <div className="flex items-center gap-2 mb-3">
                         <ShieldAlert className="w-4 h-4 text-amber-600" />
-                        <h3 className="font-bold text-slate-900">Top Event</h3>
+                        <h3 className="font-bold text-slate-900">AI Market Briefing</h3>
                     </div>
                     <p className="text-sm text-slate-700 leading-relaxed mb-4">
-                        {marketContext?.top_event_summary ?? 'Loading the top event summary...'}
+                        {marketContext?.briefing ?? 'Loading the market briefing...'}
                     </p>
+                    {(marketContext?.actionableTakeaways ?? []).length > 0 && (
+                        <div className="space-y-2 mb-4">
+                            {marketContext!.actionableTakeaways.map((takeaway, index) => (
+                                <div key={`${takeaway}-${index}`} className="text-xs text-slate-600 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                                    {takeaway}
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     <div className="space-y-2 text-xs text-slate-500">
+                        {marketContext?.summarySource && (
+                            <div>Summary source: {marketContext.summarySource === 'llm' ? 'Groq LLM briefing' : 'rule-based fallback briefing'}</div>
+                        )}
                         {(marketData?.notes ?? []).map((note, index) => (
                             <div key={index}>{note}</div>
                         ))}

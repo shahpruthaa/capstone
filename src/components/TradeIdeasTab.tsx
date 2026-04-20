@@ -1,14 +1,24 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw, ShieldCheck, Target, TrendingUp } from 'lucide-react';
 
-import { TradeIdea, fetchTradeIdeasViaApi } from '../services/backendApi';
+import { TradeIdea, fetchTradeIdeasViaApi, postExplainTradeIdea } from '../services/backendApi';
 import { Portfolio } from '../services/portfolioService';
 
 function formatPct(value: number): string {
     return `${(value * 100).toFixed(1)}%`;
 }
 
-function TradeIdeaCard({ idea }: { idea: TradeIdea }) {
+function TradeIdeaCard({
+    idea,
+    explanation,
+    explaining,
+    onExplain,
+}: {
+    idea: TradeIdea;
+    explanation?: string;
+    explaining: boolean;
+    onExplain: () => void;
+}) {
     const checklistItems = [
         { name: 'Regime aligned', check: idea.checklist.regime_check },
         { name: 'Sector strength', check: idea.checklist.sector_strength },
@@ -98,14 +108,34 @@ function TradeIdeaCard({ idea }: { idea: TradeIdea }) {
                     </div>
                 ))}
             </div>
+
+            <div className="mt-4 pt-4 border-t border-slate-100">
+                <button onClick={onExplain} disabled={explaining} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
+                    <TrendingUp className={`w-3 h-3 ${explaining ? 'spin' : ''}`} />
+                    {explaining ? 'Explaining...' : explanation ? 'Refresh AI Thesis' : 'Explain This Idea'}
+                </button>
+                {explanation && (
+                    <p className="text-sm text-slate-600 leading-relaxed mt-3 whitespace-pre-wrap">{explanation}</p>
+                )}
+            </div>
         </div>
     );
 }
 
-export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
-    const [ideas, setIdeas] = useState<TradeIdea[]>([]);
+export function TradeIdeasTab({
+    portfolio,
+    ideas: initialIdeas = [],
+    onIdeasLoaded,
+}: {
+    portfolio: Portfolio | null;
+    ideas?: TradeIdea[];
+    onIdeasLoaded?: (ideas: TradeIdea[]) => void;
+}) {
+    const [ideas, setIdeas] = useState<TradeIdea[]>(initialIdeas);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [explanations, setExplanations] = useState<Record<string, string>>({});
+    const [explainingSymbol, setExplainingSymbol] = useState<string>('');
 
     const loadIdeas = async () => {
         setLoading(true);
@@ -115,21 +145,44 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
             if (portfolio?.allocations.length) {
                 const symbols = new Set(portfolio.allocations.map(allocation => allocation.stock.symbol));
                 const filtered = response.filter((idea) => symbols.has(idea.symbol));
-                setIdeas(filtered.length > 0 ? filtered : response);
+                const nextIdeas = filtered.length > 0 ? filtered : response;
+                setIdeas(nextIdeas);
+                onIdeasLoaded?.(nextIdeas);
             } else {
                 setIdeas(response);
+                onIdeasLoaded?.(response);
             }
         } catch (err) {
             setIdeas([]);
+            onIdeasLoaded?.([]);
             setError(err instanceof Error ? err.message : 'Unable to load trade ideas right now.');
         } finally {
             setLoading(false);
         }
     };
 
+    const explainIdea = async (idea: TradeIdea) => {
+        setExplainingSymbol(idea.symbol);
+        try {
+            const response = await postExplainTradeIdea(idea, portfolio);
+            setExplanations(current => ({ ...current, [idea.symbol]: response.explanation }));
+        } catch (err) {
+            setExplanations(current => ({
+                ...current,
+                [idea.symbol]: err instanceof Error ? err.message : 'Trade-idea explanation is temporarily unavailable.',
+            }));
+        } finally {
+            setExplainingSymbol('');
+        }
+    };
+
     useEffect(() => {
         void loadIdeas();
     }, [portfolio]);
+
+    useEffect(() => {
+        setIdeas(initialIdeas);
+    }, [initialIdeas]);
 
     return (
         <div className="space-y-5">
@@ -173,7 +226,12 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
             <div className="space-y-4">
                 {ideas.map(idea => (
                     <div key={idea.symbol}>
-                        <TradeIdeaCard idea={idea} />
+                        <TradeIdeaCard
+                            idea={idea}
+                            explanation={explanations[idea.symbol]}
+                            explaining={explainingSymbol === idea.symbol}
+                            onExplain={() => { void explainIdea(idea); }}
+                        />
                     </div>
                 ))}
             </div>
