@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
-import { postExplainChat } from '../services/backendApi';
+import { postExplainChat, type ExplainChatHistoryItem } from '../services/backendApi';
 
 interface Message {
     role: 'user' | 'ai';
@@ -34,7 +34,7 @@ export function AIChat({ portfolio }: AIChatProps) {
         setLoading(true);
 
         try {
-            const history = messages.slice(-6).map(m => ({
+            const history: ExplainChatHistoryItem[] = messages.slice(-6).map(m => ({
                 role: m.role === 'ai' ? 'assistant' : 'user',
                 content: m.text,
             }));

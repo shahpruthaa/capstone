@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    app_name: str = "NSE AI Portfolio Manager API"
+    app_name: str = "NSE Atlas API"
     app_env: str = "development"
     cors_origins: list[str] = [
         "http://localhost:3000",

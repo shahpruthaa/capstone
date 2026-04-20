@@ -1,4 +1,4 @@
-# NSE AI Portfolio Manager Technical Plan
+# NSE Atlas Technical Plan
 
 ## Goal
 

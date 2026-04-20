@@ -65,6 +65,13 @@ export interface AnalysisResult {
   totalValue: number;
   backendNotes?: string[];
   modelVariantApplied?: 'RULES' | 'LIGHTGBM_HYBRID';
+  modelSource?: 'RULES' | 'LIGHTGBM';
+  activeMode?: string;
+  modelVersion?: string;
+  artifactClassification?: string;
+  holdingPeriodDaysRecommended?: number;
+  predictionHorizonDays?: number;
+  holdingPeriodReason?: string;
   mlPredictions?: { [key: string]: number };
   topModelDriversBySymbol?: { [key: string]: string[] };
 }

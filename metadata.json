@@ -1,5 +1,5 @@
 {
-  "name": "NSE AI Portfolio Manager",
-  "description": "An AI-powered portfolio manager for NSE stocks with risk-based diversification, backtesting simulation, and portfolio health analysis.",
+  "name": "NSE Atlas",
+  "description": "Local-first AI portfolio research, backtesting, and trade intelligence for Indian markets.",
   "requestFramePermissions": []
 }

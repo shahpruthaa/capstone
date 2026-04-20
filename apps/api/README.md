@@ -1,6 +1,13 @@
 # API Service
 
-Local FastAPI backend for the NSE AI Portfolio Manager.
+Local FastAPI backend for NSE Atlas.
+
+## Naming Conventions
+
+- Product display name: NSE Atlas
+- Repository slug: nse-ai-portfolio-manager
+- API display name: NSE Atlas API
+- Runtime env key: APP_NAME
 
 This service is the active portfolio engine used by the UI. It serves:
 

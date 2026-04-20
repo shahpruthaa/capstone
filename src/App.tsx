@@ -25,8 +25,8 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
       <div className="sidebar-logo">
         <div className="logo-mark">A</div>
         <div className="logo-text-wrap">
-          <div className="logo-name">AlphaLens</div>
-          <div className="logo-tag">NSE Portfolio Manager</div>
+          <div className="logo-name">NSE Atlas</div>
+          <div className="logo-tag">AI portfolio research for Indian markets</div>
         </div>
       </div>
 

@@ -43,7 +43,21 @@ async function run() {
       await page.locator('input[type="number"]').first().fill('500000');
       await page.getByRole('button', { name: /Balanced/i }).click();
       await page.getByRole('button', { name: /Generate AI Portfolio/i }).click();
-      await page.getByText('Stock Allocation').waitFor({ timeout: 120000 });
+
+      await page.waitForFunction(() => {
+        const hasSuccess = document.querySelectorAll('.data-table tbody tr').length > 0;
+        const bodyText = document.body?.innerText || '';
+        const hasFailure = bodyText.includes('Portfolio generation failed:');
+        return hasSuccess || hasFailure;
+      }, undefined, { timeout: 180000 });
+
+      const generationFailed = await page.getByText(/Portfolio generation failed:/i).isVisible().catch(() => false);
+      if (generationFailed) {
+        const failureText = await textOrEmpty(page.getByText(/Portfolio generation failed:/i).first());
+        throw new Error(`Generate flow failed: ${failureText}`);
+      }
+
+      await page.locator('.data-table tbody tr').first().waitFor({ timeout: 30000 });
       result.generate.green = true;
       result.generate.reason = 'Stock allocation rendered after generation';
       result.details.generateModelRuntime = await textOrEmpty(page.locator('.card').filter({ hasText: 'Model Runtime' }).first());
@@ -69,6 +83,14 @@ async function run() {
 
     try {
       await page.getByRole('button', { name: 'Backtest' }).click();
+
+      await page.waitForFunction(() => {
+        const runButton = Array.from(document.querySelectorAll('button')).find((button) =>
+          /Run Backtest/i.test(button.textContent || '')
+        );
+        return !!runButton && !runButton.hasAttribute('disabled');
+      }, undefined, { timeout: 120000 });
+
       await page.getByRole('button', { name: /Run Backtest/i }).click();
       await page.getByText('Model Runtime').waitFor({ timeout: 180000 });
       await page.getByText('Total Return').waitFor({ timeout: 180000 });
@@ -84,6 +106,12 @@ async function run() {
     try {
       await page.getByRole('button', { name: 'Compare' }).click();
       await page.getByText('Industry Benchmark Comparison').waitFor({ timeout: 120000 });
+      await page.waitForFunction(() => {
+        const hasCards = document.querySelectorAll('.card p.font-bold.text-sm.text-slate-900').length > 0;
+        const bodyText = document.body?.innerText || '';
+        const hasNotice = bodyText.includes('Benchmark comparison failed') || bodyText.includes('Benchmark comparison is syncing:');
+        return hasCards || hasNotice;
+      }, undefined, { timeout: 120000 });
       const strategyCards = page.locator('.card p.font-bold.text-sm.text-slate-900');
       const compareCardCount = await strategyCards.count();
       if (compareCardCount > 0) {
@@ -109,7 +137,7 @@ async function run() {
           const t = (el.textContent || '').trim();
           return t.length > 40 && !t.includes("Hi! I'm your NSE AI Portfolio Assistant");
         });
-      }, { timeout: 120000 });
+      }, undefined, { timeout: 120000 });
       result.aiChat.green = true;
       result.aiChat.reason = 'Received non-greeting assistant reply';
     } catch (error) {

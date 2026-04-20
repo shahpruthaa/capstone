@@ -2,6 +2,17 @@
   "name": "nse-ai-portfolio-manager",
   "private": true,
   "version": "0.0.0",
+  "description": "NSE Atlas frontend: local-first AI portfolio research, backtesting, and trade intelligence for Indian markets.",
+  "displayName": "NSE Atlas",
+  "license": "UNLICENSED",
+  "keywords": [
+    "nse",
+    "india",
+    "portfolio",
+    "backtesting",
+    "ai",
+    "quant"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",

@@ -10,7 +10,7 @@ from app.services.local_bootstrap import bootstrap_local_state
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="Local-first research backend for the NSE AI Portfolio Manager, including rule-based allocation, historical replay, and LightGBM hybrid inference.",
+    description="Local-first AI portfolio research, backtesting, and trade intelligence for Indian markets.",
 )
 
 app.add_middleware(

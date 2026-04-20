@@ -1,4 +1,4 @@
-# NSE AI Portfolio Manager - Proof Notes
+# NSE Atlas - Proof Notes
 Updated: 2026-04-20
 
 Scope

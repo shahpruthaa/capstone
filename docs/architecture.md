@@ -1,4 +1,4 @@
-# NSE AI Portfolio Manager Architecture
+# NSE Atlas Architecture
 
 ## Objective
 

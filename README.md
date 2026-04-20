@@ -1,4 +1,32 @@
-# NSE AI Portfolio Manager
+# NSE Atlas
+
+Local-first AI portfolio research, backtesting, and trade intelligence for Indian markets.
+
+![Product](https://img.shields.io/badge/Product-NSE%20Atlas-0b7285)
+![Repository Slug](https://img.shields.io/badge/Repository%20Slug-nse--ai--portfolio--manager-495057)
+![Frontend Package](https://img.shields.io/badge/Frontend%20Package-nse--ai--portfolio--manager-343a40)
+![API Display Name](https://img.shields.io/badge/API%20Display%20Name-NSE%20Atlas%20API-2b8a3e)
+
+## Naming Conventions
+
+Use these identifiers consistently in release notes, badges, and docs:
+
+| Scope                 | Canonical Value                                                                            | Usage                                         |
+| --------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| Product display name  | NSE Atlas                                                                                  | UI labels, headings, release titles           |
+| Product subtitle      | Local-first AI portfolio research, backtesting, and trade intelligence for Indian markets. | Hero text, product summary                    |
+| Repository slug       | nse-ai-portfolio-manager                                                                   | Git remote/repo path, CI references           |
+| Frontend package name | nse-ai-portfolio-manager                                                                   | `package.json` name and lockfile root package |
+| API display name      | NSE Atlas API                                                                              | FastAPI title and environment app name        |
+
+## Release Checklist
+
+- [ ] Product display name is `NSE Atlas` across README headings, release notes, and app UI labels.
+- [ ] Product subtitle is exactly `Local-first AI portfolio research, backtesting, and trade intelligence for Indian markets.` in release-facing docs.
+- [ ] Repository slug remains `nse-ai-portfolio-manager` in repository path references and CI workflow/config docs.
+- [ ] Frontend package name remains `nse-ai-portfolio-manager` in `package.json` and `package-lock.json` root package metadata.
+- [ ] API display name is `NSE Atlas API` in `apps/api/app/core/config.py`, `apps/api/.env.example`, and `docker-compose.yml`.
+- [ ] README badges and the Naming Conventions table are updated if any canonical value changes.
 
 Current snapshot: the checked-out merge commit `6f36924ad85bbca4fa2cf6284a71a5404f832482`, which combines the documentation refactor baseline with the LIGHTGBM_HYBRID generate-path ML injection update in `db_quant_engine.py`.
 

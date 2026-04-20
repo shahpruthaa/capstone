@@ -225,8 +225,56 @@ interface ApiBenchmarkResponse {
     max_drawdown_pct: number;
     cagr_5y_pct: number;
     expense_ratio_pct: number;
+    source_type?: 'LOCAL_PROXY' | 'THIRD_PARTY';
+    source_provider?: string;
+    relative_accuracy_score_pct?: number;
   }[];
   projected_growth: { year: number; values: Record<string, number> }[];
+  notes?: string[];
+}
+
+interface ApiObservabilityKpiResponse {
+  generated_at: string;
+  phase_gates: {
+    phase_0_data_contracts: boolean;
+    phase_1_benchmark_fidelity: boolean;
+    phase_2_test_harness: boolean;
+    phase_3_engineering_health: boolean;
+    phase_4_stable_baseline: boolean;
+  };
+  reliability: {
+    generate_latency_ms_p95?: number | null;
+    generate_error_rate_pct?: number | null;
+    benchmark_latency_ms_p95?: number | null;
+    benchmark_error_rate_pct?: number | null;
+    sample_window: string;
+    sample_size: number;
+    measurement_method: string;
+    notes?: string[];
+  };
+  quality: {
+    news_impact_precision_proxy_pct?: number | null;
+    benchmark_tracking_error_proxy_pct?: number | null;
+    sample_window: string;
+    measurement_method: string;
+    notes?: string[];
+  };
+  ml_robustness: {
+    out_of_sample_stability_pct?: number | null;
+    fallback_rate_pct?: number | null;
+    fallback_rate_by_cause: Record<string, number>;
+    sample_window: string;
+    measurement_method: string;
+    notes?: string[];
+  };
+  engineering_health: {
+    pr_pass_rate_pct?: number | null;
+    flaky_test_rate_pct?: number | null;
+    mean_time_to_detect_regressions_minutes?: number | null;
+    sample_window: string;
+    measurement_method: string;
+    notes?: string[];
+  };
   notes?: string[];
 }
 
@@ -269,11 +317,32 @@ interface ApiMarketContextResponse {
   top_event_summary: string;
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
-    ...init,
-  });
+type FetchJsonInit = RequestInit & { timeoutMs?: number };
+
+function isRequestTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /timeout/i.test(error.message);
+}
+
+async function fetchJson<T>(path: string, init?: FetchJsonInit): Promise<T> {
+  const { timeoutMs = 60000, ...requestInit } = init ?? {};
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(requestInit.headers || {}) },
+      ...requestInit,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if ((error instanceof DOMException && error.name === 'AbortError') || controller.signal.aborted) {
+      throw new Error(`Request timeout after ${timeoutMs}ms for ${path}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 
   if (!response.ok) {
     const body = await response.text();
@@ -321,14 +390,35 @@ export async function generatePortfolioViaApi(
   mandate: UserMandate,
   modelVariant: ModelVariant = 'LIGHTGBM_HYBRID',
 ): Promise<Portfolio> {
-  const response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
-    method: 'POST',
-    body: JSON.stringify({
-      capital_amount: capitalAmount,
-      mandate,
-      model_variant: modelVariant,
-    }),
-  });
+  const localNotes: string[] = [];
+  let response: ApiGeneratePortfolioResponse;
+
+  try {
+    response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
+      method: 'POST',
+      timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 45000 : 60000,
+      body: JSON.stringify({
+        capital_amount: capitalAmount,
+        mandate,
+        model_variant: modelVariant,
+      }),
+    });
+  } catch (error) {
+    if (modelVariant !== 'LIGHTGBM_HYBRID' || !isRequestTimeoutError(error)) {
+      throw error;
+    }
+
+    localNotes.push('LightGBM hybrid request timed out; automatically retried with rule-based allocator for responsiveness.');
+    response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
+      method: 'POST',
+      timeoutMs: 60000,
+      body: JSON.stringify({
+        capital_amount: capitalAmount,
+        mandate,
+        model_variant: 'RULES' as ModelVariant,
+      }),
+    });
+  }
 
   const allocations = response.allocations
     .map((allocation) => {
@@ -364,7 +454,7 @@ export async function generatePortfolioViaApi(
     totalInvested,
     riskProfile: fromRiskAttitude(response.mandate.risk_attitude),
     mandate: response.mandate,
-    backendNotes: response.notes ?? [],
+    backendNotes: [...localNotes, ...(response.notes ?? [])],
     modelVariant: response.model_variant,
     modelSource: response.model_source,
     modelVersion: response.model_version,
@@ -507,7 +597,9 @@ export async function runBacktestViaApi(
 }
 
 export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> {
-  const response = await fetchJson<ApiBenchmarkResponse>('/api/v1/benchmarks/summary');
+  const response = await fetchJson<ApiBenchmarkResponse>('/api/v1/benchmarks/summary', {
+    timeoutMs: 120000,
+  });
   const strategies: BenchmarkStrategy[] = response.strategies.map((strategy) => ({
     name: strategy.name,
     description: strategy.description,
@@ -524,6 +616,9 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
     cagr5Y: strategy.cagr_5y_pct,
     expenseRatio: strategy.expense_ratio_pct,
     type: strategy.category,
+    sourceType: strategy.source_type,
+    sourceProvider: strategy.source_provider,
+    relativeAccuracyScorePct: strategy.relative_accuracy_score_pct,
   }));
 
   const projectedGrowth = response.projected_growth.map((row) => ({
@@ -533,6 +628,12 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
 
   const winner = strategies.reduce((best, current) => (current.sharpe > best.sharpe ? current : best)).name;
   return { strategies, projectedGrowth, winner, notes: response.notes ?? [] };
+}
+
+export async function getObservabilityKpisViaApi(): Promise<ApiObservabilityKpiResponse> {
+  return fetchJson<ApiObservabilityKpiResponse>('/api/v1/observability/kpis', {
+    timeoutMs: 120000,
+  });
 }
 
 export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus> {
