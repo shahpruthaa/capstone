@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.ml.lightgbm_alpha.technical_indicators import compute_technical_features
+
 
 def _safe_mean(values: list[float]) -> float:
     if not values:
@@ -189,6 +191,16 @@ def compute_snapshot_features(snapshot: Any) -> dict[str, float | int]:
     factor_scores = getattr(snapshot, "factor_scores", {}) or {}
     for k in ("momentum", "quality", "low_vol", "liquidity", "sector_strength", "size", "beta"):
         features[f"factor_{k}"] = float(factor_scores.get(k, 0.0))
+
+
+    # Technical indicators (RSI, MACD, EMA, Bollinger, ATR, ADX, candlestick patterns)
+    opens_list = [float(v) for _, v in adj_opens] if isinstance(adj_opens, list) and adj_opens else []
+    highs_list = [float(v) for _, v in adj_highs] if isinstance(adj_highs, list) and adj_highs else []
+    lows_list = [float(v) for _, v in adj_lows] if isinstance(adj_lows, list) and adj_lows else []
+    closes_list = [float(v) for _, v in adjusted_closes] if adjusted_closes else []
+    if closes_list:
+        tech = compute_technical_features(opens_list, highs_list, lows_list, closes_list)
+        features.update(tech)
 
     return features
 

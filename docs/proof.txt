@@ -1,0 +1,262 @@
+# NSE AI Portfolio Manager - Proof Notes
+Updated: 2026-04-20
+
+Scope
+- This document records the current assumptions used by the checked-out snapshot and ties each one to code or validation evidence in this directory.
+- The current checked-out snapshot for this proof is `6f36924ad85bbca4fa2cf6284a71a5404f832482`.
+- The citations below explain why the current methods and constants were chosen. They do not claim live-market superiority.
+
+## 1) Risk-aware portfolio construction
+
+Assumption
+- Portfolio generation should optimize for risk-adjusted return instead of raw return alone.
+
+Why this method is chosen
+- The app centers on return, drawdown, Sharpe/Sortino-style metrics, and mandate-driven allocation in Generate and Backtest.
+- The backend is structured around constrained portfolio construction and replay rather than execution routing.
+
+Why the specific values are used
+- The current branch keeps explicit risk-mode universe lists and target sector weights so the demo remains deterministic and inspectable.
+- Those values are control parameters for the allocator, not arbitrary UI labels.
+
+Evidence in the directory
+- The portfolio orchestration lives in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L55) and is invoked by the portfolio/backtest routes.
+- The current UI flow for generation and replay is wired in [src/App.tsx](src/App.tsx) and the portfolio/backtest components.
+
+Research citations
+- Markowitz, H. (1952). *Portfolio Selection*. Journal of Finance, 7(1), 77-91. Foundational mean-variance framework for risk-adjusted portfolio construction.
+- Ledoit, O., & Wolf, M. (2004). *A Well-Conditioned Estimator for Large-Dimensional Covariance Matrices*. Journal of Multivariate Analysis, 88(2), 365-411. Supports stable covariance estimation for constrained allocation.
+- Zhang, Z., Zohren, S., & Roberts, S. (2021). *Deep Learning for Portfolio Optimization*. arXiv:2005.13665. Supports friction-aware and risk-aware portfolio construction with modern ML signals.
+
+## 2) Multi-signal runtime behavior
+
+Assumption
+- A multi-signal path is preferable to a single-signal path when local artifacts are available.
+
+Why this method is chosen
+- The runtime distinguishes between `full_ensemble`, `degraded_ensemble`, and `rules_only` instead of pretending every artifact is always present.
+- This keeps the demo honest: core functionality continues when optional models are missing.
+
+Why the specific values are used
+- The manifest defaults use component weights of `0.50` for LightGBM, `0.25` for LSTM, `0.15` for GNN, and a `1.5` death-risk penalty.
+- Those numbers are a pragmatic heuristic: LightGBM is the core signal, sequence/graph models are supplemental, and death risk is a negative adjustment rather than a positive alpha source.
+
+Evidence in the directory
+- [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py) computes component readiness, runtime mode, and fallback notes at startup and on demand.
+- [apps/api/app/services/ensemble_scorer.py](apps/api/app/services/ensemble_scorer.py) combines LightGBM, LSTM, GNN, and death-risk into a single score path.
+
+Research citations
+- Dietterich, T. G. (2000). *Ensemble Methods in Machine Learning*. Multiple Classifier Systems. Supports combining multiple weak/heterogeneous predictors for stronger and more robust performance.
+- Zhou, Z.-H. (2012). *Ensemble Methods: Foundations and Algorithms*. CRC Press. Supports weighted multi-model aggregation when component strengths differ.
+
+## 3) Realistic backtest frictions
+
+Assumption
+- Backtests should include taxes, brokerage, stamp duty, GST, and slippage instead of only raw price returns.
+
+Why this method is chosen
+- The app is meant to show an honest Indian-market research experience.
+- Friction-aware backtests prevent the UI from overstating performance.
+
+Why the specific values are used
+- The friction and tax values are not invented in the UI; they come from the market-rule schedule and are wired into the historical replay path.
+- The exact windows and cost assumptions are deterministic so the same input produces the same replay outcome.
+
+Evidence in the directory
+- `db_quant_engine.py` is the backtest orchestrator and uses fee and tax schedules from the market-rule services.
+- The Backtest UI surfaces tax liability, transaction costs, and equity-curve comparison.
+
+Research citations
+- Novy-Marx, R., & Velikov, M. (2016). *A Taxonomy of Anomalies and Their Trading Costs*. Review of Financial Studies, 29(1), 104-147. Shows that implementation frictions materially affect realizable returns.
+- Bailey, D. H., Borwein, J. M., Lopez de Prado, M., & Zhu, Q. J. (2014). *The Probability of Backtest Overfitting*. Journal of Computational Finance, 20(4), 39-69. Supports conservative, friction-aware backtest design.
+
+## 4) Proxy benchmarks for local demo research
+
+Assumption
+- Proxy benchmarks are acceptable when official historical constituent reconstruction is not fully available.
+
+Why this method is chosen
+- The Compare tab needs a reproducible local benchmark view for the demo.
+- The branch favors labeled proxy benchmarks rather than silent approximation.
+
+Why the specific values are used
+- The chosen benchmark set balances usefulness and simplicity: an AI strategy row, an index proxy row, factor-style rows, and an AMC-style blended row.
+- This gives the user a compact comparison surface without pretending to be a licensed benchmark feed.
+
+Evidence in the directory
+- `BENCHMARK_UNIVERSES` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L67) defines the comparison set used by the backend.
+- The Compare tab uses the backend benchmark summary and shows proxy metadata and limitations.
+
+Research citations
+- Roll, R. (1992). *A Mean/Variance Analysis of Tracking Error*. Journal of Portfolio Management, 18(4), 13-22. Supports evaluating benchmark proxies using tracking-error framing.
+- Beasley, J. E., Meade, N., & Chang, T.-J. (2003). *An Evolutionary Heuristic for the Index Tracking Problem*. European Journal of Operational Research, 148(3), 621-643. Supports practical proxy/replication approaches when full benchmark reconstruction is constrained.
+
+## 5) Groq as a secondary explanation layer
+
+Assumption
+- Explanation and chat are useful, but they must remain secondary to the quant path.
+
+Why this method is chosen
+- The quant workflow must keep functioning when Groq is unavailable.
+- Groq therefore lives behind explanation/chat routes rather than in the portfolio math path.
+
+Why the specific values are used
+- The Groq API key is optional in the runtime configuration, and the UI presents Groq as a capability rather than a requirement.
+- That choice avoids coupling core demo availability to a single external key or network dependency.
+
+Evidence in the directory
+- `app/api/router.py` keeps `explain.py` separate from the core quant routes.
+- The AI chat widget in the frontend is connected through the shared backend adapter, not by ad hoc browser-side fetches.
+
+Research citations
+- Bender, E. M., Gebru, T., McMillan-Major, A., & Shmitchell, S. (2021). *On the Dangers of Stochastic Parrots: Can Language Models Be Too Big?* FAccT '21. Supports keeping LLM output as an assistive layer rather than a primary decision engine.
+- Ji, Z., Lee, N., Frieske, R., et al. (2023). *Survey of Hallucination in Natural Language Generation*. ACM Computing Surveys, 55(12). Supports explicit guardrails and non-critical placement of generative chat features.
+
+## 6) Explicit fallback modes
+
+Assumption
+- It is better to show the current runtime state explicitly than to fail silently.
+
+Why this method is chosen
+- The UI can report whether the system is running as `full_ensemble`, `degraded_ensemble`, or `rules_only`.
+- This avoids misleading the user about what model path is actually active.
+
+Why the specific values are used
+- The runtime modes are intentionally coarse and legible: they capture whether the core LightGBM path is present and whether the non-core signals are available.
+
+Evidence in the directory
+- `GET /api/v1/models/current` is the source of truth for readiness.
+- The UI fetches that runtime status and shows it in the generation/backtest surfaces.
+
+Research citations
+- Avizienis, A., Laprie, J.-C., Randell, B., & Landwehr, C. (2004). *Basic Concepts and Taxonomy of Dependable and Secure Computing*. IEEE TDSC, 1(1), 11-33. Supports explicit fault/degradation state modeling.
+- Vogels, W. (2009). *Eventually Consistent*. Communications of the ACM, 52(1), 40-44. Supports transparent trade-offs and degraded operation in distributed systems.
+
+## 7) Local development CORS scope
+
+Assumption
+- Local browser origins need to be accepted across the common Vite/dev/preview ports used in this directory.
+
+Why this method is chosen
+- The repository is used in both Docker and host-based local runs.
+- The smoke workflow targets `127.0.0.1:3001`, while the default Vite/dev setup commonly uses `3000`, `4173`, or `5173`.
+
+Why the specific values are used
+- The ports are chosen to cover the actual local developer flow and the smoke-test runner, not an abstract list of allowed ports.
+- This is a compatibility choice so browser fetches do not fail during local demo work.
+
+Evidence in the directory
+- The backend config explicitly lists those localhost origins.
+- The CORS regex also matches any localhost or 127.0.0.1 port used during local testing.
+
+Research citations
+- Barth, A., Jackson, C., & Mitchell, J. C. (2008). *Robust Defenses for Cross-Site Request Forgery*. ACM CCS. Supports strict origin-aware browser security boundaries and explicit cross-origin policy handling.
+- Akhawe, D., Barth, A., Lam, P. E., Mitchell, J. C., & Song, D. (2010). *Towards a Formal Foundation of Web Security*. IEEE CSF. Supports conservative origin and policy design for web-facing systems.
+
+## 8) API/UI contract parity
+
+Assumption
+- A single typed frontend adapter should mirror the backend route contract to avoid drift between tabs.
+
+Why this method is chosen
+- The UI tabs share one backend API layer instead of each calling fetch independently.
+- This keeps request shapes, response shapes, and fallback handling aligned.
+
+Why the specific values are used
+- The current tab set and route set are small enough that one adapter is simpler and more reliable than multiple divergent request implementations.
+
+Evidence in the directory
+- `backendApi.ts` maps the backend DTOs into frontend models used by Generate, Analyze, Backtest, Compare, and AI Chat.
+- The current smoke validation confirms those tabs all work against the same backend contract.
+
+Research citations
+- Maleshkova, M., Pedrinaci, C., & Domingue, J. (2010). *Investigating Web APIs on the World Wide Web*. ESWC. Supports explicit API contract design and consistency across consumers.
+- Espinha, T., Zaidman, A., & Gross, H.-G. (2014). *Web API Growing Pains: Stories from Client Developers and Their Code*. CSMR-WCRE. Supports central adapter patterns to reduce client breakage from contract drift.
+
+## 9) UI smoke automation
+
+Assumption
+- A small smoke runner is worth keeping in the repo for current-state validation.
+
+Why this method is chosen
+- It catches browser/runtime regressions that compile checks do not.
+- It validates the exact current checkout, which matters for a local demo stack that depends on runtime services.
+
+Why the specific values are used
+- The smoke test intentionally uses the current local browser origin and current frontend port rather than a theoretical default.
+
+Evidence in the directory
+- The smoke runner and screenshots live under `scripts/` and `tmp/ui-smoke/`.
+- The final smoke run in this snapshot marked Generate, Analyze, Backtest, Compare, and AI Chat as green.
+
+Research citations
+- Rothermel, G., & Harrold, M. J. (1997). *A Safe, Efficient Regression Test Selection Technique*. ACM TOSEM, 6(2), 173-210. Supports lightweight recurring regression checks.
+- Yoo, S., & Harman, M. (2012). *Regression Testing Minimization, Selection and Prioritization: A Survey*. Software Testing, Verification and Reliability, 22(2), 67-120. Supports small targeted smoke suites for fast confidence.
+
+## 10) Value-by-value rationale
+
+This section explains the main assumed constants that appear in the current directory.
+
+### Backtest defaults
+
+- `startDate: '2025-01-01'` and `endDate: '2025-12-31'` in [src/components/BacktestTab.tsx](src/components/BacktestTab.tsx#L15) are a full-year default window so the demo has enough history to show regime changes, drawdowns, and recovery without forcing the user to configure dates first.
+- `stopLossPct: 0.15` in [src/components/BacktestTab.tsx](src/components/BacktestTab.tsx#L17) means a 15% stop-loss. This is high enough to avoid exiting on ordinary day-to-day noise, but low enough to cut a position before a larger trend failure becomes unrecoverable in a demo backtest.
+- `takeProfitPct: 0.40` in [src/components/BacktestTab.tsx](src/components/BacktestTab.tsx#L18) means a 40% profit target. The value is intentionally wider than the stop so the replay can let strong momentum names run while still showing a disciplined exit rule.
+- `rebalanceFreq: 'Quarterly'` in [src/components/BacktestTab.tsx](src/components/BacktestTab.tsx#L19) balances turnover against responsiveness. Monthly would make the demo noisier and more cost-heavy; annual would be too stale for a research UI.
+
+### Generate / mandate defaults
+
+- `investment_horizon_weeks: '4-8'` in [src/components/GenerateTab.tsx](src/components/GenerateTab.tsx#L59) is a mid-term horizon that matches a retail research workflow without pretending to be intraday or multi-year pension logic.
+- `max_portfolio_drawdown_pct: 12` in [src/components/GenerateTab.tsx](src/components/GenerateTab.tsx#L60) is a moderate tolerance that fits the `balanced` default and keeps the allocator from chasing high-volatility names too aggressively.
+- `max_position_size_pct: 12.5` in [src/components/GenerateTab.tsx](src/components/GenerateTab.tsx#L61) keeps single-name concentration under control while still allowing a small set of high-conviction holdings to matter.
+- `preferred_num_positions: 10` in [src/components/GenerateTab.tsx](src/components/GenerateTab.tsx#L62) is a practical compromise between diversification and readability. Fewer names would over-concentrate the book; many more would make the demo noisy and dilute the model signal.
+- `risk_attitude: 'balanced'` in [src/components/GenerateTab.tsx](src/components/GenerateTab.tsx#L66) is the safest default for a demo because it is neither overly conservative nor overly aggressive.
+
+### Runtime and ensemble defaults
+
+- `component_weights: { lightgbm: 0.50, lstm: 0.25, gnn: 0.15 }` in [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py#L73) gives the strongest weight to the tabular model because it is the most direct and inspectable local signal, while the sequence/graph models act as supplements.
+- `death_risk_penalty: 1.5` in [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py#L74) makes the crash-risk term a meaningful negative adjustment without fully overwhelming the expected-return model.
+- `prediction_horizon_days: 21` in [apps/api/app/services/model_runtime.py](apps/api/app/services/model_runtime.py#L80) aligns with a roughly one-month trading horizon and is consistent across the component metadata and frontend displays.
+- In `LIGHTGBM_HYBRID` generation, selected names are stamped with `expected_return_source = LIGHTGBM`, `model_version = lightgbm_v1`, and `prediction_horizon_days = 21` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py). This keeps attribution explicit by showing when ML values are actually used in generated outputs.
+
+### Portfolio engine defaults
+
+- `RISK_MODE_UNIVERSES` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L55) is intentionally small and curated so the demo stays reproducible and the allocator has a known liquid universe to work with.
+- `candidate_count: 10` for `ULTRA_LOW` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L134) keeps the ultra-conservative portfolio sparse and cash-like.
+- `candidate_count: 12` for `MODERATE` and `HIGH` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L135) gives enough breadth to diversify while keeping the UI manageable.
+- `max_weight: 0.35`, `0.16`, and `0.12` for the three risk modes in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L134) through [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L136) progressively tighten concentration as the mandate becomes more aggressive or more conservative.
+- `sector_cap: 0.42`, `0.28`, and `0.24` in the same block prevent any single sector from dominating the portfolio, which is especially important in a small demo universe.
+- `risk_aversion: 18.0`, `8.5`, and `4.25` reflect a deliberately stepped preference curve: very defensive, balanced, and growth-oriented mandates should not rank candidates the same way.
+- `shrinkage: 0.55`, `0.40`, and `0.30` keep covariance estimation stable on limited local history. More defensive modes use heavier shrinkage because they should prefer robustness over sensitivity.
+- `turnover_penalty: 0.10`, `0.06`, and `0.04` limit needless churn. Lower penalty values are allowed in higher-risk modes because those mandates tolerate more activity.
+- `drift_threshold: 0.06`, `0.04`, and `0.03` define when a rebalance is worth acting on. The threshold is looser for ultra-low turnover portfolios and tighter for more active ones.
+- `min_trade_weight: 0.03`, `0.025`, and `0.02` avoid tiny, mostly cosmetic trades that would clutter the replay with noise.
+- `cooldown_days: 5`, `7`, and `10` slow repeated churn after a rebalance so the demo looks like a managed portfolio instead of a hyperactive trading bot.
+
+### Benchmark defaults
+
+- `BENCHMARK_UNIVERSES` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L67) uses a small set of labeled research proxies because the branch does not yet reconstruct licensed benchmark constituents.
+- The factor portfolios use `count=12` and the AMC-style sleeve uses `count=15` in [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L739) through [apps/api/app/services/db_quant_engine.py](apps/api/app/services/db_quant_engine.py#L741) so the benchmark views stay diversified but not overly crowded.
+- The benchmark sector caps of `0.25` and `0.22` in the same lines keep the proxy comparisons from collapsing into one sector even when a factor score is concentrated.
+
+### Local dev CORS defaults
+
+- `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:3001`, `http://127.0.0.1:3001`, `http://localhost:4173`, `http://127.0.0.1:4173`, `http://localhost:5173`, and `http://127.0.0.1:5173` in [apps/api/app/core/config.py](apps/api/app/core/config.py#L6) through [apps/api/app/core/config.py](apps/api/app/core/config.py#L14) cover the common local and smoke-test frontends used in this repository.
+- `cors_origin_regex` in [apps/api/app/core/config.py](apps/api/app/core/config.py#L16) is there so future localhost ports still work without requiring a code change for every new dev port.
+
+### Why these values are not arbitrary
+
+- They trade off realism, determinism, and demo usability.
+- They were chosen to keep the system explainable in a local directory snapshot, not to maximize a hidden live-market benchmark.
+- Where a value is a heuristic, the code and UI expose it as a heuristic instead of pretending it is a proven constant.
+
+Current proof from this directory snapshot
+- `GET /healthz` returned `200`.
+- `GET /api/v1/models/current` returned runtime metadata successfully.
+- `OPTIONS` preflight from `http://127.0.0.1:3001` returned `200` with the expected `Access-Control-Allow-Origin` header.
+- The final smoke pass marked Generate, Analyze, Backtest, Compare, and AI Chat as green.
+
+Implementation caveats
+- These proofs support the current design and chosen constants, but they do not claim live-market outperformance.
+- Proxy benchmarks remain a research/demo compromise.
+- Artifact quality still depends on what is available locally in `apps/api/artifacts/models/`.

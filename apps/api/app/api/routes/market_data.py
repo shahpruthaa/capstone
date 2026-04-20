@@ -3,9 +3,20 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.ingestion.fundamentals import ingest_fundamental_snapshots
+from app.ingestion.institutional_flows import ingest_institutional_flows
+from app.ingestion.market_regime import ingest_market_regime_range
 from app.ingestion.nse_bhavcopy import ingest_nse_bhavcopy_range
+from app.ingestion.nse_options import ingest_options_snapshot
 from app.models.daily_bar import DailyBar
 from app.models.instrument import Instrument
+from app.schemas.ingestion import (
+    IngestionJobResponse,
+    IngestFundamentalsRequest,
+    IngestInstitutionalFlowsRequest,
+    IngestMarketRegimeRequest,
+    IngestOptionsRequest,
+)
 from app.schemas.portfolio import IngestBhavcopyRequest, IngestBhavcopyResponse, MarketDataSummaryResponse
 
 
@@ -60,3 +71,61 @@ def ingest_nse_bhavcopy_endpoint(
         records_updated=summary.records_updated,
         notes=summary.notes,
     )
+
+
+@router.post("/ingestions/options", response_model=IngestionJobResponse)
+def ingest_options_endpoint(
+    payload: IngestOptionsRequest,
+    db: Session = Depends(get_db),
+) -> IngestionJobResponse:
+    summary = ingest_options_snapshot(
+        db=db,
+        symbol=payload.symbol,
+        snapshot_date=payload.snapshot_date,
+        expiry_date=payload.expiry_date,
+        source_file=payload.source_file,
+        dry_run=payload.dry_run,
+    )
+    return IngestionJobResponse(**summary.__dict__)
+
+
+@router.post("/ingestions/institutional-flows", response_model=IngestionJobResponse)
+def ingest_institutional_flows_endpoint(
+    payload: IngestInstitutionalFlowsRequest,
+    db: Session = Depends(get_db),
+) -> IngestionJobResponse:
+    summary = ingest_institutional_flows(
+        db=db,
+        flow_date=payload.flow_date,
+        source_file=payload.source_file,
+        dry_run=payload.dry_run,
+    )
+    return IngestionJobResponse(**summary.__dict__)
+
+
+@router.post("/ingestions/fundamentals", response_model=IngestionJobResponse)
+def ingest_fundamentals_endpoint(
+    payload: IngestFundamentalsRequest,
+    db: Session = Depends(get_db),
+) -> IngestionJobResponse:
+    summary = ingest_fundamental_snapshots(
+        db=db,
+        quarter_end=payload.quarter_end,
+        source_file=payload.source_file,
+        dry_run=payload.dry_run,
+    )
+    return IngestionJobResponse(**summary.__dict__)
+
+
+@router.post("/ingestions/market-regime", response_model=IngestionJobResponse)
+def ingest_market_regime_endpoint(
+    payload: IngestMarketRegimeRequest,
+    db: Session = Depends(get_db),
+) -> IngestionJobResponse:
+    summary = ingest_market_regime_range(
+        db=db,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        dry_run=payload.dry_run,
+    )
+    return IngestionJobResponse(**summary.__dict__)

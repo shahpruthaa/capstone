@@ -7,11 +7,53 @@ import {
   RiskProfile,
 } from './portfolioService';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+export const API_BASE_URL = viteEnv?.VITE_API_BASE_URL || 'http://localhost:8000';
 const ALL_STOCKS = [...NSE_STOCKS, ...LIQUID_ASSETS];
 
 type ApiRiskMode = 'ULTRA_LOW' | 'MODERATE' | 'HIGH';
 export type ModelVariant = 'RULES' | 'LIGHTGBM_HYBRID';
+export type RiskAttitude = 'capital_preservation' | 'balanced' | 'growth';
+export type InvestmentHorizon = '2-4' | '4-8' | '8-24';
+
+export interface UserMandate {
+  investment_horizon_weeks: InvestmentHorizon;
+  max_portfolio_drawdown_pct: number;
+  max_position_size_pct: number;
+  preferred_num_positions: number;
+  sector_inclusions: string[];
+  sector_exclusions: string[];
+  allow_small_caps: boolean;
+  risk_attitude: RiskAttitude;
+}
+
+export interface MandateQuestionnaire {
+  investment_horizon_weeks_options: InvestmentHorizon[];
+  risk_attitude_options: RiskAttitude[];
+  sector_codes: string[];
+  defaults: UserMandate;
+}
+
+export interface MarketNewsArticle {
+  headline: string;
+  summary: string;
+  source: string;
+  published_at: string;
+  involved_regions: string[];
+  affected_sectors: string[];
+  sentiment_score: number;
+  impact_score: number;
+  explanation: string;
+  url?: string | null;
+}
+
+export interface MarketContext {
+  generated_at: string;
+  articles: MarketNewsArticle[];
+  sector_sentiment: Record<string, number>;
+  overall_market_sentiment: number;
+  top_event_summary: string;
+}
 
 export interface CurrentModelStatus {
   available: boolean;
@@ -37,14 +79,71 @@ export interface MarketDataSummary {
   notes: string[];
 }
 
+export interface TradeIdeaCheck {
+  passed: boolean;
+  score: number;
+  reason: string;
+}
+
+export interface TradeIdeaChecklist {
+  regime_check: TradeIdeaCheck;
+  sector_strength: TradeIdeaCheck;
+  relative_strength: TradeIdeaCheck;
+  technical_setup: TradeIdeaCheck;
+  options_positioning: TradeIdeaCheck;
+  fii_dii_flow: TradeIdeaCheck;
+  fundamental_health: TradeIdeaCheck;
+  news_catalyst: TradeIdeaCheck;
+  entry_stop_target: TradeIdeaCheck;
+  position_sizing: TradeIdeaCheck;
+}
+
+export interface TradeIdea {
+  symbol: string;
+  sector: string;
+  timestamp: string;
+  as_of_date: string;
+  ensemble_score: number;
+  expected_return_annual: number;
+  top_drivers: string[];
+  checklist: TradeIdeaChecklist;
+  checklist_score: number;
+  entry_price: number;
+  stop_loss: number;
+  target_price: number;
+  risk_reward_ratio: number;
+  suggested_allocation_pct: number;
+  max_loss_per_unit: number;
+  regime_alignment: string;
+  sector_rank: number;
+  catalyst?: string | null;
+}
+
 interface ApiGeneratePortfolioResponse {
   model_variant: ModelVariant;
   model_source: 'RULES' | 'LIGHTGBM';
   model_version: string;
   prediction_horizon_days: number;
-  risk_mode: ApiRiskMode;
-  investment_amount: number;
-  allocations: { symbol: string; sector: string; weight: number; rationale: string; top_model_drivers?: string[] }[];
+  capital_amount: number;
+  mandate: UserMandate;
+  lookback_window_days: number;
+  expected_holding_period_days: number;
+  allocations: {
+    symbol: string;
+    sector: string;
+    weight: number;
+    rationale: string;
+    top_model_drivers?: string[];
+    ml_pred_21d_return?: number | null;
+    ml_pred_annual_return?: number | null;
+    death_risk?: number | null;
+    lstm_signal?: number | null;
+    news_risk_score: number;
+    news_opportunity_score: number;
+    news_sentiment: number;
+    news_impact: number;
+    news_explanation: string;
+  }[];
   metrics: {
     estimated_return_pct: number;
     estimated_volatility_pct: number;
@@ -155,6 +254,21 @@ interface ApiMarketDataSummaryResponse {
   notes?: string[];
 }
 
+interface ApiMandateQuestionnaireResponse {
+  investment_horizon_weeks_options: InvestmentHorizon[];
+  risk_attitude_options: RiskAttitude[];
+  sector_codes: string[];
+  defaults: UserMandate;
+}
+
+interface ApiMarketContextResponse {
+  generated_at: string;
+  articles: MarketNewsArticle[];
+  sector_sentiment: Record<string, number>;
+  overall_market_sentiment: number;
+  top_event_summary: string;
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
@@ -181,12 +295,37 @@ function fromApiRiskMode(risk: ApiRiskMode): RiskProfile {
   return 'HIGH_RISK';
 }
 
-export async function generatePortfolioViaApi(amount: number, risk: RiskProfile, modelVariant: ModelVariant = 'LIGHTGBM_HYBRID'): Promise<Portfolio> {
+function fromRiskAttitude(attitude: RiskAttitude): RiskProfile {
+  if (attitude === 'capital_preservation') return 'NO_RISK';
+  if (attitude === 'balanced') return 'LOW_RISK';
+  return 'HIGH_RISK';
+}
+
+function toApiRiskModeFromMandate(mandate?: UserMandate): ApiRiskMode {
+  if (!mandate) return 'MODERATE';
+  if (mandate.risk_attitude === 'capital_preservation') return 'ULTRA_LOW';
+  if (mandate.risk_attitude === 'balanced') return 'MODERATE';
+  return 'HIGH';
+}
+
+export async function getMandateQuestionnaireViaApi(): Promise<MandateQuestionnaire> {
+  return fetchJson<ApiMandateQuestionnaireResponse>('/api/v1/portfolio/mandate/questionnaire');
+}
+
+export async function getMarketContextViaApi(): Promise<MarketContext> {
+  return fetchJson<ApiMarketContextResponse>('/api/v1/news/market-context');
+}
+
+export async function generatePortfolioViaApi(
+  capitalAmount: number,
+  mandate: UserMandate,
+  modelVariant: ModelVariant = 'LIGHTGBM_HYBRID',
+): Promise<Portfolio> {
   const response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
     method: 'POST',
     body: JSON.stringify({
-      investment_amount: amount,
-      risk_mode: toApiRiskMode(risk),
+      capital_amount: capitalAmount,
+      mandate,
       model_variant: modelVariant,
     }),
   });
@@ -195,7 +334,7 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile,
     .map((allocation) => {
       const stock = ALL_STOCKS.find((candidate) => candidate.symbol === allocation.symbol);
       if (!stock) return null;
-      const stockAmount = (amount * allocation.weight) / 100;
+      const stockAmount = (capitalAmount * allocation.weight) / 100;
       const shares = Math.max(1, Math.floor(stockAmount / stock.price));
       return {
         stock,
@@ -203,6 +342,16 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile,
         shares,
         amount: shares * stock.price,
         drivers: allocation.top_model_drivers ?? [],
+        rationale: allocation.rationale,
+        ml_pred_21d_return: allocation.ml_pred_21d_return ?? null,
+        ml_pred_annual_return: allocation.ml_pred_annual_return ?? null,
+        death_risk: allocation.death_risk ?? null,
+        lstm_signal: allocation.lstm_signal ?? null,
+        news_risk_score: allocation.news_risk_score,
+        news_opportunity_score: allocation.news_opportunity_score,
+        news_sentiment: allocation.news_sentiment,
+        news_impact: allocation.news_impact,
+        news_explanation: allocation.news_explanation,
       };
     })
     .filter(Boolean) as Portfolio['allocations'];
@@ -213,12 +362,15 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile,
   return {
     allocations,
     totalInvested,
-    riskProfile: fromApiRiskMode(response.risk_mode),
+    riskProfile: fromRiskAttitude(response.mandate.risk_attitude),
+    mandate: response.mandate,
     backendNotes: response.notes ?? [],
     modelVariant: response.model_variant,
     modelSource: response.model_source,
     modelVersion: response.model_version,
     predictionHorizonDays: response.prediction_horizon_days,
+    lookbackWindowDays: response.lookback_window_days,
+    expectedHoldingPeriodDays: response.expected_holding_period_days,
     metrics: {
       avgBeta: response.metrics.beta,
       estimatedAnnualReturn: response.metrics.estimated_return_pct,
@@ -229,6 +381,18 @@ export async function generatePortfolioViaApi(amount: number, risk: RiskProfile,
       sectorCount,
     },
   };
+}
+
+export async function fetchTradeIdeasViaApi(params: {
+  regimeAware?: boolean;
+  minChecklistScore?: number;
+  maxIdeas?: number;
+} = {}): Promise<TradeIdea[]> {
+  const query = new URLSearchParams();
+  query.set('regime_aware', String(params.regimeAware ?? true));
+  query.set('min_checklist_score', String(params.minChecklistScore ?? 7));
+  query.set('max_ideas', String(params.maxIdeas ?? 10));
+  return fetchJson<TradeIdea[]>(`/api/v1/trade-ideas?${query.toString()}`);
 }
 
 export async function analyzePortfolioViaApi(
@@ -288,7 +452,9 @@ export async function runBacktestViaApi(
       strategy_name: 'nse-ai-portfolio',
       start_date: config.startDate,
       end_date: config.endDate,
-      risk_mode: toApiRiskMode(portfolio.riskProfile),
+      risk_mode: toApiRiskModeFromMandate(portfolio.mandate as UserMandate | undefined),
+      mandate: portfolio.mandate ?? null,
+      capital_amount: portfolio.totalInvested,
       rebalance_frequency: config.rebalanceFreq.toUpperCase(),
       stop_loss_pct: config.stopLossPct,
       take_profit_pct: config.takeProfitPct,
@@ -397,4 +563,46 @@ export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
     instrumentCount: response.instrument_count,
     notes: response.notes ?? [],
   };
+}
+
+export type ExplainChatHistoryItem = { role: 'assistant' | 'user'; content: string };
+
+export async function postExplainChat(message: string, history: ExplainChatHistoryItem[]): Promise<{ response: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/explain/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body}`);
+  }
+  return response.json() as Promise<{ response: string }>;
+}
+
+export async function postExplainPortfolio(portfolio: Portfolio): Promise<{ explanation: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/explain/portfolio`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      allocations: portfolio.allocations.map((a) => ({
+        symbol: a.stock.symbol,
+        sector: a.stock.sector,
+        weight: a.weight,
+        rationale: a.rationale ?? '',
+        top_model_drivers: a.drivers ?? [],
+        ml_pred_21d_return: a.ml_pred_21d_return ?? null,
+        ml_pred_annual_return: a.ml_pred_annual_return ?? null,
+        death_risk: a.death_risk ?? null,
+        lstm_signal: a.lstm_signal ?? null,
+      })),
+      risk_mode: toApiRiskModeFromMandate(portfolio.mandate as UserMandate | undefined),
+      total_amount: portfolio.totalInvested || 500000,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${response.status}: ${body}`);
+  }
+  return response.json() as Promise<{ explanation: string }>;
 }

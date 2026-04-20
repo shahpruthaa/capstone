@@ -259,24 +259,41 @@ def ingest_cached_nse_bhavcopy_archives(
     )
 
 
-def fetch_bhavcopy_archive(trade_date: date) -> Path:
-    filename = f"BhavCopy_NSE_CM_0_0_0_{trade_date.strftime('%Y%m%d')}_F_0000.csv.zip"
-    url = f"{settings.nse_archive_base_url.rstrip('/')}/{filename}"
+def _build_old_format_url(trade_date):
+    """Pre-2024 NSE format: cm{DD}{MMM}{YYYY}bhav.csv.zip"""
+    month_upper = trade_date.strftime("%b").upper()
+    filename = "cm" + trade_date.strftime("%d") + month_upper + trade_date.strftime("%Y") + "bhav.csv.zip"
+    url = "https://nsearchives.nseindia.com/content/historical/EQUITIES/" + trade_date.strftime("%Y") + "/" + month_upper + "/" + filename
+    return url, filename
 
+def fetch_bhavcopy_archive(trade_date: date) -> Path:
     raw_dir = get_raw_storage_dir(trade_date)
     raw_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = raw_dir / filename
 
-    if archive_path.exists():
-        return archive_path
+    new_filename = "BhavCopy_NSE_CM_0_0_0_" + trade_date.strftime("%Y%m%d") + "_F_0000.csv.zip"
+    new_url = settings.nse_archive_base_url.rstrip("/") + "/" + new_filename
+    new_path = raw_dir / new_filename
+    if new_path.exists():
+        return new_path
 
-    response = requests.get(url, headers=COMMON_REQUEST_HEADERS, timeout=30)
-    if response.status_code != 200:
-        raise BhavcopyDownloadError(f"download returned status {response.status_code} for inferred archive URL {url}")
+    old_url, old_filename = _build_old_format_url(trade_date)
+    old_path = raw_dir / old_filename
+    if old_path.exists():
+        return old_path
 
-    archive_path.write_bytes(response.content)
-    return archive_path
+    response = requests.get(new_url, headers=COMMON_REQUEST_HEADERS, timeout=30)
+    if response.status_code == 200:
+        new_path.write_bytes(response.content)
+        return new_path
 
+    response = requests.get(old_url, headers=COMMON_REQUEST_HEADERS, timeout=30)
+    if response.status_code == 200:
+        old_path.write_bytes(response.content)
+        return old_path
+
+    raise BhavcopyDownloadError(
+        "Both URL formats failed for " + str(trade_date) + ": new=" + new_url + ", old=" + old_url
+    )
 
 def parse_bhavcopy_zip(archive_path: Path) -> list[dict[str, str]]:
     with ZipFile(archive_path) as archive:
