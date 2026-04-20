@@ -118,6 +118,14 @@ export function BacktestTab({ portfolio }: Props) {
                     )}
 
                     <div className="space-y-4">
+                        {portfolio?.mandate && (
+                            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                                Backtest source: replaying the exact generated mandate rather than a generic risk profile.
+                                <div className="mt-2 text-[11px] text-slate-500">
+                                    {portfolio.mandate.risk_attitude.replace('_', ' ')} · {portfolio.mandate.investment_horizon_weeks} weeks · drawdown {portfolio.mandate.max_portfolio_drawdown_pct}% · {portfolio.mandate.preferred_num_positions} positions
+                                </div>
+                            </div>
+                        )}
                         <div>
                             <label className="block text-xs font-semibold text-slate-500 mb-1">Start Date</label>
                             <input type="date" value={config.startDate} onChange={e => setConfig(c => ({ ...c, startDate: e.target.value }))} className="input-field px-3 py-2 text-sm" />
@@ -161,10 +169,10 @@ export function BacktestTab({ portfolio }: Props) {
                                 className="input-field px-3 py-2 text-sm"
                             >
                                 <option value="RULES">Rules only</option>
-                                <option value="LIGHTGBM_HYBRID">Rules vs ML Hybrid</option>
+                                <option value="LIGHTGBM_HYBRID">Ensemble runtime</option>
                             </select>
                             {activeModelVariant === 'LIGHTGBM_HYBRID' && selectedModelVariant === 'LIGHTGBM_HYBRID' && (
-                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses LightGBM alpha (fallback to rules if artifact is missing).</p>
+                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
                             )}
                         </div>
 
@@ -258,6 +266,10 @@ export function BacktestTab({ portfolio }: Props) {
                                     <span className="stat-value">{result.modelSource || 'RULES'}</span>
                                 </div>
                                 <div className="stat-row">
+                                    <span className="stat-label">Mode</span>
+                                    <span className="stat-value">{result.activeMode || 'rules_only'}</span>
+                                </div>
+                                <div className="stat-row">
                                     <span className="stat-label">Version</span>
                                     <span className="stat-value">{result.modelVersion || 'rules'}</span>
                                 </div>
@@ -265,8 +277,36 @@ export function BacktestTab({ portfolio }: Props) {
                                     <span className="stat-label">Horizon</span>
                                     <span className="stat-value">{result.predictionHorizonDays || 21}D</span>
                                 </div>
+                                <div className="stat-row">
+                                    <span className="stat-label">Artifact</span>
+                                    <span className="stat-value">{result.artifactClassification || 'missing'}</span>
+                                </div>
                             </div>
                         </div>
+
+                        {portfolio?.mandate && (
+                            <div className="card p-5">
+                                <p className="section-title">Mandate Replay</p>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                                    <div className="stat-row">
+                                        <span className="stat-label">Attitude</span>
+                                        <span className="stat-value">{portfolio.mandate.risk_attitude.replace('_', ' ')}</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Horizon</span>
+                                        <span className="stat-value">{portfolio.mandate.investment_horizon_weeks} weeks</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Drawdown</span>
+                                        <span className="stat-value">{portfolio.mandate.max_portfolio_drawdown_pct}%</span>
+                                    </div>
+                                    <div className="stat-row">
+                                        <span className="stat-label">Max Position</span>
+                                        <span className="stat-value">{portfolio.mandate.max_position_size_pct}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Key metrics */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

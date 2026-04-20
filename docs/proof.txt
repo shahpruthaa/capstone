@@ -1,0 +1,95 @@
+NSE AI Portfolio Manager - Assumption Proof Notes
+Updated: 2026-04-16
+
+Scope
+- This document records key modeling/engineering assumptions used in this branch.
+- Citations are provided to support methodology direction, not to claim identical market results.
+
+1) Assumption: Risk-adjusted optimization is a valid objective for portfolio construction.
+Why used here:
+- The project ranks strategy quality with Sharpe/Sortino-like metrics and uses risk-aware allocation.
+Evidence:
+- Zhang, Z., Zohren, S., & Roberts, S. (2021). Deep Learning for Portfolio Optimization.
+  arXiv:2005.13665, doi:10.48550/arXiv.2005.13665
+  Reported that direct optimization of risk-adjusted portfolio objectives can outperform baselines in tested periods.
+
+2) Assumption: Ensemble or multi-signal approaches can improve robustness vs single-signal methods.
+Why used here:
+- The runtime supports LightGBM + LSTM + GNN + death-risk in full/degraded ensemble modes.
+Evidence:
+- Huang, G. et al. (2025 version). Deep Reinforcement Learning Portfolio Management with Short-Selling.
+  arXiv:2012.13773, doi:10.48550/arXiv.2012.13773
+  Shows multi-component deep learning portfolios can improve risk-adjusted performance and drawdown control in tested settings.
+
+3) Assumption: Backtests should include realistic frictions (fees, taxes, slippage) and not only raw returns.
+Why used here:
+- The backtest engine applies brokerage, STT, stamp duty, GST, slippage and India tax handling.
+Evidence:
+- Zhang, Z., Zohren, S., & Roberts, S. (2021). arXiv:2005.13665.
+  Includes sensitivity checks under different cost rates and risk scaling, supporting friction-aware evaluation.
+
+4) Assumption: Market-regime/news context is useful for explanation and risk narration.
+Why used here:
+- Groq-backed explain/news services augment quantitative outputs with narrative context.
+Evidence:
+- Osterrieder, J., et al. (2021). Deep Q-Network Trading Strategy for Futures.
+  arXiv:2106.08437, doi:10.48550/arXiv.2106.08437
+  Supports the broader premise that regime/context-aware learning signals can affect strategy behavior.
+Note:
+- In this project, news is currently explanatory/contextual by default and not a hard blocker for quant execution.
+
+5) Assumption: Explicit fallback modes improve reliability and demo honesty.
+Why used here:
+- The app exposes full_ensemble/degraded_ensemble/rules_only with visible runtime reasons.
+Evidence rationale:
+- Reliability engineering best practice: fail transparently and preserve core function under dependency loss.
+- Project-specific implementation enforces this contract through /api/v1/models/current and UI runtime notices.
+
+6) Assumption: Holding-period guidance should be recommendation-oriented, not deterministic execution advice.
+Why used here:
+- Holding period is returned as review cadence guidance based on model horizon/risk/volatility.
+Evidence rationale:
+- Portfolio horizon selection is model- and risk-dependent in quantitative practice; practical implementations often use review windows rather than fixed mandatory exits.
+- This branch intentionally presents cadence as advisory, with explicit caveats and transparent fallback behavior.
+
+7) Assumption: Proxy benchmarks are acceptable for local demo research with explicit labeling.
+Why used here:
+- Compare tab includes local proxy construction plus metadata for third-party references.
+Evidence rationale:
+- Research prototypes commonly use proxy reconstruction when full licensed constituent history is absent.
+- This project labels proxy status and limitations directly in API/UI to avoid overclaiming benchmark fidelity.
+
+Implementation caveats
+- Citations support method classes and design choices, not guaranteed live-market performance.
+- External benchmark feeds are not yet fully automated in this branch; third-party fields currently act as reference metadata.
+- This document should be revised as new data feeds, tests, or production constraints are introduced.
+
+8) Assumption: API/UI contract parity is required for reliable multi-tab operation.
+Why used here:
+- A backend `run_backtest` variable mismatch caused runtime failures that were not visible at compile time.
+Evidence rationale:
+- Live route verification after fix showed successful responses for:
+  - `POST /api/v1/analysis/portfolio`
+  - `POST /api/v1/backtests/run`
+  - `GET /api/v1/benchmarks/summary`
+- The tab-facing UI now relies on a single API adapter path to reduce divergence.
+
+9) Assumption: LLM features should use the same transport contract as quant routes.
+Why used here:
+- AI chat and portfolio explanation were moved to the shared backend API adapter.
+Evidence rationale:
+- Relative path/proxy dependence can fail when host topology changes (Docker vs local host).
+- Live endpoint validation returned successful Groq response for `POST /api/v1/explain/chat` with configured key.
+
+10) Assumption: Perceived frontend load time improves with request timeout + shallow caching for repeated metadata calls.
+Why used here:
+- model status and market summary are fetched across multiple tabs.
+Evidence rationale:
+- Lightweight cache and timeout handling reduces repeated latency and prevents hanging UX when backend calls are slow.
+
+11) Assumption: A clean, non-alarmist status presentation improves operator readability without hiding system state.
+Why used here:
+- Tab-level warning-themed banners were replaced with neutral informational notices while retaining runtime and fallback text.
+Evidence rationale:
+- Cognitive load guidance in dashboard design favors reducing high-contrast warning noise during normal operation.
+- This branch preserves transparency through explicit textual state (`active_mode`, fallback reasons, endpoint failure messages) while improving scanability.

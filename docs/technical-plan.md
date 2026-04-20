@@ -1,197 +1,182 @@
 # NSE AI Portfolio Manager Technical Plan
 
-## 1. Goal
+## Goal
 
-Ship a fully local NSE portfolio research application where:
+Ship the branch rebuilt from `55b69df` as a stable capstone demo with:
 
-- the UI uses only the local FastAPI backend
-- the backend uses the local database and local model artifacts
-- LightGBM hybrid expected returns are the default runtime path when a valid artifact exists
-- rules remain the safe fallback when the artifact is missing or invalid
+- a local quant engine
+- ensemble-aware runtime detection
+- explicit degraded behavior
+- Groq-assisted explanations
+- one reproducible UI demo path
 
-## 2. Current Implementation Baseline
+## Plan Status Summary
 
-Already implemented:
+| Workstream | Status | Outcome |
+| --- | --- | --- |
+| Baseline hardening and branch reset | Complete | Branch behavior aligned to the `55b69df` capstone baseline |
+| Data and artifact pipeline standardization | Complete | Canonical artifact layout and training order documented |
+| Backend runtime consolidation | Complete | `db_quant_engine.py` and runtime status now drive the system |
+| Frontend demo stabilization | Complete | Runtime banner, per-tab metadata, explicit fallback messaging |
+| Capstone docs and demo path | Complete | README, architecture, and technical plan match this branch |
+| Official benchmark reconstruction | Partial | Proxy-based local research strategies still in use |
+| Automated test depth | Partial | Verification is strong, but coverage is not yet production-grade |
 
-- local FastAPI routes for portfolio generation, holdings analysis, backtests, benchmark summaries, and model status
-- PostgreSQL + TimescaleDB schema and migrations
-- NSE bhavcopy ingestion with raw archive caching
-- corporate-action adjustment and dividend handling
-- constrained allocator over shrinkage covariance
-- holdings analyzer and rebalance action generation
-- historical replay with stop-loss, take-profit, fees, taxes, and cooldown-based re-entry rules
-- local LightGBM dataset builder, trainer, predictor, and artifact loader
-- UI support for model variant, model version, training mode, artifact classification, and top ML drivers
-- backend market-data summary endpoint for readiness and valid-range derivation
-- benchmark provenance metadata in the compare flow
-- evaluation report generation under `artifacts/reports`
-- UI adapters wired directly to backend endpoints with no silent local portfolio/backtest/benchmark fallbacks
+## 1. Baseline Hardening
 
-Still pending or partial:
+Completed:
 
-- official benchmark constituent ingestion
-- deeper pre-2024 history for longer walk-forward training
-- automated test coverage
-- richer factor set beyond price/liquidity-derived inputs
-- broker profile abstraction and more detailed fee schedules
-- standard-history v2 artifact with positive held-out validation metrics
+- restarted implementation from `55b69df6b0bf941abdef15e0f551b2175d7d93d2`
+- kept the ensemble product as the target runtime
+- separated explanation concerns from core quant concerns
+- removed silent ambiguity around which model path is active
 
-## 3. Local LightGBM Plan
+Result:
 
-### Runtime policy
+- the project now exposes one honest runtime state instead of implying full ensemble availability when artifacts are missing
 
-- request default: `LIGHTGBM_HYBRID`
-- equity expected returns: local LightGBM + rule blend
-- ETF expected returns: rules only
-- missing or invalid artifact: automatic runtime fallback to `RULES`
+## 2. Data and Artifact Pipeline
 
-### Dataset design
+Completed:
 
-- one row per `(symbol, decision_date)`
-- monthly decision dates only
-- trailing `252` trading-day feature window
-- next `21` trading-day return target
-- adjusted total-return history
-- numeric features winsorized and z-scored cross-sectionally per decision date
-- sector and market-cap bucket encoded categorically
+- standardized the artifact layout under:
+  - `artifacts/models/lightgbm_v1`
+  - `artifacts/models/lstm_v1`
+  - `artifacts/models/gnn_v1`
+  - `artifacts/models/death_risk_v1`
+  - `artifacts/models/ensemble_v1`
+- added a canonical ensemble manifest materializer:
+  - [materialize_ensemble_artifact.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/scripts/ml/materialize_ensemble_artifact.py)
+- preserved the training dependency chain:
+  1. LightGBM dataset
+  2. LightGBM
+  3. LSTM
+  4. GNN
+  5. death-risk
+  6. ensemble manifest
 
-### Training design
+Current expectation:
 
-- local LightGBM regressor
-- expanding walk-forward validation
-- embargo between train, validation, and test folds
-- primary metric: out-of-sample mean Spearman rank IC
-- secondary metric: top-minus-bottom forward return spread
+- the runtime reads artifacts from disk and reports component-level readiness
+- missing artifacts no longer produce unclear behavior
 
-### Practical repo constraint
+## 3. Backend Runtime Consolidation
 
-- the checked-in cache begins in 2024, so the trainer now supports compressed walk-forward windows when the preferred `24/6/6` monthly split is impossible
-- the current bootstrap artifact can be accepted with negative IC metadata when history is too thin to satisfy the original rejection gate
-- once older history is ingested, retrain with the longer preferred walk-forward schedule
-- the UI now labels that state explicitly through `training_mode` and `artifact_classification`
+Completed:
 
-## 4. UI Integration Plan
-
-### Generate
-
-- submit directly to `POST /api/v1/portfolio/generate`
-- preflight model availability via `GET /api/v1/models/current`
-- surface `model_variant`, `model_source`, `model_version`, and `prediction_horizon_days`
-- surface training mode and bootstrap-vs-standard artifact status
-- show top ML drivers on selected equities
-- remove silent heuristic fallback behavior
-
-### Analyze
-
-- submit directly to `POST /api/v1/analysis/portfolio`
-- show `model_variant_applied`
-- show ML scores by holding when present
-- use backend rebalance actions as the authoritative response
-
-### Backtest
-
-- submit directly to `POST /api/v1/backtests/run`
-- preflight model availability via `GET /api/v1/models/current`
-- derive valid default dates from `GET /api/v1/market-data/summary`
-- show model runtime info beside the result
-- keep `RULES` vs `LIGHTGBM_HYBRID` selector in the UI
-- remove silent local simulation fallback behavior
-
-### Compare
-
-- submit directly to `GET /api/v1/benchmarks/summary`
-- show backend benchmark notes and per-strategy provenance metadata
-- label proxy benchmarks clearly in the UI
-- if the endpoint fails, show the failure instead of silently substituting a different benchmark engine
-
-### Environment wiring
-
-- frontend API host comes from `VITE_API_BASE_URL`
-- default local value remains `http://localhost:8000`
-- `.env.example` documents the expected frontend API target
-
-## 5. API and Contract Plan
-
-Active routes:
-
-- `GET /healthz`
-- `GET /api/v1/models/current`
-- `POST /api/v1/portfolio/generate`
-- `POST /api/v1/analysis/portfolio`
-- `POST /api/v1/backtests/run`
-- `GET /api/v1/backtests/{run_id}`
-- `GET /api/v1/benchmarks/summary`
-- `GET /api/v1/market-data/summary`
-- `POST /api/v1/market-data/ingestions/nse-bhavcopy`
-
-Contract requirements:
-
-- generation and backtest responses must always return model source metadata
-- analysis responses must return the applied model variant and any ML scores
-- model status must reflect whether the artifact is truly loadable, not just whether files exist
-- model status should include `training_mode`, `artifact_classification`, and `validation_summary`
-- benchmark summaries should include construction/proxy metadata per strategy
-- market-data summary is the authoritative source for valid local backtest dates
-
-## 6. Data Pipeline Plan
-
-### Market data
-
-- use cached NSE bhavcopy ZIP files as the current local EOD source
-- ingest into `instruments` and `daily_bars`
-- enrich selected symbols with sector, instrument type, and market-cap bucket
-
-### Corporate actions
-
-- keep schema and import flow
-- apply split/bonus factors to OHLC and close histories
-- add dividend cash credits into total-return series and backtests
-
-### Benchmarks
-
-- current state: proxy benchmarks only
-- current endpoint now labels proxy construction explicitly
-- next step: add official index constituent files and benchmark series storage
-
-## 7. Simulation Engine Plan
-
-Keep the current event-driven daily replay model, but harden these areas:
-
-- maintain dated fee and tax schedules
-- keep the true `12-month` listed-equity LTCG classification aligned with new tax schedules
-- externalize brokerage profiles instead of treating one discount-broker plan as universal
-- keep stop-loss / take-profit fills gap-aware and based on adjusted OHLC bars
-- preserve identical fee/tax/rebalance logic between `RULES` and `LIGHTGBM_HYBRID`; only the expected-return source should differ
-
-## 8. Verification Plan
-
-Minimum verification after each major change:
-
-- `npm run build`
-- API import/startup check
-- `/healthz`
-- `/api/v1/models/current`
-- `/api/v1/market-data/summary`
-- end-to-end smoke calls for:
+- centralized runtime readiness in [model_runtime.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/model_runtime.py)
+- made [db_quant_engine.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/db_quant_engine.py) the main orchestration layer for:
   - portfolio generation
   - holdings analysis
-  - backtest
-  - benchmark summary
-- confirm the UI tabs map to those exact backend routes through `src/services/backendApi.ts`
+  - backtests
+  - expected-return routing
+  - fallback decisions
+- upgraded [ensemble_scorer.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/ensemble_scorer.py) to:
+  - work with aligned component payloads
+  - compute degraded ensemble behavior explicitly
+  - expose component scores and drivers
+- moved Groq behind [groq_explainer.py](C:/Users/pruth/nse-ai-portfolio-manager/apps/api/app/services/groq_explainer.py)
 
-ML-specific verification:
+Runtime rule now:
 
-- dataset shape and leakage checks
-- artifact loader validation
-- inference fallback when artifact is missing
-- side-by-side `RULES` vs `LIGHTGBM_HYBRID` backtest comparison
+- `LightGBM` is the core requirement for any ML-backed runtime
+- if `LightGBM` is available and some non-core models are missing, the app uses `degraded_ensemble`
+- if `LightGBM` is not available, the app uses `rules_only`
 
-## 9. Near-Term Execution Order
+## 4. Public API Contract
 
-1. Remove stale scaffold and frontend fallback messaging.
-2. Make LightGBM hybrid the default request path and validate artifact loading.
-3. Ingest enough local bhavcopy history to support the DB-backed endpoints.
-4. Build the ML dataset and train the first local artifact.
-5. Generate the evaluation report under `artifacts/reports`.
-6. Run endpoint smoke checks against the local stack.
-7. Replace proxy benchmarks with official reconstitution as the next research milestone.
+Completed:
+
+- `GET /api/v1/models/current` now exposes:
+  - active mode
+  - available and missing components
+  - model version
+  - artifact classification
+  - training mode
+  - Groq connectivity
+  - fallback notes
+- portfolio, analysis, and backtest responses now include:
+  - `model_variant_applied`
+  - `model_source`
+  - `model_version`
+  - `prediction_horizon_days`
+  - `active_mode`
+  - `artifact_classification`
+- stock detail now includes:
+  - final ensemble score
+  - component scores
+  - feature drivers
+  - death-risk
+  - optional explanation
+
+## 5. Frontend Stabilization
+
+Completed:
+
+- top runtime banner now shows:
+  - market data readiness
+  - runtime mode
+  - training mode
+  - artifact classification
+  - Groq availability
+  - available components
+- `Generate` now shows runtime metadata and model-driver context
+- `Analyze` now surfaces model source, mode, version, and ML score counts
+- `Backtest` now shows ensemble runtime details instead of vague hybrid wording
+- `AIChat` now uses the correct portfolio shape and passes clean context
+
+Important outcome:
+
+- the UI no longer hides degraded or fallback states
+
+## 6. Capstone Demo Path
+
+Recommended presentation flow:
+
+1. `docker compose up -d --build`
+2. `docker compose exec api alembic upgrade head`
+3. ingest bhavcopy data
+4. import corporate actions
+5. train or copy artifacts into the canonical directories
+6. run `GET /api/v1/models/current`
+7. open the UI
+8. generate a portfolio
+9. analyze a holdings basket
+10. run a backtest
+11. compare benchmarks
+12. show stock detail and AI explanations if Groq is configured
+
+## 7. Verification
+
+Completed locally during this stabilization pass:
+
+- backend Python compile check
+- frontend lint
+- frontend production build
+
+Verification commands:
+
+```powershell
+python -m compileall apps/api/app apps/api/scripts
+npm run lint
+npm run build
+```
+
+## 8. Remaining Partial Areas
+
+These are intentionally called out so the capstone is honest:
+
+- official benchmark constituent reconstruction
+- deeper automated testing
+- live intraday execution behavior
+- artifact quality itself, which still depends on locally training or supplying the models
+
+## 9. Acceptance Criteria Mapping
+
+| Acceptance target | Status | Notes |
+| --- | --- | --- |
+| Stack starts locally | Complete | Dockerized services and docs are in place |
+| Artifacts are discovered and reported correctly | Complete | Runtime status is component-aware |
+| Full demo can run from the UI | Complete, subject to local data and artifacts | UI and backend paths are wired |
+| Degraded-state demo is transparent | Complete | Banner and route metadata expose it |
+| README matches runtime behavior | Complete | Updated for this branch |

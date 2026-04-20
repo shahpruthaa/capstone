@@ -8,18 +8,40 @@ export interface Allocation {
   shares: number;
   amount: number;
   drivers?: string[];
+  rationale?: string;
+  ml_pred_21d_return?: number | null;
+  ml_pred_annual_return?: number | null;
+  death_risk?: number | null;
+  lstm_signal?: number | null;
+  news_risk_score?: number;
+  news_opportunity_score?: number;
+  news_sentiment?: number;
+  news_impact?: number;
+  news_explanation?: string;
 }
 
 export interface Portfolio {
   allocations: Allocation[];
   totalInvested: number;
   riskProfile: RiskProfile;
+  mandate?: {
+    investment_horizon_weeks: string;
+    max_portfolio_drawdown_pct: number;
+    max_position_size_pct: number;
+    preferred_num_positions: number;
+    sector_inclusions: string[];
+    sector_exclusions: string[];
+    allow_small_caps: boolean;
+    risk_attitude: string;
+  };
   metrics: PortfolioMetrics;
   backendNotes?: string[];
   modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
   modelSource?: 'RULES' | 'LIGHTGBM';
   modelVersion?: string;
   predictionHorizonDays?: number;
+  lookbackWindowDays?: number;
+  expectedHoldingPeriodDays?: number;
 }
 
 export interface PortfolioMetrics {
