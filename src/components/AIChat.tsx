@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
-import { postExplainChat } from '../services/backendApi';
+import { postExplainChat, fetchPlatformContext } from '../services/backendApi';
 
 interface Message {
     role: 'user' | 'ai';
@@ -15,11 +15,16 @@ interface AIChatProps {
 export function AIChat({ portfolio }: AIChatProps) {
     const [open, setOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
-        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant powered by Groq LLM. Ask me about your portfolio, NSE stocks, market trends, tax implications, or trading strategy." }
+        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant. I know your current portfolio, market regime, and top trade ideas. Ask me anything." }
     ]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [platformContext, setPlatformContext] = useState<Record<string, unknown>>({});
     const bottomRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        fetchPlatformContext().then(ctx => setPlatformContext(ctx));
+    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
