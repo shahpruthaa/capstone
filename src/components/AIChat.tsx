@@ -6,6 +6,7 @@ import { postExplainChat, fetchPlatformContext, type ExplainChatHistoryItem } fr
 interface Message {
     role: 'user' | 'ai';
     text: string;
+    action?: { name: string; arguments: any };
 }
 
 interface AIChatProps {
@@ -61,7 +62,10 @@ export function AIChat({ portfolio }: AIChatProps) {
             };
 
             const data = await postExplainChat(enrichedMessage, history, fullContextPayload);
-            setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
+            setMessages(prev => [...prev, { role: 'ai', text: data.response, action: data.action }]);
+            if (data.action) {
+                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: data.action }));
+            }
         } catch {
             setMessages(prev => [...prev, {
                 role: 'ai',
@@ -111,6 +115,11 @@ export function AIChat({ portfolio }: AIChatProps) {
                                         }`}
                                 >
                                     {msg.text}
+                                    {msg.action && (
+                                        <div className="mt-2 text-[10px] font-mono text-teal-700 bg-teal-50 border border-teal-200 rounded px-2 py-1 inline-flex items-center gap-1">
+                                            <Sparkles className="w-3 h-3" /> Executed: {msg.action.name.replace('_', ' ')}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))}

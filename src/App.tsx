@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Home, PieChart, Lightbulb, FlaskConical, GitCompare } from "lucide-react";
 import "./index.css";
 import { Portfolio } from "./services/portfolioService";
@@ -78,6 +78,22 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
 export default function App() {
   const [tab, setTab] = useState<Tab>("MARKET");
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+
+  useEffect(() => {
+    const handleAction = (e: any) => {
+      const action = e.detail;
+      if (action.name === 'navigate_to_tab') {
+        const targetTab = action.arguments.tab_name;
+        if (["MARKET", "PORTFOLIO", "IDEAS", "BACKTEST", "COMPARE"].includes(targetTab)) {
+          setTab(targetTab as Tab);
+        }
+      } else if (action.name === 'generate_portfolio') {
+        setTab("PORTFOLIO");
+      }
+    };
+    window.addEventListener('AI_ACTION', handleAction);
+    return () => window.removeEventListener('AI_ACTION', handleAction);
+  }, []);
 
   return (
     <div className="app-shell">

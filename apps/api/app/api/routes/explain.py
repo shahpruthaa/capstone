@@ -142,7 +142,8 @@ INSTRUCTIONS:
 - For portfolio questions: comment on concentration, sector exposure, ML signals, and regime fit.
 - For trade idea questions: reference checklist scores and entry/stop/target levels.
 - Be direct, quantitative, concise — max 3 paragraphs. No generic disclaimers.
-- If asked about a stock not in the portfolio, reason from sector trend, regime, and factor context."""
+- If asked about a stock not in the portfolio, reason from sector trend, regime, and factor context.
+- If the user asks to perform an action (e.g., generate/build a portfolio, or navigate to a tab like Backtest or Compare), use the available tools to execute the action autonomously."""
 
 @router.post("/stock")
 async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
@@ -163,6 +164,7 @@ async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
 @router.post("/chat")
 async def chat_endpoint(req: ChatRequest) -> dict:
     import httpx
+    import json
     from app.core.config import settings
     if not settings.groq_api_key:
         return {"response": "AI unavailable — no API key configured."}
@@ -171,15 +173,67 @@ async def chat_endpoint(req: ChatRequest) -> dict:
     for h in req.history[-6:]:
         messages.append(h)
     messages.append({"role": "user", "content": req.message})
+    
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "navigate_to_tab",
+                "description": "Navigates the user to a specific tab in the application. Use this if the user asks to see a different section, such as the market overview, portfolio, trade ideas, backtest, or compare tab.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "tab_name": {"type": "string", "enum": ["MARKET", "PORTFOLIO", "IDEAS", "BACKTEST", "COMPARE"]}
+                    },
+                    "required": ["tab_name"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "generate_portfolio",
+                "description": "Generates a new AI portfolio for the user based on capital amount and risk profile. Use this if the user asks you to create, build, or generate a portfolio.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "capital": {"type": "number", "description": "The capital amount in INR (e.g. 100000)"},
+                        "risk": {"type": "string", "enum": ["CONSERVATIVE", "MODERATE", "AGGRESSIVE"], "description": "The risk profile."}
+                    },
+                    "required": ["capital", "risk"]
+                }
+            }
+        }
+    ]
+
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
             r = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
-                json={"model": settings.groq_model, "max_tokens": 600, "messages": messages, "temperature": 0.35},
+                json={"model": settings.groq_model, "max_tokens": 600, "messages": messages, "temperature": 0.35, "tools": tools},
             )
             if r.status_code == 200:
-                return {"response": r.json()["choices"][0]["message"]["content"].strip()}
+                data = r.json()
+                msg = data["choices"][0]["message"]
+                
+                # Check for tool calls
+                if msg.get("tool_calls") and len(msg["tool_calls"]) > 0:
+                    tool_call = msg["tool_calls"][0]
+                    args = json.loads(tool_call["function"]["arguments"])
+                    name = tool_call["function"]["name"]
+                    return {
+                        "response": f"Executing action: {name.replace('_', ' ')}...",
+                        "action": {
+                            "name": name,
+                            "arguments": args
+                        }
+                    }
+                
+                content = msg.get("content")
+                if content:
+                    return {"response": content.strip()}
+                return {"response": "Done."}
             return {"response": f"AI temporarily unavailable (status {r.status_code})."}
     except Exception:
         return {"response": "AI temporarily unavailable."}

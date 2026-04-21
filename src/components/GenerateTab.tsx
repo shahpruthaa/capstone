@@ -147,6 +147,41 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         }
     };
 
+    useEffect(() => {
+        const handleAction = async (e: any) => {
+            const action = e.detail;
+            if (action.name === 'generate_portfolio') {
+                const capital = action.arguments.capital || amount;
+                const riskEnum = action.arguments.risk;
+                const rMap: any = { CONSERVATIVE: 'capital_preservation', MODERATE: 'balanced', AGGRESSIVE: 'growth' };
+                const newRisk = rMap[riskEnum] || mandate.risk_attitude;
+                
+                setAmount(capital);
+                setMandate(m => ({ ...m, risk_attitude: newRisk }));
+                
+                setGenerating(true);
+                setGenerationNotice(null);
+                try {
+                    const payload: UserMandate = {
+                        ...mandate,
+                        risk_attitude: newRisk,
+                        sector_inclusions: sectorIncludeInput.split(',').map(item => item.trim()).filter(Boolean),
+                        sector_exclusions: sectorExcludeInput.split(',').map(item => item.trim()).filter(Boolean),
+                    };
+                    const p = await generatePortfolioViaApi(capital, payload, activeModelVariant);
+                    onPortfolioGenerated(p);
+                    setGenerationNotice({ tone: 'info', text: 'Portfolio generated successfully by AI Copilot.' });
+                } catch (error) {
+                    setGenerationNotice({ tone: 'warning', text: `Failed: ${error instanceof Error ? error.message : 'Unknown error'}` });
+                } finally {
+                    setGenerating(false);
+                }
+            }
+        };
+        window.addEventListener('AI_ACTION', handleAction);
+        return () => window.removeEventListener('AI_ACTION', handleAction);
+    }, [mandate, sectorIncludeInput, sectorExcludeInput, activeModelVariant, amount, onPortfolioGenerated]);
+
     const chartData = useMemo(() =>
         portfolio?.allocations.map(a => ({ name: a.stock.symbol, value: a.amount })) ?? [], [portfolio]);
 

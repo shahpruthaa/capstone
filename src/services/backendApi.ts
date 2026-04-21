@@ -678,7 +678,7 @@ export async function fetchPlatformContext(): Promise<Record<string, unknown>> {
   }
 }
 
-export async function postExplainChat(message: string, history: ExplainChatHistoryItem[], portfolioContext: Record<string, unknown> = {}): Promise<{ response: string }> {
+export async function postExplainChat(message: string, history: ExplainChatHistoryItem[], portfolioContext: Record<string, unknown> = {}): Promise<{ response: string; action?: { name: string; arguments: any } }> {
   const response = await fetch(`${API_BASE_URL}/api/v1/explain/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
