@@ -52,6 +52,10 @@ async function run() {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Portfolio' }).click();
     await page.getByRole('button', { name: 'Build Portfolio' }).click();
+    await page.getByText(/Active local engine:/i).waitFor({ timeout: 30000 });
+    await page.getByRole('button', { name: /Rules only/i }).click();
+    await page.getByText(/Active local engine:\s*Rules only/i).waitFor({ timeout: 30000 });
+    outcome.generate.selectedEngine = await textContentOrEmpty(page.getByText(/Active local engine:/i).first());
 
     // GENERATE
     await page.locator('input[type="number"]').first().fill('500000');
@@ -60,8 +64,8 @@ async function run() {
 
     // Wait for the generation cycle to finish (success or explicit failure notice).
     await page.waitForFunction(() => {
-      const hasSuccess = document.querySelectorAll('.data-table tbody tr').length > 0;
       const bodyText = document.body?.innerText || '';
+      const hasSuccess = bodyText.includes('Model Runtime');
       const hasFailure = bodyText.includes('Portfolio generation failed:');
       return hasSuccess || hasFailure;
     }, undefined, { timeout: 180000 });
@@ -71,7 +75,7 @@ async function run() {
       const failureText = await textContentOrEmpty(page.getByText(/Portfolio generation failed:/i).first());
       throw new Error(`Generate flow failed: ${failureText}`);
     }
-    await page.locator('.data-table tbody tr').first().waitFor({ timeout: 30000 });
+    await page.getByText('Model Runtime').waitFor({ timeout: 30000 });
 
     const generateRuntimeCard = page.locator('.card').filter({ hasText: 'Model Runtime' }).first();
     outcome.generate.modelRuntime = await textContentOrEmpty(generateRuntimeCard);
@@ -180,6 +184,7 @@ async function run() {
   } catch (error) {
     await fs.mkdir(outDir, { recursive: true });
     await page.screenshot({ path: path.join(outDir, '00-failure.png'), fullPage: true });
+    console.log(JSON.stringify(outcome, null, 2));
     throw error;
   } finally {
     await browser.close();

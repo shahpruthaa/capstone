@@ -8,7 +8,7 @@ import {
 } from './portfolioService';
 
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
-export const API_BASE_URL = viteEnv?.VITE_API_BASE_URL || 'http://localhost:8000';
+export const API_BASE_URL = viteEnv?.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const ALL_STOCKS = [...NSE_STOCKS, ...LIQUID_ASSETS];
 
 type ApiRiskMode = 'ULTRA_LOW' | 'MODERATE' | 'HIGH';
@@ -396,7 +396,7 @@ export async function generatePortfolioViaApi(
   try {
     response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
       method: 'POST',
-      timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 45000 : 60000,
+      timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 120000 : 90000,
       body: JSON.stringify({
         capital_amount: capitalAmount,
         mandate,
@@ -411,7 +411,7 @@ export async function generatePortfolioViaApi(
     localNotes.push('LightGBM hybrid request timed out; automatically retried with rule-based allocator for responsiveness.');
     response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
       method: 'POST',
-      timeoutMs: 60000,
+      timeoutMs: 90000,
       body: JSON.stringify({
         capital_amount: capitalAmount,
         mandate,

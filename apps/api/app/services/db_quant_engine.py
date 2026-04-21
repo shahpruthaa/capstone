@@ -47,6 +47,7 @@ from app.services.market_rules import (
     resolve_equity_fee_schedule,
 )
 from app.services.news_signal import compute_stock_news_signals
+from app.ml.ensemble_alpha.predict import get_ensemble_alpha_predictor
 from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 
 RISK_FREE_RATE = 0.07
@@ -218,10 +219,9 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         ml_status = get_lightgbm_model_status()
         if ml_status.get("available"):
             try:
-                from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
                 # Predict only the selected candidates to keep generation latency bounded.
                 ml_snapshots = [snapshot for snapshot, _ in selected]
-                predictor = EnsembleAlphaPredictor()
+                predictor = get_ensemble_alpha_predictor()
                 pred_map, _ = predictor.predict(db, ml_snapshots, as_of_date)
                 for snapshot, _ in selected:
                     if snapshot.symbol in pred_map:
@@ -436,9 +436,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     top_model_drivers_by_symbol: dict[str, list[str]] = {}
     if model_variant_applied == "LIGHTGBM_HYBRID" and snapshots:
         try:
-            from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
-
-            predictor = EnsembleAlphaPredictor()
+            predictor = get_ensemble_alpha_predictor()
             pred_map, model_info = predictor.predict(db, snapshots, as_of_date)
             for sym, pred in pred_map.items():
                 ml_predictions[sym] = pred.pred_annual_return
@@ -1194,9 +1192,7 @@ def estimate_expected_returns_for_mandate(
         return rule_expected_returns
 
     try:
-        from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
-
-        predictor = EnsembleAlphaPredictor()
+        predictor = get_ensemble_alpha_predictor()
         predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
     except Exception:
         predictions_by_symbol, model_info = {}, {"available": False}
@@ -1713,9 +1709,7 @@ def estimate_expected_returns(db, as_of_date,
     # 3) Hybrid mode: blend ML calibrated annual return into the rule engine.
     #    Only apply ML predictions to delivery equities; keep ETFs stable.
     try:
-        from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
-
-        predictor = EnsembleAlphaPredictor()
+        predictor = get_ensemble_alpha_predictor()
         predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
     except Exception:
         predictions_by_symbol, model_info = {}, {"available": False}

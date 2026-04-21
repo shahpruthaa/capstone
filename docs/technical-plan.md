@@ -20,8 +20,8 @@ Keep the current `6f36924ad85bbca4fa2cf6284a71a5404f832482` snapshot stable as a
 | Frontend shell and tab structure  | Complete | `Market`, `Portfolio`, `Trade Ideas`, `Backtest`, `Compare`, and `AI Chat` are wired        |
 | Explanation boundary cleanup      | Complete | Groq remains a non-blocking helper for chat/explanations only                               |
 | UI smoke validation               | Complete | Generate, Analyze, Backtest, Compare, and AI Chat pass in the current snapshot              |
+| Regression automation depth       | Complete | Phase acceptance checks now cover phases 0-4 before the official smoke run                  |
 | Official benchmark reconstruction | Partial  | Proxy-based benchmark output is still used for local demo continuity                        |
-| Regression automation depth       | Partial  | Smoke coverage exists, but broader test automation still needs expansion                    |
 
 ## 1. Current Branch Snapshot
 
@@ -96,6 +96,7 @@ Completed in the current snapshot:
 - backend import/startup verification
 - backend health and CORS preflight checks
 - frontend production build validation
+- phase acceptance checks for phases 0-4
 - one-pass UI smoke validation for all major screens
 
 The smoke runner is currently represented in the repository by:
@@ -108,9 +109,9 @@ The smoke runner is currently represented in the repository by:
 Still partial:
 
 - official benchmark reconstruction from a fully authoritative constituent history
-- broader regression automation beyond the smoke pass
 - artifact quality improvements from fresh training runs
 - execution-grade integrations outside the research/local-demo scope
+- CI-backed engineering telemetry for the observability endpoint
 
 ## 7. Acceptance Criteria Mapping
 
@@ -120,4 +121,5 @@ Still partial:
 | Runtime readiness is visible                             | Complete | `/api/v1/models/current` drives the UI banner and fallback display    |
 | Browser fetches work from local dev ports                | Complete | CORS is enabled for local UI origins used in this directory           |
 | Generate/Analyze/Backtest/Compare/AI Chat are functional | Complete | Verified by current smoke pass                                        |
+| Phase acceptance gates are executable                    | Complete | `scripts/phase-acceptance.mjs` exercises phases 0-4 against live APIs |
 | Documentation matches the current tree                   | Complete | README, architecture, technical plan, and proof notes are aligned     |

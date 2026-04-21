@@ -28,16 +28,17 @@ app.include_router(api_router)
 @app.on_event("startup")
 def _startup_bootstrap_local_runtime() -> None:
     import logging
+
     logger = logging.getLogger(__name__)
     try:
-        # Skip bootstrap on startup to avoid blocking the server
-        # Ensure the local schema exists and seed the DB from cached bhavcopy archives when needed.
-        logger.info("Bootstrapping will be done on-demand to avoid blocking startup")
-        app.state.bootstrap_status = {"bootstrapped": False, "reason": "deferred"}  # type: ignore[attr-defined]
-        app.state.lightgbm_model_status = {"available": False}  # type: ignore[attr-defined]
-        logger.info("All startup tasks completed (deferred)")
-    except Exception as e:
-        logger.error(f"Startup error: {e}", exc_info=True)
+        bootstrap_status = bootstrap_local_state()
+        lightgbm_status = get_lightgbm_model_status()
+        app.state.bootstrap_status = bootstrap_status  # type: ignore[attr-defined]
+        app.state.lightgbm_model_status = lightgbm_status  # type: ignore[attr-defined]
+        logger.info("Startup bootstrap completed: %s", bootstrap_status)
+        logger.info("LightGBM model status loaded: %s", lightgbm_status.get("available"))
+    except Exception as error:
+        logger.error("Startup error: %s", error, exc_info=True)
         raise
 
 

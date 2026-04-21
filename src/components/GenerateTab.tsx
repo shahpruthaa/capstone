@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
     BarChart, Bar, XAxis, YAxis, CartesianGrid
@@ -75,18 +75,19 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
     const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const manualModelVariantSelection = useRef(false);
 
     useEffect(() => {
         const loadModelStatus = async () => {
             try {
                 const status = await getCurrentModelStatusViaApi();
-                if (status.available) {
+                if (status.available && !manualModelVariantSelection.current) {
                     setActiveModelVariant('LIGHTGBM_HYBRID');
                     setModelStatusReason('');
                     if (typeof status.modelVersion === 'string') setActiveModelVersion(status.modelVersion);
                     if (typeof status.trainingMode === 'string') setActiveTrainingMode(status.trainingMode);
                     if (status.artifactClassification) setArtifactClassification(status.artifactClassification);
-                } else {
+                } else if (!manualModelVariantSelection.current) {
                     setActiveModelVariant('RULES');
                     setActiveTrainingMode('');
                     setArtifactClassification('');
@@ -218,6 +219,30 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         <div className="alert-info text-xs">
                             Active local engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `LightGBM hybrid${activeModelVersion ? ` v${activeModelVersion}` : ''}` : 'Rules only'}
                             {activeModelVariant === 'RULES' && modelStatusReason ? ` (${modelStatusReason})` : ''}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    manualModelVariantSelection.current = true;
+                                    setActiveModelVariant('RULES');
+                                }}
+                                className={`risk-btn ${activeModelVariant === 'RULES' ? 'active-risk' : ''}`}
+                            >
+                                Rules only
+                                <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">Fast local baseline</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    manualModelVariantSelection.current = true;
+                                    setActiveModelVariant('LIGHTGBM_HYBRID');
+                                }}
+                                className={`risk-btn ${activeModelVariant === 'LIGHTGBM_HYBRID' ? 'active-risk' : ''}`}
+                            >
+                                LightGBM hybrid
+                                <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">Model-aware runtime</span>
+                            </button>
                         </div>
                         {activeModelVariant === 'LIGHTGBM_HYBRID' && (
                             <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
