@@ -38,14 +38,19 @@ SECTOR_KEYWORDS = {
 POSITIVE_KEYWORDS = {
     "surge", "beats", "approval", "cut", "boost", "tailwind", "recovery",
     "growth", "rally", "order win", "supportive", "expansion", "eases",
+    "up", "gain", "profit", "jump", "record", "high", "buy", "positive",
+    "increase", "rise", "soar", "dividend", "bullish", "ready"
 }
 NEGATIVE_KEYWORDS = {
     "war", "conflict", "sanction", "shock", "pressure", "cuts", "downgrade",
     "miss", "outflow", "tariff", "slump", "disruption", "attack", "volatility",
+    "down", "loss", "drop", "fall", "plunge", "crash", "sell", "negative",
+    "decrease", "decline", "dive", "bearish", "loser", "weak", "weakening"
 }
 HIGH_IMPACT_KEYWORDS = {
     "war", "sanction", "opec", "crude", "tariff", "fda", "rbi", "fed",
-    "conflict", "attack", "commodity", "export", "ban",
+    "conflict", "attack", "commodity", "export", "ban", "ipo", "largest",
+    "exchange", "crash", "record", "inflation", "sebi", "election"
 }
 
 DEFAULT_REGION_EXPOSURE_BY_SECTOR = {
