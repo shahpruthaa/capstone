@@ -65,7 +65,7 @@ RISK_MODE_TARGET_SECTORS = {
 }
 
 BENCHMARK_UNIVERSES = [
-    ("NSE Atlas AI Portfolio", "AI", "Constrained covariance allocator using factor-aware expected returns."),
+    ("NSE AI Portfolio", "AI", "Constrained covariance allocator using factor-aware expected returns."),
     ("Nifty 50 Proxy", "INDEX", "Large-cap, liquidity-weighted proxy for the top end of the NSE cash market."),
     ("Nifty 500 Proxy", "INDEX", "Broad-market proxy with large/mid/small bucket balancing across the ingested universe."),
     ("Momentum Factor", "FACTOR", "High-momentum proxy basket using 1M/3M/6M blended trend strength."),
@@ -74,7 +74,7 @@ BENCHMARK_UNIVERSES = [
 ]
 
 BENCHMARK_METADATA = {
-    "NSE Atlas AI Portfolio": {
+    "NSE AI Portfolio": {
         "construction_method": "Constrained long-only optimizer over local NSE snapshots using shrinkage covariance and model-aware expected returns.",
         "is_proxy": False,
         "constituent_method": "Local universe shortlist plus risk-mode allocator on ingested securities.",
@@ -755,7 +755,7 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
 
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
     benchmark_portfolios = {
-        "NSE Atlas AI Portfolio": dict((snapshot.symbol, weight / 100.0) for snapshot, weight in select_portfolio_candidates(db, as_of_date, "MODERATE", snapshots)),
+        "NSE AI Portfolio": dict((snapshot.symbol, weight / 100.0) for snapshot, weight in select_portfolio_candidates(db, as_of_date, "MODERATE", snapshots)),
         "Nifty 50 Proxy": build_nifty50_proxy_portfolio(snapshots),
         "Nifty 500 Proxy": build_nifty500_proxy_portfolio(snapshots),
         "Momentum Factor": build_factor_portfolio(snapshots, factor_key="momentum", count=12, sector_cap=0.25),
@@ -768,7 +768,7 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         metrics = summarize_return_series(aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {})))
         expense_ratio = 0.08 if category == "AI" else 0.06 if category == "INDEX" else 0.34
         benchmark_metadata = BENCHMARK_METADATA.get(name, {})
-        relative_accuracy_score_pct = 100.0 if name == "NSE Atlas AI Portfolio" else 92.0 if name == "Nifty 50 Proxy" else 88.0 if name == "Nifty 500 Proxy" else 84.0 if name == "Quality Factor" else 81.0 if name == "AMC Multi Factor" else 79.0
+        relative_accuracy_score_pct = 100.0 if name == "NSE AI Portfolio" else 92.0 if name == "Nifty 50 Proxy" else 88.0 if name == "Nifty 500 Proxy" else 84.0 if name == "Quality Factor" else 81.0 if name == "AMC Multi Factor" else 79.0
         strategies.append(
             BenchmarkMetricModel(
                 name=name,

@@ -2,7 +2,7 @@ import { chromium } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const baseUrl = 'http://localhost:3000';
+const baseUrl = 'http://127.0.0.1:3001';
 const outDir = path.resolve('tmp', 'ui-smoke');
 
 async function saveShot(page, name) {
@@ -35,7 +35,7 @@ async function run() {
     screenshotsDir: outDir,
   };
 
-  const observabilityResponse = await fetch('http://localhost:8000/api/v1/observability/kpis');
+  const observabilityResponse = await fetch('http://127.0.0.1:8000/api/v1/observability/kpis');
   if (!observabilityResponse.ok) {
     throw new Error(`Observability endpoint failed with status ${observabilityResponse.status}`);
   }
@@ -158,7 +158,7 @@ async function run() {
       const aiBubbles = Array.from(document.querySelectorAll('.chat-window .bg-slate-100.rounded-2xl'));
       return aiBubbles.some((node) => {
         const text = (node.textContent || '').trim();
-        return text.length > 10 && !text.includes("Hi! I'm your NSE Atlas Portfolio Assistant");
+        return text.length > 40 && !text.includes("Hi! I'm your NSE AI Portfolio Assistant");
       });
     }, undefined, { timeout: 120000 });
 
@@ -167,7 +167,7 @@ async function run() {
     let resolvedReply = '';
     for (let i = aiCount - 1; i >= 0; i -= 1) {
       const text = await textContentOrEmpty(aiBubbles.nth(i));
-      if (text.length > 10 && !text.includes("Hi! I'm your NSE Atlas Portfolio Assistant")) {
+      if (text.length > 40 && !text.includes("Hi! I'm your NSE AI Portfolio Assistant")) {
         resolvedReply = text;
         break;
       }

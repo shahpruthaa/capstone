@@ -140,7 +140,7 @@ export function CompareTab() {
 
     const growthCurve = cmp.projectedGrowth.filter(r => r.year % 2 === 0 || r.year === 1 || r.year === 10);
 
-    const KEY_STRATEGIES = ['NSE Atlas AI Portfolio', 'Nifty 50 Proxy', 'Nifty 500 Proxy', 'Momentum Factor'];
+    const KEY_STRATEGIES = ['NSE AI Portfolio', 'Nifty 50 Proxy', 'Nifty 500 Proxy', 'Momentum Factor'];
     const LINE_COLORS = ['#14b8a6', '#94a3b8', '#8b5cf6', '#f59e0b'];
 
     return (
@@ -243,7 +243,7 @@ export function CompareTab() {
                                     type="monotone"
                                     dataKey={name}
                                     stroke={LINE_COLORS[i]}
-                                    strokeWidth={name === 'NSE Atlas AI Portfolio' ? 3 : 1.5}
+                                    strokeWidth={name === 'NSE AI Portfolio' ? 3 : 1.5}
                                     dot={false}
                                     strokeDasharray={name === 'Nifty 50 Proxy' ? '5 5' : undefined}
                                 />

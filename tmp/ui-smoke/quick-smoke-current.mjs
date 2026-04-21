@@ -135,7 +135,7 @@ async function run() {
         const bubbles = Array.from(document.querySelectorAll('.chat-window .bg-slate-100.rounded-2xl'));
         return bubbles.some((el) => {
           const t = (el.textContent || '').trim();
-          return t.length > 10 && !t.includes("Hi! I'm your NSE Atlas Portfolio Assistant");
+          return t.length > 40 && !t.includes("Hi! I'm your NSE AI Portfolio Assistant");
         });
       }, undefined, { timeout: 120000 });
       result.aiChat.green = true;
