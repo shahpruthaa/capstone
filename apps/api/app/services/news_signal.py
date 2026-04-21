@@ -117,40 +117,63 @@ class MarketNewsContext:
 
 
 def fetch_recent_news() -> list[NewsArticle]:
-    # TODO: Replace this deterministic fallback feed with a live NSE/news provider.
-    now = datetime.now(timezone.utc)
-    return [
-        NewsArticle(
-            headline="Middle East tensions keep crude elevated; Indian refiners watch margins",
-            summary="Persistent conflict in the Middle East is keeping crude prices firm and raising input-cost pressure for downstream oil marketing companies in India.",
-            published_at=now,
-            source="LocalFallback",
-        ),
-        NewsArticle(
-            headline="RBI signals stable liquidity stance as domestic credit demand stays resilient",
-            summary="A steady RBI tone and resilient domestic loan demand are constructive for Indian banks and diversified financials.",
-            published_at=now,
-            source="LocalFallback",
-        ),
-        NewsArticle(
-            headline="European auto demand softens while EV component orders stay mixed",
-            summary="Soft exports to Europe weigh on select automakers, though EV software suppliers continue to see niche order momentum.",
-            published_at=now,
-            source="LocalFallback",
-        ),
-        NewsArticle(
-            headline="US enterprise tech budgets stabilize, helping Indian IT deal pipelines",
-            summary="Large outsourcing renewals and cloud modernization demand are improving sentiment for export-oriented Indian IT services firms.",
-            published_at=now,
-            source="LocalFallback",
-        ),
-        NewsArticle(
-            headline="FDA observations on a few global plants keep pharma compliance in focus",
-            summary="Regulatory scrutiny remains a stock-specific risk for Indian pharma exporters despite a broadly healthy demand backdrop.",
-            published_at=now,
-            source="LocalFallback",
-        ),
-    ]
+    import urllib.request
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timezone
+    import email.utils
+    import re
+
+    url = "https://news.google.com/rss/search?q=NSE+India+market+OR+business&hl=en-IN&gl=IN&ceid=IN:en"
+    articles = []
+    
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            xml_data = response.read()
+            root = ET.fromstring(xml_data)
+            for item in root.findall('.//item')[:15]:
+                title = item.findtext('title') or ""
+                parts = title.rsplit(' - ', 1)
+                headline = parts[0].strip()
+                source = parts[1].strip() if len(parts) > 1 else "Live Feed"
+                
+                desc = item.findtext('description') or ""
+                summary = re.sub('<[^<]+>', '', desc).strip()
+                if not summary or summary == headline:
+                    summary = f"Recent update from {source} regarding the market."
+                
+                link = item.findtext('link') or ""
+                pubDate_str = item.findtext('pubDate') or ""
+                
+                try:
+                    parsed_tuple = email.utils.parsedate_tz(pubDate_str)
+                    if parsed_tuple:
+                        pubDate = email.utils.to_datetime(parsed_tuple)
+                    else:
+                        pubDate = datetime.now(timezone.utc)
+                except Exception:
+                    pubDate = datetime.now(timezone.utc)
+
+                articles.append(NewsArticle(
+                    headline=headline,
+                    summary=summary[:500],
+                    published_at=pubDate,
+                    source=source,
+                    url=link
+                ))
+    except Exception as e:
+        print(f"Failed to fetch live news: {e}")
+        now = datetime.now(timezone.utc)
+        articles = [
+            NewsArticle(
+                headline="Market news feed temporarily unavailable",
+                summary="We could not fetch live market updates at this moment.",
+                published_at=now,
+                source="System"
+            )
+        ]
+        
+    return articles
 
 
 def extract_article_semantics(article: NewsArticle) -> ArticleSemantics:
