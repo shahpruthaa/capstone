@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 import { AnalyzeTab } from './AnalyzeTab';
 import { GenerateTab } from './GenerateTab';
@@ -13,6 +13,23 @@ interface Props {
 
 export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
   const [view, setView] = useState<WorkspaceView>('build');
+
+  useEffect(() => {
+    if (window.pendingAiAction === 'analyze_portfolio') {
+      setView('analyze');
+      window.pendingAiAction = undefined;
+    }
+
+    const handleAction = (e: any) => {
+      if (e.detail.name === 'analyze_portfolio') {
+        setView('analyze');
+      } else if (e.detail.name === 'generate_portfolio') {
+        setView('build');
+      }
+    };
+    window.addEventListener('AI_ACTION', handleAction);
+    return () => window.removeEventListener('AI_ACTION', handleAction);
+  }, []);
 
   return (
     <div className="space-y-6">

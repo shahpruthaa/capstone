@@ -117,7 +117,7 @@ export function AIChat({ portfolio }: AIChatProps) {
                                     {msg.text}
                                     {msg.action && (
                                         <div className="mt-2 text-[10px] font-mono text-teal-700 bg-teal-50 border border-teal-200 rounded px-2 py-1 inline-flex items-center gap-1">
-                                            <Sparkles className="w-3 h-3" /> Executed: {msg.action.name.replace('_', ' ')}
+                                            <Sparkles className="w-3 h-3" /> Executed: {msg.action.name.replace(/_/g, ' ')}
                                         </div>
                                     )}
                                 </div>

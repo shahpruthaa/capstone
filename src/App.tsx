@@ -89,6 +89,14 @@ export default function App() {
         }
       } else if (action.name === 'generate_portfolio') {
         setTab("PORTFOLIO");
+      } else if (action.name === 'benchmark_portfolio') {
+        setTab("COMPARE");
+      } else if (action.name === 'analyze_portfolio') {
+        window.pendingAiAction = 'analyze_portfolio';
+        setTab("PORTFOLIO");
+      } else if (action.name === 'run_backtest') {
+        window.pendingAiAction = 'run_backtest';
+        setTab("BACKTEST");
       }
     };
     window.addEventListener('AI_ACTION', handleAction);

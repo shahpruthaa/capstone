@@ -92,6 +92,24 @@ export function BacktestTab({ portfolio }: Props) {
         }
     };
 
+    useEffect(() => {
+        if (window.pendingAiAction === 'run_backtest') {
+            window.pendingAiAction = undefined;
+            if (portfolio && !running) {
+                // slight delay to allow initial config to load
+                setTimeout(() => handleRun(), 300);
+            }
+        }
+
+        const handleAction = (e: any) => {
+            if (e.detail.name === 'run_backtest') {
+                if (portfolio && !running) handleRun();
+            }
+        };
+        window.addEventListener('AI_ACTION', handleAction);
+        return () => window.removeEventListener('AI_ACTION', handleAction);
+    }, [portfolio, config, selectedModelVariant, running]);
+
     const totalReturnColor = result ? (result.totalReturn >= 0 ? 'green' : 'red') : 'slate';
     const cagrColor = result ? (result.cagr >= 0 ? 'green' : 'red') : 'slate';
 

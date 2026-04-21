@@ -143,7 +143,7 @@ INSTRUCTIONS:
 - For trade idea questions: reference checklist scores and entry/stop/target levels.
 - Be direct, quantitative, concise — max 3 paragraphs. No generic disclaimers.
 - If asked about a stock not in the portfolio, reason from sector trend, regime, and factor context.
-- If the user asks to perform an action (e.g., generate/build a portfolio, or navigate to a tab like Backtest or Compare), use the available tools to execute the action autonomously."""
+- If the user asks to perform an action (e.g., generate a portfolio, benchmark it, analyze holdings, run a backtest, or navigate to a tab), use the available tools to execute the action autonomously."""
 
 @router.post("/stock")
 async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
@@ -173,7 +173,6 @@ async def chat_endpoint(req: ChatRequest) -> dict:
     for h in req.history[-6:]:
         messages.append(h)
     messages.append({"role": "user", "content": req.message})
-    
     tools = [
         {
             "type": "function",
@@ -197,11 +196,35 @@ async def chat_endpoint(req: ChatRequest) -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "capital": {"type": "number", "description": "The capital amount in INR (e.g. 100000)"},
+                        "capital": {"type": "number", "description": "The capital amount in INR (e.g. 1000000 for 10 lakhs)"},
                         "risk": {"type": "string", "enum": ["CONSERVATIVE", "MODERATE", "AGGRESSIVE"], "description": "The risk profile."}
                     },
                     "required": ["capital", "risk"]
                 }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "benchmark_portfolio",
+                "description": "Navigates to the comparison view to benchmark the portfolio against market standards.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "analyze_portfolio",
+                "description": "Navigates to the portfolio analysis view to review current holdings.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_backtest",
+                "description": "Navigates to the backtest tab and automatically starts a historical replay simulation.",
+                "parameters": {"type": "object", "properties": {}}
             }
         }
     ]
