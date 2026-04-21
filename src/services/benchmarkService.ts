@@ -32,7 +32,7 @@ export interface ComparisonResult {
 // ─── Simulated benchmark results (research-grade approximations) ──────────────
 const STRATEGIES: BenchmarkStrategy[] = [
     {
-        name: 'NSE AI Portfolio',
+        name: 'NSE Atlas AI Portfolio',
         description: 'Correlation-optimised, factor-driven, dynamically rebalanced with stop-loss & tax-loss harvesting.',
         constructionMethod: 'Simulated local benchmark',
         isProxy: false,

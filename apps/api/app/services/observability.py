@@ -74,7 +74,7 @@ def _compute_news_precision_proxy() -> float | None:
 def _compute_tracking_error_proxy(strategy_rows: list[dict[str, float]]) -> float | None:
     if not strategy_rows:
         return None
-    ai_row = next((row for row in strategy_rows if row.get("name") == "NSE AI Portfolio"), None)
+    ai_row = next((row for row in strategy_rows if row.get("name") == "NSE Atlas AI Portfolio"), None)
     if not ai_row:
         return None
     ai_return = float(ai_row.get("annual_return_pct") or 0.0)

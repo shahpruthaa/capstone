@@ -15,7 +15,7 @@ interface AIChatProps {
 export function AIChat({ portfolio }: AIChatProps) {
     const [open, setOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
-        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant. I know your current portfolio, market regime, and top trade ideas. Ask me anything." }
+        { role: 'ai', text: "Hi! I'm your NSE Atlas Portfolio Assistant. I know your current portfolio, market regime, and top trade ideas. Ask me anything." }
     ]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
@@ -85,7 +85,7 @@ export function AIChat({ portfolio }: AIChatProps) {
                                 <Bot className="w-4 h-4 text-white" />
                             </div>
                             <div>
-                                <p className="text-sm font-bold text-white">NSE AI Assistant</p>
+                                <p className="text-sm font-bold text-white">NSE Atlas Assistant</p>
                                 <p className="text-xs text-teal-100 flex items-center gap-1">
                                     <Sparkles className="w-3 h-3" /> Powered by Groq LLM
                                 </p>
