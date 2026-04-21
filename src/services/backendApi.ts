@@ -567,21 +567,11 @@ export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
 
 export type ExplainChatHistoryItem = { role: 'assistant' | 'user'; content: string };
 
-export async function fetchPlatformContext(): Promise<Record<string, unknown>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/explain/context`);
-    if (!response.ok) return {};
-    return await response.json();
-  } catch {
-    return {};
-  }
-}
-
-export async function postExplainChat(message: string, history: ExplainChatHistoryItem[], portfolioContext: Record<string, unknown> = {}): Promise<{ response: string }> {
+export async function postExplainChat(message: string, history: ExplainChatHistoryItem[]): Promise<{ response: string }> {
   const response = await fetch(`${API_BASE_URL}/api/v1/explain/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history, portfolio_context: portfolioContext }),
+    body: JSON.stringify({ message, history }),
   });
   if (!response.ok) {
     const body = await response.text();
