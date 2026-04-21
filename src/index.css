@@ -2,22 +2,22 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #071018;
-  --bg-elev: #0d1722;
-  --bg-elev-2: #132131;
-  --bg-soft: rgba(148, 163, 184, 0.08);
-  --line: rgba(148, 163, 184, 0.18);
-  --line-strong: rgba(148, 163, 184, 0.3);
-  --text: #ecf4ff;
-  --text-muted: #96a7bc;
-  --text-dim: #61748e;
+  --bg: #fff6fb;
+  --bg-elev: #ffffff;
+  --bg-elev-2: #fff0f7;
+  --bg-soft: rgba(255, 93, 162, 0.08);
+  --line: rgba(229, 90, 150, 0.2);
+  --line-strong: rgba(229, 90, 150, 0.35);
+  --text: #2f1431;
+  --text-muted: #7a4b72;
+  --text-dim: #9b6b91;
   --accent: #ff5da2;
-  --accent-2: #ff8fc0;
-  --accent-warm: #f6c760;
-  --good: #4ade80;
-  --warn: #fbbf24;
-  --bad: #fb7185;
-  --shadow: 0 20px 70px rgba(2, 8, 23, 0.45);
+  --accent-2: #ff96c7;
+  --accent-warm: #ffc46b;
+  --good: #2db77f;
+  --warn: #d79326;
+  --bad: #d95b7d;
+  --shadow: 0 16px 42px rgba(204, 82, 137, 0.16);
   --radius: 22px;
   --sidebar-w: 244px;
   --topbar-h: 70px;
@@ -35,9 +35,9 @@
 html {
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(255, 93, 162, 0.12), transparent 28%),
-    radial-gradient(circle at top right, rgba(255, 143, 192, 0.1), transparent 22%),
-    linear-gradient(180deg, #050b12 0%, #071018 100%);
+    radial-gradient(circle at top left, rgba(255, 93, 162, 0.2), transparent 34%),
+    radial-gradient(circle at top right, rgba(255, 150, 199, 0.22), transparent 28%),
+    linear-gradient(180deg, #fff9fc 0%, #ffeef7 100%);
   color: var(--text);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
@@ -89,8 +89,8 @@ a {
   inset: 0 auto 0 0;
   width: var(--sidebar-w);
   background:
-    linear-gradient(180deg, rgba(7, 16, 24, 0.98), rgba(11, 20, 31, 0.96)),
-    radial-gradient(circle at top left, rgba(255, 93, 162, 0.08), transparent 35%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 246, 251, 0.96)),
+    radial-gradient(circle at top left, rgba(255, 93, 162, 0.12), transparent 42%);
   border-right: 1px solid var(--line);
   backdrop-filter: blur(18px);
   display: flex;
@@ -116,7 +116,7 @@ a {
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
-  background: rgba(7, 16, 24, 0.88);
+  background: rgba(255, 250, 253, 0.9);
   backdrop-filter: blur(18px);
 }
 
@@ -140,7 +140,7 @@ a {
   height: 42px;
   border-radius: 14px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #041017;
+  color: #ffffff;
   font-family: var(--font-display);
   font-size: 1.35rem;
   box-shadow: 0 14px 30px rgba(255, 93, 162, 0.25);
@@ -198,7 +198,7 @@ a {
 .nav-item.active {
   background: linear-gradient(135deg, rgba(255, 93, 162, 0.14), rgba(255, 143, 192, 0.08));
   border-color: rgba(255, 93, 162, 0.28);
-  color: var(--accent-2);
+  color: #c73a84;
   box-shadow: inset 0 0 0 1px rgba(255, 93, 162, 0.06);
 }
 
@@ -216,7 +216,7 @@ a {
   gap: 10px;
   border: 1px solid var(--line);
   border-radius: 16px;
-  background: rgba(15, 23, 42, 0.55);
+  background: rgba(255, 255, 255, 0.75);
   padding: 10px 12px;
 }
 
@@ -253,8 +253,8 @@ a {
 .card,
 .metric-card {
   background:
-    linear-gradient(180deg, rgba(15, 23, 34, 0.98), rgba(11, 18, 29, 0.96)),
-    radial-gradient(circle at top left, rgba(255, 93, 162, 0.03), transparent 38%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 247, 252, 0.96)),
+    radial-gradient(circle at top left, rgba(255, 93, 162, 0.08), transparent 42%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -340,13 +340,13 @@ a {
 .alert-warning {
   background: rgba(251, 191, 36, 0.12);
   border-color: rgba(251, 191, 36, 0.2);
-  color: #fde68a;
+  color: #9a6512;
 }
 
 .alert-success {
   background: rgba(74, 222, 128, 0.12);
   border-color: rgba(74, 222, 128, 0.2);
-  color: #bbf7d0;
+  color: #1f7e59;
 }
 
 .btn-primary,
@@ -359,7 +359,7 @@ a {
 
 .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #031019;
+  color: #ffffff;
   box-shadow: 0 14px 30px rgba(255, 93, 162, 0.2);
 }
 
@@ -373,7 +373,7 @@ a {
 }
 
 .btn-secondary {
-  background: rgba(148, 163, 184, 0.08);
+  background: rgba(255, 93, 162, 0.08);
   border-color: var(--line);
   color: var(--text);
 }
@@ -382,7 +382,7 @@ a {
   width: 100%;
   border-radius: 16px;
   border: 1px solid var(--line);
-  background: rgba(12, 20, 31, 0.94);
+  background: rgba(255, 255, 255, 0.92);
   color: var(--text);
   outline: none;
   transition: 160ms ease;
@@ -400,7 +400,7 @@ a {
 .risk-btn {
   border-radius: 18px;
   border: 1px solid var(--line);
-  background: rgba(148, 163, 184, 0.06);
+  background: rgba(255, 93, 162, 0.05);
   color: var(--text-muted);
   padding: 14px 10px;
   display: flex;
@@ -411,7 +411,7 @@ a {
 }
 
 .risk-btn:hover {
-  background: rgba(148, 163, 184, 0.12);
+  background: rgba(255, 93, 162, 0.11);
   color: var(--text);
 }
 
@@ -505,14 +505,14 @@ a {
 .bg-white,
 .bg-slate-100,
 .bg-slate-950\/40 {
-  background-color: rgba(148, 163, 184, 0.08) !important;
+  background-color: rgba(255, 255, 255, 0.9) !important;
 }
 
 .bg-teal-100,
 .bg-blue-100,
 .bg-teal-600,
 .bg-white\/20 {
-  background-color: rgba(255, 93, 162, 0.14) !important;
+  background-color: rgba(255, 93, 162, 0.12) !important;
 }
 
 .border-slate-50,
@@ -593,8 +593,8 @@ a {
   border-radius: 22px;
   overflow: hidden;
   border: 1px solid var(--line);
-  background: rgba(10, 18, 28, 0.96);
-  box-shadow: 0 24px 80px rgba(2, 8, 23, 0.55);
+  background: rgba(255, 250, 253, 0.98);
+  box-shadow: 0 24px 60px rgba(204, 82, 137, 0.22);
   z-index: 50;
   backdrop-filter: blur(18px);
 }
