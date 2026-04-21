@@ -88,6 +88,8 @@ export default function App() {
           setTab(targetTab as Tab);
         }
       } else if (action.name === 'generate_portfolio') {
+        window.pendingAiAction = 'generate_portfolio';
+        window.pendingAiActionArgs = action.arguments;
         setTab("PORTFOLIO");
       } else if (action.name === 'benchmark_portfolio') {
         setTab("COMPARE");

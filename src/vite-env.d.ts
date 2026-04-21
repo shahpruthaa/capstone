@@ -2,4 +2,5 @@
 
 interface Window {
   pendingAiAction?: string;
+  pendingAiActionArgs?: any;
 }

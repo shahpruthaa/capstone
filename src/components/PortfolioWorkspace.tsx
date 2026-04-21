@@ -18,6 +18,9 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
     if (window.pendingAiAction === 'analyze_portfolio') {
       setView('analyze');
       window.pendingAiAction = undefined;
+    } else if (window.pendingAiAction === 'generate_portfolio') {
+      setView('build');
+      // We don't clear pendingAiAction here because GenerateTab needs it to trigger the API.
     }
 
     const handleAction = (e: any) => {

@@ -143,7 +143,7 @@ INSTRUCTIONS:
 - For trade idea questions: reference checklist scores and entry/stop/target levels.
 - Be direct, quantitative, concise — max 3 paragraphs. No generic disclaimers.
 - If asked about a stock not in the portfolio, reason from sector trend, regime, and factor context.
-- If the user asks to perform an action (e.g., generate a portfolio, benchmark it, analyze holdings, run a backtest, or navigate to a tab), use the available tools to execute the action autonomously."""
+- If the user asks to perform an action (e.g., generate a portfolio, benchmark it, analyze holdings, run a backtest, or navigate to a tab), YOU MUST use the available tools to execute the action autonomously. DO NOT reply with conversational text when an action is requested; execute the tool directly."""
 
 @router.post("/stock")
 async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
@@ -234,7 +234,7 @@ async def chat_endpoint(req: ChatRequest) -> dict:
             r = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {settings.groq_api_key}", "Content-Type": "application/json"},
-                json={"model": settings.groq_model, "max_tokens": 600, "messages": messages, "temperature": 0.35, "tools": tools},
+                json={"model": settings.groq_model, "max_tokens": 600, "messages": messages, "temperature": 0.35, "tools": tools, "tool_choice": "auto"},
             )
             if r.status_code == 200:
                 data = r.json()
