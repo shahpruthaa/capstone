@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
-import { postExplainChat, type ExplainChatHistoryItem } from '../services/backendApi';
+import { postExplainChat, fetchPlatformContext, type ExplainChatHistoryItem } from '../services/backendApi';
 
 interface Message {
     role: 'user' | 'ai';
@@ -15,11 +15,16 @@ interface AIChatProps {
 export function AIChat({ portfolio }: AIChatProps) {
     const [open, setOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
-        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant powered by Groq LLM. Ask me about your portfolio, NSE stocks, market trends, tax implications, or trading strategy." }
+        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant. I know your current portfolio, market regime, and top trade ideas. Ask me anything." }
     ]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
+    const [platformContext, setPlatformContext] = useState<Record<string, unknown>>({});
     const bottomRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        fetchPlatformContext().then(ctx => setPlatformContext(ctx));
+    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -39,13 +44,23 @@ export function AIChat({ portfolio }: AIChatProps) {
                 content: m.text,
             }));
 
-            const portfolioContext = portfolio
+            const portfolioContextText = portfolio
                 ? `Portfolio: ${portfolio.mandate?.risk_attitude ?? portfolio.riskProfile}, horizon ${portfolio.mandate?.investment_horizon_weeks ?? 'n/a'} weeks, ₹${portfolio.totalInvested.toLocaleString('en-IN')}, ${portfolio.allocations.length} stocks (${portfolio.allocations.slice(0, 5).map(a => `${a.stock.symbol} (${a.weight.toFixed(1)}%)`).join(', ')})`
                 : 'No portfolio generated yet.';
 
-            const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContext}]`;
+            const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContextText}]`;
 
-            const data = await postExplainChat(enrichedMessage, history);
+            // Merge the frontend portfolio object into the platform context payload
+            const fullContextPayload = {
+                ...platformContext,
+                portfolio: portfolio ? {
+                    allocations: portfolio.allocations,
+                    mandate: portfolio.mandate,
+                    capital_amount: portfolio.totalInvested
+                } : null
+            };
+
+            const data = await postExplainChat(enrichedMessage, history, fullContextPayload);
             setMessages(prev => [...prev, { role: 'ai', text: data.response }]);
         } catch {
             setMessages(prev => [...prev, {
