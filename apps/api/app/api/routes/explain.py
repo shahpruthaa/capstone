@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.db.session import get_db
-from app.services.groq_explainer import explain_stock, explain_portfolio
+from app.services.market_event_analyzer import analyze_market_events
+from app.services.portfolio_rebalancing import analyze_portfolio_rebalancing, RebalancingAnalysis
 
 router = APIRouter()
 
@@ -68,6 +69,12 @@ async def get_platform_context(db: Session = Depends(get_db)) -> dict:
     except Exception as e:
         context["top_trade_ideas"] = []
         context["trade_ideas_error"] = str(e)
+    try:
+        from app.services.market_event_analyzer import analyze_market_events
+        context["market_events_analysis"] = analyze_market_events()
+    except Exception as e:
+        context["market_events_analysis"] = "Market events analysis temporarily unavailable."
+        context["market_events_error"] = str(e)
     return context
 
 def _build_system_prompt(portfolio_context: dict) -> str:
@@ -128,22 +135,28 @@ def _build_system_prompt(portfolio_context: dict) -> str:
             f"win rate {float(m.get('win_rate_pct') or 0):.1f}%."
         )
 
+    market_events = portfolio_context.get("market_events_analysis", "")
+    events_str = ""
+    if market_events and market_events != "Market events analysis temporarily unavailable.":
+        events_str = f"\n\nCURRENT MARKET EVENTS ANALYSIS:\n{market_events[:500]}..."  # Truncate for prompt size
+
     return f"""You are a senior NSE portfolio analyst AI with full real-time access to the user's platform state.
 
 MARKET STATE: {regime_str}
 
 {portfolio_str}
 
-{ideas_str}{backtest_str}
+{ideas_str}{backtest_str}{events_str}
 
 INSTRUCTIONS:
 - Always reason from the context above. Reference specific stocks, sectors, and numbers.
 - In a BEAR regime: emphasise capital preservation, quality, low beta. Flag high death_risk stocks.
 - For portfolio questions: comment on concentration, sector exposure, ML signals, and regime fit.
 - For trade idea questions: reference checklist scores and entry/stop/target levels.
+- For market event questions: reference the current news analysis and sector impacts.
 - Be direct, quantitative, concise — max 3 paragraphs. No generic disclaimers.
 - If asked about a stock not in the portfolio, reason from sector trend, regime, and factor context.
-- If the user asks to perform an action (e.g., generate a portfolio, benchmark it, analyze holdings, run a backtest, or navigate to a tab), use the available tools to execute the action autonomously."""
+- If the user asks to perform an action (e.g., generate a portfolio, benchmark it, analyze holdings, run a backtest, analyze market events, or rebalance portfolio), use the available tools to execute the action autonomously."""
 
 @router.post("/stock")
 async def explain_stock_endpoint(req: StockExplainRequest) -> dict:
@@ -226,6 +239,22 @@ async def chat_endpoint(req: ChatRequest) -> dict:
                 "description": "Navigates to the backtest tab and automatically starts a historical replay simulation.",
                 "parameters": {"type": "object", "properties": {}}
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "analyze_market_events",
+                "description": "Analyzes current market news and events for investment implications and trading opportunities.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "rebalance_portfolio",
+                "description": "Analyzes current portfolio and provides detailed rebalancing recommendations with explanations.",
+                "parameters": {"type": "object", "properties": {}}
+            }
         }
     ]
 
@@ -275,3 +304,42 @@ async def explain_portfolio_endpoint(req: PortfolioExplainRequest) -> dict:
         total_amount=req.total_amount,
     )
     return {"explanation": explanation}
+
+@router.get("/market-events")
+async def analyze_market_events_endpoint() -> dict:
+    """Analyze current market events and news for investment implications."""
+    analysis = analyze_market_events()
+    return {"analysis": analysis, "generated_at": "2024-01-01T00:00:00Z"}
+
+@router.post("/portfolio/rebalance")
+async def rebalance_portfolio_endpoint(
+    req: PortfolioExplainRequest,
+    db: Session = Depends(get_db)
+) -> dict:
+    """Analyze portfolio and provide rebalancing recommendations."""
+    analysis = analyze_portfolio_rebalancing(
+        db=db,
+        allocations=req.allocations,
+        risk_profile=req.risk_mode,
+        investment_horizon="6-12 months",  # Could be made configurable
+        total_value=req.total_amount
+    )
+
+    return {
+        "overall_assessment": analysis.overall_assessment,
+        "risk_adjustment": analysis.risk_adjustment,
+        "timeline": analysis.timeline,
+        "explanation": analysis.explanation,
+        "recommendations": [
+            {
+                "action": rec.action,
+                "symbol": rec.symbol,
+                "current_weight": rec.current_weight,
+                "target_weight": rec.target_weight,
+                "rationale": rec.rationale,
+                "urgency": rec.urgency,
+                "expected_impact": rec.expected_impact
+            }
+            for rec in analysis.recommendations
+        ]
+    }

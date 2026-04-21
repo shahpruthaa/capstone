@@ -239,3 +239,81 @@ The architecture is stable for a local capstone demo, but a few areas remain int
 - model quality depends on what artifacts are present locally
 - the system is research-grade EOD analysis, not broker execution infrastructure
 - broader automated regression coverage still needs to grow beyond the smoke pass
+
+## Hybrid Quant Engine Deep Dive
+
+The core of NSE Atlas is the **Hybrid Quant Engine**, a sophisticated portfolio construction system that combines traditional quantitative methods with modern machine learning approaches. The engine operates in three distinct modes:
+
+### Full Ensemble Mode
+When all ML artifacts are available, the engine activates the complete hybrid pipeline:
+
+1. **Feature Engineering**: Extracts 50+ technical, fundamental, and sentiment features from historical data
+2. **Multi-Model Inference**: Runs parallel predictions across LightGBM, LSTM, and GNN models
+3. **Ensemble Scoring**: Combines model outputs using a meta-learner that weights predictions by recent performance
+4. **Risk Integration**: Applies volatility scaling and correlation constraints
+5. **Portfolio Optimization**: Uses mean-variance optimization with ML-enhanced expected returns
+
+### Degraded Ensemble Mode
+When some models are unavailable, the engine gracefully degrades while maintaining functionality:
+
+- Falls back to available models with adjusted ensemble weights
+- Maintains portfolio quality through robust feature engineering
+- Provides explicit UI indicators of reduced model coverage
+
+### Rules-Only Mode
+As a final fallback, the engine uses rule-based scoring:
+
+- Momentum and mean-reversion signals
+- Volatility-adjusted position sizing
+- Sector diversification constraints
+- Risk parity allocation principles
+
+## Ensemble Scorer Architecture
+
+The `ensemble_scorer.py` module implements a sophisticated model combination strategy:
+
+### Model Weighting
+- **Performance-based**: Recent backtest Sharpe ratio influences model weights
+- **Diversity bonus**: Models with low correlation to ensemble receive higher weights
+- **Confidence calibration**: Models with higher prediction confidence get more influence
+
+### Prediction Aggregation
+- **Rank-based voting**: Converts continuous predictions to ranks for robust combination
+- **Outlier detection**: Identifies and down-weights anomalous model predictions
+- **Temporal adaptation**: Adjusts weights based on market regime (bull/bear/neutral)
+
+### Risk Integration
+- **Volatility scaling**: Adjusts position sizes based on prediction confidence
+- **Correlation constraints**: Ensures portfolio diversification across model predictions
+- **Tail risk management**: Applies stress testing to ensemble predictions
+
+## Local-First Architecture Benefits
+
+NSE Atlas embraces a **local-first** design philosophy that prioritizes user control, privacy, and performance:
+
+### Privacy & Security
+- **Zero data exfiltration**: All analysis runs locally, no user data leaves the machine
+- **Model sovereignty**: ML artifacts remain under user control
+- **Auditability**: Complete transparency into computation and data flows
+
+### Performance Advantages
+- **Sub-millisecond inference**: Local execution eliminates network latency
+- **Offline capability**: Full functionality without internet connectivity
+- **Scalable computation**: Leverages local hardware for parallel model execution
+
+### Cost Efficiency
+- **No API costs**: Eliminates per-request charges for model inference
+- **Predictable expenses**: Only local infrastructure costs (compute/storage)
+- **Free experimentation**: Unlimited model runs without usage limits
+
+### Development Velocity
+- **Rapid iteration**: Local development eliminates deployment dependencies
+- **Debuggability**: Full access to model artifacts and intermediate results
+- **Version control**: Complete artifact versioning and rollback capability
+
+### Reliability
+- **Deterministic execution**: Same inputs always produce identical results
+- **Offline resilience**: Continues functioning during network outages
+- **Dependency isolation**: No external service failures can break core functionality
+
+This local-first approach transforms NSE Atlas from a conventional web application into a powerful desktop-grade research platform that combines the accessibility of web interfaces with the performance and control of native applications.

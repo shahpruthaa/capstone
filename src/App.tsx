@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Home, PieChart, Lightbulb, FlaskConical, GitCompare } from "lucide-react";
+import { Home, PieChart, Lightbulb, FlaskConical, GitCompare, Activity } from "lucide-react";
 import "./index.css";
 import { Portfolio } from "./services/portfolioService";
 import { BacktestTab } from "./components/BacktestTab";
@@ -8,11 +8,15 @@ import { AIChat } from "./components/AIChat";
 import { TradeIdeasTab } from "./components/TradeIdeasTab";
 import { MarketTab } from "./components/MarketTab";
 import { PortfolioWorkspace } from "./components/PortfolioWorkspace";
+import { OverviewTab } from "./components/OverviewTab";
+import { MarketEventsTab } from "./components/MarketEventsTab";
 
-type Tab = "MARKET" | "PORTFOLIO" | "IDEAS" | "BACKTEST" | "COMPARE";
+type Tab = "OVERVIEW" | "MARKET" | "EVENTS" | "PORTFOLIO" | "IDEAS" | "BACKTEST" | "COMPARE";
 
 const PAGE_META: Record<Tab, { title: string; subtitle: string }> = {
+  OVERVIEW: { title: "Research Command Center", subtitle: "Ensemble Status · Market Regime · Neural Signals · System Metrics" },
   MARKET: { title: "Market", subtitle: "Regime · Sectors · Factor weather · News pulse" },
+  EVENTS: { title: "Market Events", subtitle: "Real-time news analysis · Event impact · Trading opportunities" },
   PORTFOLIO: { title: "Portfolio", subtitle: "Mandate questionnaire · Recommended basket · Holdings review" },
   IDEAS: { title: "Trade Ideas", subtitle: "Why now checklist · Entries · Stops · News context" },
   BACKTEST: { title: "Backtest", subtitle: "Replay the exact AI mandate portfolio vs Nifty" },
@@ -31,9 +35,19 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
       </div>
 
       <nav className="sidebar-nav">
+        <button className={`nav-item ${tab === "OVERVIEW" ? "active" : ""}`} onClick={() => setTab("OVERVIEW")}>
+          <Activity size={14} />
+          <span>Overview</span>
+        </button>
+
         <button className={`nav-item ${tab === "MARKET" ? "active" : ""}`} onClick={() => setTab("MARKET")}>
           <Home size={14} />
           <span>Market</span>
+        </button>
+
+        <button className={`nav-item ${tab === "EVENTS" ? "active" : ""}`} onClick={() => setTab("EVENTS")}>
+          <Activity size={14} />
+          <span>Events</span>
         </button>
 
         <button className={`nav-item ${tab === "PORTFOLIO" ? "active" : ""}`} onClick={() => setTab("PORTFOLIO")}>
@@ -76,7 +90,7 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
 }
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("MARKET");
+  const [tab, setTab] = useState<Tab>("OVERVIEW");
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
 
   useEffect(() => {
@@ -84,7 +98,7 @@ export default function App() {
       const action = e.detail;
       if (action.name === 'navigate_to_tab') {
         const targetTab = action.arguments.tab_name;
-        if (["MARKET", "PORTFOLIO", "IDEAS", "BACKTEST", "COMPARE"].includes(targetTab)) {
+          if (["OVERVIEW", "MARKET", "EVENTS", "PORTFOLIO", "IDEAS", "BACKTEST", "COMPARE"].includes(targetTab)) {
           setTab(targetTab as Tab);
         }
       } else if (action.name === 'generate_portfolio') {
@@ -119,7 +133,9 @@ export default function App() {
         </header>
 
         <main className="app-main">
+          {tab === "OVERVIEW" && <OverviewTab />}
           {tab === "MARKET" && <MarketTab />}
+          {tab === "EVENTS" && <MarketEventsTab />}
           {tab === "PORTFOLIO" && <PortfolioWorkspace onPortfolioGenerated={setPortfolio} portfolio={portfolio} />}
           {tab === "IDEAS" && <TradeIdeasTab portfolio={portfolio} />}
           {tab === "BACKTEST" && <BacktestTab portfolio={portfolio} />}

@@ -7,6 +7,7 @@ interface Message {
     role: 'user' | 'ai';
     text: string;
     action?: { name: string; arguments: any };
+    thinking?: string[];
 }
 
 interface AIChatProps {
@@ -38,6 +39,26 @@ export function AIChat({ portfolio }: AIChatProps) {
         setInput('');
         setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
         setLoading(true);
+
+        // Simulate thinking steps
+        const thinkingSteps = [
+            "Retrieving historical volatility data...",
+            "Running LightGBM inference on market factors...",
+            "Analyzing news sentiment from financial feeds...",
+            "Cross-referencing with institutional flows...",
+            "Generating ensemble prediction..."
+        ];
+
+        setMessages(prev => [...prev, { role: 'ai', text: '', thinking: thinkingSteps }]);
+
+        for (let i = 0; i < thinkingSteps.length; i++) {
+            await new Promise(resolve => setTimeout(resolve, 800));
+            setMessages(prev => prev.map((msg, idx) =>
+                idx === prev.length - 1 && msg.role === 'ai'
+                    ? { ...msg, thinking: thinkingSteps.slice(0, i + 1) }
+                    : msg
+            ));
+        }
 
         try {
             const history: ExplainChatHistoryItem[] = messages.slice(-6).map(m => ({
@@ -114,6 +135,16 @@ export function AIChat({ portfolio }: AIChatProps) {
                                         : 'bg-teal-600 text-white rounded-tr-sm'
                                         }`}
                                 >
+                                    {msg.thinking && msg.thinking.length > 0 && (
+                                        <div className="thinking-blocks mb-2">
+                                            {msg.thinking.map((step, idx) => (
+                                                <div key={idx} className="thinking-step">
+                                                    <Sparkles className="w-3 h-3 inline mr-1" />
+                                                    {step}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                     {msg.text}
                                     {msg.action && (
                                         <div className="mt-2 text-[10px] font-mono text-teal-700 bg-teal-50 border border-teal-200 rounded px-2 py-1 inline-flex items-center gap-1">

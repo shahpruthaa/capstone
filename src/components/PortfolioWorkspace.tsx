@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 
 import { AnalyzeTab } from './AnalyzeTab';
 import { GenerateTab } from './GenerateTab';
+import { RebalanceTab } from './RebalanceTab';
 import { Portfolio } from '../services/portfolioService';
 
-type WorkspaceView = 'build' | 'analyze';
+type WorkspaceView = 'build' | 'analyze' | 'rebalance';
 
 interface Props {
   onPortfolioGenerated: (portfolio: Portfolio) => void;
@@ -25,6 +26,8 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
         setView('analyze');
       } else if (e.detail.name === 'generate_portfolio') {
         setView('build');
+      } else if (e.detail.name === 'rebalance_portfolio') {
+        setView('rebalance');
       }
     };
     window.addEventListener('AI_ACTION', handleAction);
@@ -55,14 +58,23 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
             >
               Analyze Holdings
             </button>
+            <button
+              className={`${view === 'rebalance' ? 'btn-primary' : 'btn-secondary'} px-4 py-2 text-sm`}
+              onClick={() => setView('rebalance')}
+              disabled={!portfolio}
+            >
+              Rebalance Portfolio
+            </button>
           </div>
         </div>
       </div>
 
       {view === 'build' ? (
         <GenerateTab onPortfolioGenerated={onPortfolioGenerated} portfolio={portfolio} />
-      ) : (
+      ) : view === 'analyze' ? (
         <AnalyzeTab />
+      ) : (
+        <RebalanceTab portfolio={portfolio} />
       )}
     </div>
   );

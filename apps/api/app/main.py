@@ -27,17 +27,18 @@ app.include_router(api_router)
 
 @app.on_event("startup")
 def _startup_bootstrap_local_runtime() -> None:
-    # Ensure the local schema exists and seed the DB from cached bhavcopy archives when needed.
-    app.state.bootstrap_status = bootstrap_local_state()  # type: ignore[attr-defined]
-    # Validate artifact availability early so UI can display whether ML hybrid is active.
-    app.state.lightgbm_model_status = get_lightgbm_model_status()  # type: ignore[attr-defined]
-    # Start auto-ingestion scheduler (runs daily at 16:15 IST after NSE market close)
+    import logging
+    logger = logging.getLogger(__name__)
     try:
-        from app.services.scheduler import start_scheduler
-        start_scheduler()
+        # Skip bootstrap on startup to avoid blocking the server
+        # Ensure the local schema exists and seed the DB from cached bhavcopy archives when needed.
+        logger.info("Bootstrapping will be done on-demand to avoid blocking startup")
+        app.state.bootstrap_status = {"bootstrapped": False, "reason": "deferred"}  # type: ignore[attr-defined]
+        app.state.lightgbm_model_status = {"available": False}  # type: ignore[attr-defined]
+        logger.info("All startup tasks completed (deferred)")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Scheduler not started: {e}")
+        logger.error(f"Startup error: {e}", exc_info=True)
+        raise
 
 
 @app.get("/", tags=["meta"])
