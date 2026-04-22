@@ -53,6 +53,9 @@ from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 
 RISK_FREE_RATE = 0.07
 DEFAULT_BACKTEST_INVESTMENT = 1_000_000.0
+DEFAULT_MODEL_FEATURE_LOOKBACK_DAYS = 450
+DEFAULT_MODEL_MIN_TRADING_HISTORY = 253
+DEFAULT_RULES_MIN_HISTORY = 90
 
 RISK_MODE_UNIVERSES = {
     "ULTRA_LOW": ["LIQUIDBEES", "GOLDBEES", "NIFTYBEES", "HDFCBANK", "ITC", "SUNPHARMA", "POWERGRID", "BHARTIARTL", "NTPC"],
@@ -192,6 +195,82 @@ class BarRecord:
     total_traded_value: float
 
 
+def predict_ensemble_for_snapshots(
+    db: Session,
+    snapshots: list[Snapshot],
+    as_of_date: date,
+) -> tuple[dict[str, object], dict[str, object]]:
+    predictor = get_ensemble_alpha_predictor()
+
+    equity_snapshots = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    if not equity_snapshots:
+        return {}, {"available": False, "reason": "no_equity_snapshots"}
+
+    reloaded_symbols = sorted(
+        snapshot.symbol
+        for snapshot in equity_snapshots
+        if len(snapshot.adjusted_closes) < DEFAULT_MODEL_MIN_TRADING_HISTORY
+    )
+    inference_snapshots = equity_snapshots
+    if reloaded_symbols:
+        refreshed_snapshots = load_snapshots(
+            db,
+            as_of_date=as_of_date,
+            symbols=[snapshot.symbol for snapshot in equity_snapshots],
+            lookback_days=DEFAULT_MODEL_FEATURE_LOOKBACK_DAYS,
+            min_history=DEFAULT_MODEL_MIN_TRADING_HISTORY,
+        )
+        refreshed_map = {
+            snapshot.symbol: snapshot
+            for snapshot in refreshed_snapshots
+            if snapshot.instrument_type == "EQUITY"
+        }
+        inference_snapshots = []
+        for snapshot in equity_snapshots:
+            refreshed = refreshed_map.get(snapshot.symbol)
+            if refreshed is not None:
+                inference_snapshots.append(refreshed)
+            elif len(snapshot.adjusted_closes) >= DEFAULT_MODEL_MIN_TRADING_HISTORY:
+                inference_snapshots.append(snapshot)
+    if not inference_snapshots:
+        return {}, {
+            "available": False,
+            "reason": "insufficient_history_for_ensemble",
+            "history_refreshed_symbols": reloaded_symbols,
+            "insufficient_history_symbols": reloaded_symbols,
+        }
+
+    predictions_by_symbol, model_info = predictor.predict(db, inference_snapshots, as_of_date)
+    enriched_model_info = dict(model_info)
+    if reloaded_symbols:
+        enriched_model_info["history_refreshed_symbols"] = reloaded_symbols
+    missing_after_refresh = sorted(
+        symbol for symbol in reloaded_symbols if symbol not in {snapshot.symbol for snapshot in inference_snapshots}
+    )
+    if missing_after_refresh:
+        enriched_model_info["insufficient_history_symbols"] = missing_after_refresh
+    return predictions_by_symbol, enriched_model_info
+
+
+def resolve_mandate_history_requirements(
+    mandate_config: MandateConfig,
+    model_variant: ModelVariant,
+) -> tuple[int, int]:
+    if model_variant == "LIGHTGBM_HYBRID":
+        return (
+            max(mandate_config.decision_lookback_days, mandate_config.model_feature_lookback_days),
+            mandate_config.model_min_history_days,
+        )
+    return (
+        mandate_config.decision_lookback_days,
+        max(DEFAULT_RULES_MIN_HISTORY, mandate_config.decision_lookback_days // 2),
+    )
+
+
+def mandate_holding_period_scale(mandate_config: MandateConfig) -> float:
+    return min(1.2, max(0.75, mandate_config.holding_period_days / 42.0))
+
+
 def allocate_whole_shares_for_capital(
     selected: list[tuple[Snapshot, float]],
     capital_amount: float,
@@ -243,12 +322,12 @@ def allocate_whole_shares_for_capital(
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
     mandate_config = derive_mandate_config(payload.mandate)
-    ml_min_history = 90
+    history_lookback_days, min_history = resolve_mandate_history_requirements(mandate_config, payload.model_variant)
     snapshots = load_snapshots(
         db,
         as_of_date=as_of_date,
-        lookback_days=mandate_config.lookback_days,
-        min_history=ml_min_history,
+        lookback_days=history_lookback_days,
+        min_history=min_history,
     )
     selected = select_portfolio_candidates_for_mandate(
         db,
@@ -271,7 +350,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     notes = [
         f"Portfolio built from {len(selected)} instruments using prices through {as_of_date.isoformat()}.",
         (
-            f"Mandate horizon {payload.mandate.investment_horizon_weeks} weeks maps to a {mandate_config.lookback_days}-day lookback "
+            f"Mandate horizon {payload.mandate.investment_horizon_weeks} weeks maps to a {mandate_config.decision_lookback_days}-day decision window "
             f"and {mandate_config.holding_period_days}-day expected holding period."
         ),
         (
@@ -292,6 +371,10 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
             else "No corporate actions were loaded for the selected instruments, so adjusted and raw close histories currently match."
         ),
     ]
+    if payload.model_variant == "LIGHTGBM_HYBRID":
+        notes.append(
+            f"Ensemble feature history is loaded from up to {history_lookback_days} calendar days with a {min_history}-session minimum, so mandate horizon shapes decisions without truncating model inputs."
+        )
 
     used_ml_count = sum(1 for snapshot, _ in selected if snapshot.expected_return_source == "ENSEMBLE")
     model_source = "ENSEMBLE" if used_ml_count > 0 else "RULES"
@@ -379,7 +462,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         prediction_horizon_days=prediction_horizon_days,
         capital_amount=payload.capital_amount,
         mandate=payload.mandate,
-        lookback_window_days=mandate_config.lookback_days,
+        lookback_window_days=mandate_config.decision_lookback_days,
         expected_holding_period_days=mandate_config.holding_period_days,
         allocations=allocations,
         metrics=weighted_stats,
@@ -477,8 +560,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     top_model_drivers_by_symbol: dict[str, list[str]] = {}
     if model_variant_applied == "LIGHTGBM_HYBRID" and snapshots:
         try:
-            predictor = get_ensemble_alpha_predictor()
-            pred_map, model_info = predictor.predict(db, snapshots, as_of_date)
+            pred_map, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
             for sym, pred in pred_map.items():
                 ml_predictions[sym] = pred.pred_annual_return
             for snapshot in snapshots:
@@ -530,12 +612,12 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
     selection_date = get_effective_trade_date(db, payload.start_date)
     if payload.mandate is not None:
         mandate_config = derive_mandate_config(payload.mandate)
-        ml_min_history = max(84, mandate_config.lookback_days // 2)
+        history_lookback_days, min_history = resolve_mandate_history_requirements(mandate_config, model_variant_applied)
         snapshots = load_snapshots(
             db,
             as_of_date=selection_date,
-            lookback_days=mandate_config.lookback_days,
-            min_history=ml_min_history,
+            lookback_days=history_lookback_days,
+            min_history=min_history,
         )
         model_portfolio = select_portfolio_candidates_for_mandate(
             db,
@@ -704,6 +786,14 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                 f"Mandate replay used horizon {payload.mandate.investment_horizon_weeks}, "
                 f"{payload.mandate.preferred_num_positions} target positions, and "
                 f"{'small caps allowed' if payload.mandate.allow_small_caps else 'small caps excluded'}."
+            ),
+        )
+        notes.insert(
+            2,
+            (
+                f"Mandate decisions used a {mandate_config.decision_lookback_days}-day decision window and "
+                f"{mandate_config.holding_period_days}-day holding target, while the ensemble loader kept up to "
+                f"{history_lookback_days} calendar days available for model features."
             ),
         )
 
@@ -1177,6 +1267,7 @@ def shortlist_candidates_for_mandate(
 
 
 def candidate_score_for_mandate(snapshot: Snapshot, mandate, mandate_config: MandateConfig) -> float:
+    selection_bias = mandate_config.selection_bias
     momentum = snapshot.factor_scores.get("momentum", 0.0)
     quality = snapshot.factor_scores.get("quality", 0.0)
     low_vol = snapshot.factor_scores.get("low_vol", 0.0)
@@ -1184,11 +1275,11 @@ def candidate_score_for_mandate(snapshot: Snapshot, mandate, mandate_config: Man
     liquidity = snapshot.factor_scores.get("liquidity", 0.0)
     beta_alignment = max(0.0, 1.5 - abs(snapshot.beta_proxy - mandate_config.preferred_beta))
     base_score = (
-        (13.0 * momentum)
-        + (12.0 * quality)
-        + (8.0 * low_vol)
-        + (6.0 * sector_strength)
-        + (4.0 * liquidity)
+        (13.0 * momentum * selection_bias.get("momentum", 1.0))
+        + (12.0 * quality * selection_bias.get("quality", 1.0))
+        + (8.0 * low_vol * selection_bias.get("low_vol", 1.0))
+        + (6.0 * sector_strength * selection_bias.get("sector_strength", 1.0))
+        + (4.0 * liquidity * selection_bias.get("liquidity", 1.0))
         + (6.0 * beta_alignment)
     )
     if mandate.risk_attitude == "capital_preservation":
@@ -1197,8 +1288,8 @@ def candidate_score_for_mandate(snapshot: Snapshot, mandate, mandate_config: Man
         base_score += 6.0 * momentum + 3.5 * snapshot.factor_scores.get("beta", 0.0)
 
     news_adjustment = (
-        (snapshot.news_opportunity_score * 9.0 * mandate_config.news_boost_multiplier)
-        - (snapshot.news_risk_score * 11.0 * mandate_config.news_penalty_multiplier)
+        (snapshot.news_opportunity_score * 9.0 * mandate_config.news_boost_multiplier * selection_bias.get("news", 1.0))
+        - (snapshot.news_risk_score * 11.0 * mandate_config.news_penalty_multiplier * selection_bias.get("news", 1.0))
     )
     ensemble_bonus = 0.0
     if snapshot.ml_pred_21d_return is not None:
@@ -1229,15 +1320,28 @@ def apply_ensemble_predictions_to_snapshots(
         return {"available": False, "reason": "no_snapshots"}
 
     try:
-        predictor = get_ensemble_alpha_predictor()
-        predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
+        predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
     except Exception as exc:
         if required:
             raise ValueError(f"Ensemble runtime failed during inference: {exc}") from exc
         return {"available": False, "reason": "ensemble_inference_failed"}
 
     if required and not predictions_by_symbol:
-        raise ValueError("Ensemble runtime was requested, but it returned no usable predictions.")
+        detail_parts: list[str] = []
+        reason = model_info.get("reason")
+        if reason:
+            detail_parts.append(f"reason={reason}")
+        invalid_rows = model_info.get("invalid_rows")
+        if isinstance(invalid_rows, list) and invalid_rows:
+            detail_parts.append(f"invalid_rows={len(invalid_rows)}")
+        refreshed = model_info.get("history_refreshed_symbols")
+        if isinstance(refreshed, list) and refreshed:
+            detail_parts.append(f"history_refreshed={len(refreshed)}")
+        insufficient_history = model_info.get("insufficient_history_symbols")
+        if isinstance(insufficient_history, list) and insufficient_history:
+            detail_parts.append(f"still_short_history={len(insufficient_history)}")
+        detail = f" ({', '.join(detail_parts)})" if detail_parts else ""
+        raise ValueError(f"Ensemble runtime was requested, but it returned no usable predictions{detail}.")
 
     model_version = str(model_info.get("model_version", "ensemble"))
     prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
@@ -1268,6 +1372,7 @@ def estimate_expected_returns_for_mandate(
     model_variant: ModelVariant = "RULES",
 ) -> list[float]:
     regime = detect_market_regime(snapshots)
+    holding_scale = mandate_holding_period_scale(mandate_config)
     rule_expected_returns: list[float] = []
     for index, snapshot in enumerate(snapshots):
         series = return_matrix[index]
@@ -1282,7 +1387,6 @@ def estimate_expected_returns_for_mandate(
             (snapshot.news_opportunity_score * 0.05 * mandate_config.news_boost_multiplier)
             - (snapshot.news_risk_score * 0.06 * mandate_config.news_penalty_multiplier)
         )
-        holding_scale = min(1.2, max(0.75, mandate_config.holding_period_days / 42.0))
         expected = (
             regime["base_return"]
             + (0.34 * annual_mean * holding_scale)
@@ -1332,7 +1436,7 @@ def estimate_expected_returns_for_mandate(
             snapshot.news_opportunity_score * 0.01 * mandate_config.news_boost_multiplier
             - snapshot.news_risk_score * 0.015 * mandate_config.news_penalty_multiplier
         )
-        expected_returns[index] = max(-0.15, min(0.35, ml_expected + news_tilt))
+        expected_returns[index] = max(-0.15, min(0.35, (ml_expected * holding_scale) + news_tilt))
 
     return expected_returns
 
@@ -1376,14 +1480,19 @@ def build_prior_weights_for_mandate(
     mandate_config: MandateConfig,
 ) -> list[float]:
     raw: list[float] = []
+    selection_bias = mandate_config.selection_bias
     for snapshot in snapshots:
-        base = 1.0 + (0.35 * snapshot.factor_scores.get("momentum", 0.0)) + (0.30 * snapshot.factor_scores.get("quality", 0.0))
+        base = (
+            1.0
+            + (0.35 * snapshot.factor_scores.get("momentum", 0.0) * selection_bias.get("momentum", 1.0))
+            + (0.30 * snapshot.factor_scores.get("quality", 0.0) * selection_bias.get("quality", 1.0))
+        )
         if mandate.risk_attitude == "capital_preservation":
-            base += (0.35 * snapshot.factor_scores.get("low_vol", 0.0))
+            base += (0.35 * snapshot.factor_scores.get("low_vol", 0.0) * selection_bias.get("low_vol", 1.0))
         elif mandate.risk_attitude == "growth":
             base += (0.20 * snapshot.factor_scores.get("beta", 0.0))
-        base += snapshot.news_opportunity_score * 0.4
-        base -= snapshot.news_risk_score * 0.45
+        base += snapshot.news_opportunity_score * 0.4 * selection_bias.get("news", 1.0)
+        base -= snapshot.news_risk_score * 0.45 * selection_bias.get("news", 1.0)
         if "BEES" in snapshot.symbol or snapshot.sector == "Index":
             base *= 0.1
         raw.append(max(0.05, base))
@@ -1459,7 +1568,7 @@ def build_rationale_for_mandate(snapshot: Snapshot, mandate, mandate_config: Man
             )
         )
     return (
-        f"{snapshot.sector} allocation for a {mandate.risk_attitude.replace('_', ' ')} mandate; "
+        f"{snapshot.sector} allocation for a {mandate.risk_attitude.replace('_', ' ')} mandate with a {mandate_config.holding_period_days}-day target hold; "
         f"momentum {snapshot.factor_scores.get('momentum', 0):+.2f}, quality {snapshot.factor_scores.get('quality', 0):+.2f}, "
         f"beta {snapshot.beta_proxy:.2f}{ensemble_text}, {risk_text}. {snapshot.news_explanation}"
     )
@@ -1842,8 +1951,7 @@ def estimate_expected_returns(db, as_of_date,
     # 3) Hybrid mode: blend ML calibrated annual return into the rule engine.
     #    Only apply ML predictions to delivery equities; keep ETFs stable.
     try:
-        predictor = get_ensemble_alpha_predictor()
-        predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
+        predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
     except Exception:
         predictions_by_symbol, model_info = {}, {"available": False}
 

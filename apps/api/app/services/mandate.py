@@ -5,9 +5,42 @@ from dataclasses import dataclass
 from app.schemas.portfolio import UserMandate
 
 HORIZON_SETTINGS = {
-    "2-4": {"lookback_days": 84, "holding_period_days": 21},
-    "4-8": {"lookback_days": 168, "holding_period_days": 42},
-    "8-24": {"lookback_days": 336, "holding_period_days": 84},
+    "2-4": {
+        "decision_lookback_days": 84,
+        "holding_period_days": 21,
+        "selection_bias": {
+            "momentum": 1.15,
+            "quality": 0.95,
+            "low_vol": 0.95,
+            "sector_strength": 1.05,
+            "liquidity": 1.10,
+            "news": 1.10,
+        },
+    },
+    "4-8": {
+        "decision_lookback_days": 168,
+        "holding_period_days": 42,
+        "selection_bias": {
+            "momentum": 1.00,
+            "quality": 1.00,
+            "low_vol": 1.00,
+            "sector_strength": 1.00,
+            "liquidity": 1.00,
+            "news": 1.00,
+        },
+    },
+    "8-24": {
+        "decision_lookback_days": 336,
+        "holding_period_days": 84,
+        "selection_bias": {
+            "momentum": 0.92,
+            "quality": 1.15,
+            "low_vol": 1.10,
+            "sector_strength": 1.05,
+            "liquidity": 0.95,
+            "news": 0.95,
+        },
+    },
 }
 
 ATTITUDE_SETTINGS = {
@@ -43,8 +76,11 @@ ATTITUDE_SETTINGS = {
 
 @dataclass(frozen=True)
 class MandateConfig:
-    lookback_days: int
+    decision_lookback_days: int
     holding_period_days: int
+    model_feature_lookback_days: int
+    model_min_history_days: int
+    selection_bias: dict[str, float]
     risk_aversion: float
     candidate_count: int
     target_positions: int
@@ -64,8 +100,11 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     if mandate.allow_small_caps:
         allowed_market_caps.add("Small")
     return MandateConfig(
-        lookback_days=horizon["lookback_days"],
+        decision_lookback_days=horizon["decision_lookback_days"],
         holding_period_days=horizon["holding_period_days"],
+        model_feature_lookback_days=max(450, int(horizon["decision_lookback_days"]) + 120),
+        model_min_history_days=253,
+        selection_bias=dict(horizon["selection_bias"]),
         risk_aversion=attitude["risk_aversion"],
         candidate_count=candidate_count,
         target_positions=target_positions,

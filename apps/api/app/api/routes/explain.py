@@ -107,8 +107,7 @@ def _merge_context(live_context: dict, request_context: dict) -> dict:
 
 
 def _match_stock_contexts(message: str, portfolio_context: dict, db: Session, limit: int = 3) -> list[dict]:
-    from app.services.db_quant_engine import get_effective_trade_date, load_snapshots
-    from app.ml.ensemble_alpha.predict import get_ensemble_alpha_predictor
+    from app.services.db_quant_engine import get_effective_trade_date, load_snapshots, predict_ensemble_for_snapshots
 
     query = message.lower()
     portfolio_allocations = (portfolio_context.get("portfolio") or {}).get("allocations", []) or []
@@ -144,8 +143,7 @@ def _match_stock_contexts(message: str, portfolio_context: dict, db: Session, li
     if not ordered:
         return []
 
-    predictor = get_ensemble_alpha_predictor()
-    pred_map, _ = predictor.predict(db, ordered, as_of_date)
+    pred_map, _ = predict_ensemble_for_snapshots(db, ordered, as_of_date)
 
     matched: list[dict] = []
     for snapshot in ordered:

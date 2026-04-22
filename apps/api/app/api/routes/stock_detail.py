@@ -17,8 +17,7 @@ async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
     - News sentiment
     - LLM explanation
     """
-    from app.services.db_quant_engine import load_snapshots, get_effective_trade_date
-    from app.ml.ensemble_alpha.predict import EnsembleAlphaPredictor
+    from app.services.db_quant_engine import get_effective_trade_date, load_snapshots, predict_ensemble_for_snapshots
     from app.services.groq_explainer import explain_stock
     import json
     from pathlib import Path
@@ -32,8 +31,7 @@ async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
         return {"error": f"No data found for {symbol}"}
 
     # Get ensemble predictions
-    predictor = EnsembleAlphaPredictor()
-    results, model_info = predictor.predict(db, snapshots, as_of_date)
+    results, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
     pred = results.get(symbol)
 
     # GNN neighbors — stocks in same sector from embeddings

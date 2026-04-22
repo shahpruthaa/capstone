@@ -1,11 +1,11 @@
 from __future__ import annotations
 import json, logging
-from pathlib import Path
 from typing import Any
 import numpy as np
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.ml.lightgbm_alpha.predict import LightGBMAlphaPredictor, MLPrediction
+from app.services.model_runtime import load_ensemble_manifest, resolve_artifact_dir
 
 logger = logging.getLogger(__name__)
 _SHARED_SCORER: "EnsembleScorer | None" = None
@@ -13,6 +13,7 @@ _SHARED_SCORER: "EnsembleScorer | None" = None
 class EnsembleScorer:
     def __init__(self):
         self.lgb_predictor = LightGBMAlphaPredictor()
+        self._manifest = load_ensemble_manifest()
         self._gnn_embeddings = {}
         self._lstm_model = None
         self._lstm_norm_stats = {}
@@ -21,7 +22,7 @@ class EnsembleScorer:
 
     def _load_gnn(self):
         try:
-            path = Path(settings.ml_gnn_artifact_dir) / "gnn_embeddings.json"
+            path = resolve_artifact_dir(settings.ml_gnn_artifact_dir) / "gnn_embeddings.json"
             if path.exists():
                 with open(path) as f:
                     self._gnn_embeddings = json.load(f)
@@ -33,7 +34,7 @@ class EnsembleScorer:
         try:
             import torch
             from app.ml.lstm_alpha.train import LSTMForecaster
-            base = Path(settings.ml_lstm_artifact_dir)
+            base = resolve_artifact_dir(settings.ml_lstm_artifact_dir)
             config_path = base / "lstm_config.json"
             model_path = base / "lstm_model.pt"
             norm_path = base / "norm_stats.json"
@@ -126,7 +127,7 @@ class EnsembleScorer:
             return predict_death_risk(
                 symbols=symbols,
                 db=db,
-                artifact_dir=settings.ml_death_risk_artifact_dir,
+                artifact_dir=str(resolve_artifact_dir(settings.ml_death_risk_artifact_dir)),
             )
         except Exception:
             return {s.symbol: 0.0 for s in snapshots}
@@ -142,13 +143,17 @@ class EnsembleScorer:
         death_risks = self._get_death_risks(snapshots, db)
 
         results = {}
+        weights = self._manifest.get("component_weights", {}) if isinstance(self._manifest, dict) else {}
+        lgb_weight = float(weights.get("lightgbm", 0.50))
+        lstm_weight = float(weights.get("lstm", 0.25))
+        gnn_weight = float(weights.get("gnn", 0.15))
+        death_risk_penalty = float(self._manifest.get("death_risk_penalty", 1.5)) if isinstance(self._manifest, dict) else 1.5
         for sym in lgb_z:
             lgb  = lgb_z.get(sym, 0.0)
             gnn  = gnn_z.get(sym, 0.0)
             lstm = lstm_z.get(sym, 0.0)
             dr   = death_risks.get(sym, 0.0)
-            # Weights: LGB 50%, LSTM 25%, GNN 15%, death_risk penalty
-            f21  = (0.50 * lgb + 0.25 * lstm + 0.15 * gnn) - 1.5 * dr
+            f21  = (lgb_weight * lgb + lstm_weight * lstm + gnn_weight * gnn) - death_risk_penalty * dr
             fan  = float(min(0.40, max(-0.20, (1.0 + f21) ** (252/21) - 1.0)))
             drivers = list(lgb_preds[sym].top_drivers) if sym in lgb_preds else []
             if lstm_z.get(sym) is not None:
@@ -162,6 +167,8 @@ class EnsembleScorer:
 
         model_info["ensemble"] = True
         model_info["components"] = ["lightgbm", "lstm", "gnn", "death_risk"]
+        model_info["model_version"] = str(self._manifest.get("model_version") or model_info.get("model_version", "ensemble"))
+        model_info["prediction_horizon_days"] = int(self._manifest.get("prediction_horizon_days") or model_info.get("prediction_horizon_days", 21))
         return results, model_info
 
 
