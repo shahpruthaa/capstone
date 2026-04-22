@@ -52,6 +52,21 @@ export function MarketTab() {
         [marketContext],
     );
 
+    const inferredRegime = useMemo(() => {
+        const explicit = marketContext?.regime_name?.trim();
+        if (explicit) return explicit;
+        const score = marketContext?.overall_market_sentiment ?? 0;
+        if (score >= 0.1) return 'Bull';
+        if (score <= -0.1) return 'Bear';
+        return 'Neutral';
+    }, [marketContext]);
+
+    const regimeTone = inferredRegime === 'Bull'
+        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+        : inferredRegime === 'Bear'
+            ? 'bg-rose-50 border-rose-200 text-rose-800'
+            : 'bg-amber-50 border-amber-200 text-amber-800';
+
     const heatmapCells = useMemo(() => {
         const maxAbs = Math.max(...sectorHeatmap.map(([, score]) => Math.abs(score)), 0.01);
         return sectorHeatmap.map(([sector, score]) => {
@@ -98,6 +113,19 @@ export function MarketTab() {
                     <span>Live market headlines could not be reached, so this view is temporarily using the deterministic local fallback feed.</span>
                 </div>
             )}
+
+            <div className={`card p-4 border ${regimeTone}`}>
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <p className="text-xs uppercase tracking-[0.12em] font-semibold">Market Regime</p>
+                        <p className="text-lg font-bold">{inferredRegime}</p>
+                    </div>
+                    <div className="text-right text-xs">
+                        <div>Generated: {marketContext?.generated_at ?? '--'}</div>
+                        <div>Source: `/api/v1/news/market-context`</div>
+                    </div>
+                </div>
+            </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <MetricCard label="Market Sentiment" value={marketContext ? formatSentiment(marketContext.overall_market_sentiment) : '--'} sub="News-derived composite" color={marketContext && marketContext.overall_market_sentiment >= 0 ? 'green' : 'amber'} trend={marketContext && marketContext.overall_market_sentiment >= 0 ? 'up' : 'down'} />

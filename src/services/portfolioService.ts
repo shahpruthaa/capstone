@@ -37,7 +37,9 @@ export interface Portfolio {
   backendNotes?: string[];
   modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
   modelSource?: 'RULES' | 'ENSEMBLE';
+  activeMode?: string;
   modelVersion?: string;
+  artifactClassification?: string;
   predictionHorizonDays?: number;
   lookbackWindowDays?: number;
   expectedHoldingPeriodDays?: number;

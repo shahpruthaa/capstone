@@ -50,6 +50,7 @@ export interface MarketContext {
   sector_sentiment: Record<string, number>;
   overall_market_sentiment: number;
   top_event_summary: string;
+  regime_name?: string;
 }
 
 export interface CurrentModelStatus {
@@ -116,10 +117,29 @@ export interface TradeIdea {
   catalyst?: string | null;
 }
 
+export interface StockDetail {
+  symbol: string;
+  sector: string;
+  market_cap_bucket: string;
+  as_of_date: string;
+  ensemble_score: number;
+  pred_annual_return: number;
+  death_risk: number;
+  feature_drivers: string[];
+  gnn_sector_neighbors: string[];
+  factor_scores: Record<string, number>;
+  beta: number;
+  explanation: string;
+  model_components: string[];
+  error?: string;
+}
+
 interface ApiGeneratePortfolioResponse {
   model_variant: ModelVariant;
   model_source: 'RULES' | 'ENSEMBLE';
+  active_mode?: string;
   model_version: string;
+  artifact_classification?: string;
   prediction_horizon_days: number;
   capital_amount: number;
   mandate: UserMandate;
@@ -183,6 +203,8 @@ interface ApiBacktestResponse {
   model_source: 'RULES' | 'ENSEMBLE';
   model_version: string;
   prediction_horizon_days: number;
+  active_mode?: string;
+  artifact_classification?: string;
   top_model_drivers_by_symbol?: Record<string, string[]>;
   metrics: {
     cagr_pct: number;
@@ -214,6 +236,7 @@ interface ApiBacktestResponse {
     total_gst: number;
     total_slippage: number;
     total_costs: number;
+    total_frictional_drag_pct?: number;
   };
   equity_curve: { date: string; portfolio_value: number; benchmark_value: number }[];
   notes?: string[];
@@ -326,6 +349,7 @@ interface ApiMarketContextResponse {
   sector_sentiment: Record<string, number>;
   overall_market_sentiment: number;
   top_event_summary: string;
+  regime_name?: string;
 }
 
 type FetchJsonInit = RequestInit & { timeoutMs?: number };
@@ -392,6 +416,10 @@ export async function getMarketContextViaApi(): Promise<MarketContext> {
   return fetchJson<ApiMarketContextResponse>('/api/v1/news/market-context');
 }
 
+export async function getStockDetailViaApi(symbol: string): Promise<StockDetail> {
+  return fetchJson<StockDetail>(`/api/v1/stock/${encodeURIComponent(symbol)}`);
+}
+
 export async function generatePortfolioViaApi(
   capitalAmount: number,
   mandate: UserMandate,
@@ -450,7 +478,9 @@ export async function generatePortfolioViaApi(
     backendNotes: response.notes ?? [],
     modelVariant: response.model_variant,
     modelSource: response.model_source,
+    activeMode: response.active_mode ?? (response.model_source === 'ENSEMBLE' ? 'full_ensemble' : 'rules_only'),
     modelVersion: response.model_version,
+    artifactClassification: response.artifact_classification ?? (response.model_source === 'ENSEMBLE' ? 'standard' : 'missing'),
     predictionHorizonDays: response.prediction_horizon_days,
     lookbackWindowDays: response.lookback_window_days,
     expectedHoldingPeriodDays: response.expected_holding_period_days,
@@ -607,13 +637,16 @@ export async function runBacktestViaApi(
       totalGST: response.cost_breakdown.total_gst,
       totalSlippage: response.cost_breakdown.total_slippage,
       totalCosts: response.cost_breakdown.total_costs,
+      totalFrictionalDragPct: response.cost_breakdown.total_frictional_drag_pct,
     },
     config,
     initialInvestment: response.metrics.initial_investment,
     notes: response.notes ?? [],
     modelVariant: response.model_variant,
     modelSource: response.model_source,
+    activeMode: response.active_mode ?? (response.model_source === 'ENSEMBLE' ? 'full_ensemble' : 'rules_only'),
     modelVersion: response.model_version,
+    artifactClassification: response.artifact_classification ?? (response.model_source === 'ENSEMBLE' ? 'standard' : 'missing'),
     predictionHorizonDays: response.prediction_horizon_days,
     topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
   };

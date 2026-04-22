@@ -28,10 +28,10 @@ def calculate_price_levels(snapshot: Snapshot, expected_return: float) -> PriceL
     stop = max(entry - (2.0 * atr_value), entry * 0.80)
     risk_per_unit = max(entry - stop, entry * 0.005)
 
-    expected_move = max(0.05, min(0.30, float(expected_return)))
+    expected_move = max(0.0, min(0.30, float(expected_return)))
     model_target = entry * (1.0 + expected_move)
     rr_target = entry + (2.0 * risk_per_unit)
-    target = max(model_target, rr_target)
+    target = max(model_target, rr_target) if expected_move > 0 else model_target
 
     risk_pct = (risk_per_unit / entry) * 100.0 if entry else 0.0
     reward_pct = ((target - entry) / entry) * 100.0 if entry else 0.0

@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     raw_data_dir: str = "../../data/raw"
     nse_archive_base_url: str = "https://nsearchives.nseindia.com/content/cm"
-    ml_lightgbm_artifact_dir: str = "artifacts/models/lightgbm_v1"
+    ml_lightgbm_artifact_dir: str = "artifacts/models/lightgbm_v2"
     ml_lstm_artifact_dir: str = "artifacts/models/lstm_v1"
     ml_gnn_artifact_dir: str = "artifacts/models/gnn_v1"
     ml_death_risk_artifact_dir: str = "artifacts/models/death_risk_v1"

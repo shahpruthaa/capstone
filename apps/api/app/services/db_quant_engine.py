@@ -4,10 +4,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
+import math
 from math import sqrt
 from statistics import median
 from uuid import uuid4
 
+import numpy as np
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -52,10 +54,13 @@ from app.ml.ensemble_alpha.predict import get_ensemble_alpha_predictor
 from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 
 RISK_FREE_RATE = 0.07
+DEFENSIVE_CASH_BUFFER_RETURN = 0.065
 DEFAULT_BACKTEST_INVESTMENT = 1_000_000.0
 DEFAULT_MODEL_FEATURE_LOOKBACK_DAYS = 450
 DEFAULT_MODEL_MIN_TRADING_HISTORY = 253
 DEFAULT_RULES_MIN_HISTORY = 90
+BENCHMARK_DAILY_RETURN_CLAMP = 0.20
+BENCHMARK_MAX_CONSTITUENT_ANNUAL_RETURN_PCT = 45.0
 
 RISK_MODE_UNIVERSES = {
     "ULTRA_LOW": ["LIQUIDBEES", "GOLDBEES", "NIFTYBEES", "HDFCBANK", "ITC", "SUNPHARMA", "POWERGRID", "BHARTIARTL", "NTPC"],
@@ -195,6 +200,20 @@ class BarRecord:
     total_traded_value: float
 
 
+def is_defensive_cash_equivalent(snapshot: Snapshot) -> bool:
+    symbol = (snapshot.symbol or "").upper()
+    return ("LIQUID" in symbol) or ("CASH" in symbol) or ("MONEY" in symbol)
+
+
+def apply_defensive_cash_return(snapshot: Snapshot) -> None:
+    snapshot.expected_return_source = "RULES_CASH_BUFFER"
+    snapshot.model_version = "rules_cash_buffer"
+    snapshot.ml_pred_21d_return = 0.0
+    snapshot.ml_pred_annual_return = float(DEFENSIVE_CASH_BUFFER_RETURN)
+    snapshot.top_model_drivers = [f"defensive_cash_buffer_rf={DEFENSIVE_CASH_BUFFER_RETURN:.3f}"]
+    snapshot.prediction_horizon_days = 21
+
+
 def predict_ensemble_for_snapshots(
     db: Session,
     snapshots: list[Snapshot],
@@ -202,9 +221,13 @@ def predict_ensemble_for_snapshots(
 ) -> tuple[dict[str, object], dict[str, object]]:
     predictor = get_ensemble_alpha_predictor()
 
-    equity_snapshots = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    equity_snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.instrument_type == "EQUITY" and not is_defensive_cash_equivalent(snapshot)
+    ]
     if not equity_snapshots:
-        return {}, {"available": False, "reason": "no_equity_snapshots"}
+        return {}, {"available": False, "reason": "no_ml_eligible_equity_snapshots"}
 
     reloaded_symbols = sorted(
         snapshot.symbol
@@ -240,8 +263,16 @@ def predict_ensemble_for_snapshots(
             "insufficient_history_symbols": reloaded_symbols,
         }
 
+    regime_info = detect_market_regime(inference_snapshots)
+    regime_name = str(regime_info.get("regime_name", "Neutral"))
+    for snapshot in inference_snapshots:
+        setattr(snapshot, "regime_name", regime_name)
+        setattr(snapshot, "as_of_date", as_of_date)
+
     predictions_by_symbol, model_info = predictor.predict(db, inference_snapshots, as_of_date)
     enriched_model_info = dict(model_info)
+    enriched_model_info["regime_name"] = regime_name
+    enriched_model_info["regime"] = str(regime_info.get("regime", regime_name.lower()))
     if reloaded_symbols:
         enriched_model_info["history_refreshed_symbols"] = reloaded_symbols
     missing_after_refresh = sorted(
@@ -276,46 +307,70 @@ def allocate_whole_shares_for_capital(
     capital_amount: float,
 ) -> tuple[dict[str, dict[str, float | int]], float]:
     plan: dict[str, dict[str, float | int]] = {}
-    total_allocated = 0.0
+    selected_snapshots = [snapshot for snapshot, _ in selected]
+    raw_weights = [max(0.0, weight / 100.0) for _, weight in selected]
+    total_weight = sum(raw_weights)
+    if total_weight > 0:
+        optimized_weights = [weight / total_weight for weight in raw_weights]
+    elif raw_weights:
+        optimized_weights = [1.0 / len(raw_weights) for _ in raw_weights]
+    else:
+        return plan, round(max(0.0, capital_amount), 2)
 
-    for snapshot, weight in selected:
-        target_amount = max(0.0, capital_amount * (weight / 100.0))
-        latest_price = max(float(snapshot.latest_price), 0.01)
-        shares = int(target_amount // latest_price)
-        allocated_amount = round(shares * latest_price, 2)
-        plan[snapshot.symbol] = {
-            "target_amount": round(target_amount, 2),
-            "shares": shares,
-            "amount": allocated_amount,
-            "latest_price": round(latest_price, 2),
-        }
-        total_allocated += allocated_amount
+    total_spent = 0.0
+    temp_allocs: list[dict[str, Snapshot | float | int]] = []
 
-    remaining_cash = round(max(0.0, capital_amount - total_allocated), 2)
+    for snapshot, weight_pct in zip(selected_snapshots, optimized_weights):
+        target_amt = capital_amount * weight_pct
+        price = max(float(snapshot.latest_price or 1.0), 0.01)
 
-    while remaining_cash > 0:
-        candidates: list[tuple[float, float, float, str]] = []
-        for snapshot, _ in selected:
-            latest_price = max(float(snapshot.latest_price), 0.01)
-            if latest_price > remaining_cash + 1e-9:
-                continue
-            entry = plan[snapshot.symbol]
-            current_amount = float(entry["amount"])
-            target_amount = float(entry["target_amount"])
-            target_gap = target_amount - current_amount
-            expected_return = float(snapshot.ml_pred_annual_return or 0.0)
-            candidates.append((target_gap, expected_return, -latest_price, snapshot.symbol))
+        shares = math.floor(target_amt / price)
+        amount = shares * price
 
-        if not candidates:
+        temp_allocs.append(
+            {
+                "snapshot": snapshot,
+                "weight_pct": weight_pct,
+                "shares": shares,
+                "amount": amount,
+                "price": price,
+                "target_amount": target_amt,
+            }
+        )
+        total_spent += amount
+
+    cash_left = capital_amount - total_spent
+    max_passes = max(1, len(temp_allocs))
+
+    # Residual distribution pass. The total-spend firewall prevents rupee drift from
+    # converting leftover cash into an allocation above the mandate capital.
+    for _ in range(max_passes):
+        temp_allocs.sort(key=lambda x: float(x["weight_pct"]), reverse=True)
+        shares_added_this_pass = False
+
+        for alloc in temp_allocs:
+            price = float(alloc["price"])
+            if (total_spent + price) <= capital_amount + 1e-9 and cash_left >= price - 1e-9:
+                alloc["shares"] = int(alloc["shares"]) + 1
+                alloc["amount"] = float(alloc["amount"]) + price
+                total_spent += price
+                cash_left -= price
+                shares_added_this_pass = True
+
+        if not shares_added_this_pass:
             break
 
-        _, _, _, chosen_symbol = max(candidates)
-        chosen_entry = plan[chosen_symbol]
-        chosen_price = float(chosen_entry["latest_price"])
-        chosen_entry["shares"] = int(chosen_entry["shares"]) + 1
-        chosen_entry["amount"] = round(float(chosen_entry["amount"]) + chosen_price, 2)
-        remaining_cash = round(max(0.0, remaining_cash - chosen_price), 2)
+    for alloc in temp_allocs:
+        snapshot = alloc["snapshot"]
+        assert isinstance(snapshot, Snapshot)
+        plan[snapshot.symbol] = {
+            "target_amount": round(float(alloc["target_amount"]), 2),
+            "shares": int(alloc["shares"]),
+            "amount": round(float(alloc["amount"]), 2),
+            "latest_price": round(float(alloc["price"]), 2),
+        }
 
+    remaining_cash = round(max(0.0, capital_amount - total_spent), 2)
     return plan, remaining_cash
 
 
@@ -472,6 +527,10 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
 
 def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzePortfolioResponse:
+    requested_symbols = sorted({holding.symbol.strip().upper() for holding in payload.holdings if holding.symbol.strip()})
+    if not requested_symbols:
+        raise ValueError("Submit at least one holding symbol to analyze.")
+
     ml_status = get_lightgbm_model_status()
     runtime_status = get_model_runtime_status()
     if payload.model_variant is None:
@@ -482,7 +541,8 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             model_variant_applied = "RULES"
 
     ml_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 63
-    snapshots = load_snapshots(db, symbols=[holding.symbol for holding in payload.holdings], min_history=ml_min_history)
+    as_of_date = get_effective_trade_date(db)
+    snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=requested_symbols, min_history=ml_min_history)
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
 
     total_value = 0.0
@@ -492,9 +552,10 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     missing_symbols = []
 
     for holding in payload.holdings:
-        snapshot = snapshot_map.get(holding.symbol)
+        requested_symbol = holding.symbol.strip().upper()
+        snapshot = snapshot_map.get(requested_symbol)
         if snapshot is None:
-            missing_symbols.append(holding.symbol)
+            missing_symbols.append(requested_symbol)
             continue
         value = snapshot.latest_price * holding.quantity
         total_value += value
@@ -517,16 +578,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         correlation_risk = "MODERATE"
 
     factor_exposures = compute_factor_exposures([(snapshot, value / total_value) for _, snapshot, value in priced_holdings])
-    as_of_date = get_effective_trade_date(db)
-    target_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 126
-    target_snapshots = load_snapshots(
-        db,
-        as_of_date=as_of_date,
-        symbols=RISK_MODE_UNIVERSES[payload.target_risk_mode],
-        min_history=target_min_history,
-    )
-    if len(target_snapshots) < 4:
-        target_snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
+    target_snapshots = [snapshot for _, snapshot, _ in priced_holdings]
     target_portfolio = select_portfolio_candidates(db, as_of_date, payload.target_risk_mode, target_snapshots, model_variant=model_variant_applied)
     actions = build_rebalance_actions(priced_holdings, total_value, target_portfolio, payload.target_risk_mode)
     rebalance_days = {"ULTRA_LOW": "quarterly", "MODERATE": "monthly review / quarterly hard rebalance", "HIGH": "monthly with tighter drift checks"}[payload.target_risk_mode]
@@ -538,7 +590,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             f"low_vol {factor_exposures['low_vol']:+.2f}, liquidity {factor_exposures['liquidity']:+.2f}."
         ),
         (
-            f"Rebalance actions compare the live holdings against the current {payload.target_risk_mode.lower()} target portfolio "
+            f"Rebalance actions compare only the submitted holdings against the current {payload.target_risk_mode.lower()} target model "
             f"with a drift threshold of {RISK_MODEL_CONFIG[payload.target_risk_mode]['drift_threshold'] * 100:.1f}% and {rebalance_days} reviews."
         ),
     ]
@@ -564,6 +616,11 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             for sym, pred in pred_map.items():
                 ml_predictions[sym] = pred.pred_annual_return
             for snapshot in snapshots:
+                if is_defensive_cash_equivalent(snapshot):
+                    apply_defensive_cash_return(snapshot)
+                    ml_predictions[snapshot.symbol] = float(DEFENSIVE_CASH_BUFFER_RETURN)
+                    top_model_drivers_by_symbol[snapshot.symbol] = list(snapshot.top_model_drivers)
+                    continue
                 if snapshot.symbol in pred_map and snapshot.instrument_type == "EQUITY":
                     snapshot.expected_return_source = "ENSEMBLE"
                     snapshot.top_model_drivers = list(pred_map[snapshot.symbol].top_drivers)
@@ -673,6 +730,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         "total_gst": 0.0,
         "total_slippage": 0.0,
         "total_costs": 0.0,
+        "total_frictional_drag": 0.0,
+        "total_frictional_drag_pct": 0.0,
     }
     taxes = {
         "stcg_gain": 0.0,
@@ -736,7 +795,18 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0 and index % rebalance_interval == 0 and payload.rebalance_frequency != "NONE":
-            total_trades += rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, runtime_risk_mode)
+            rebalance_trade_count = rebalance_positions(
+                position_state,
+                bar_matrix,
+                weights,
+                trade_date,
+                portfolio_value,
+                costs,
+                taxes,
+                tax_buckets,
+                runtime_risk_mode,
+            )
+            total_trades += rebalance_trade_count
             portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0:
@@ -758,6 +828,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         )
 
     finalize_tax_buckets(taxes, tax_buckets)
+    costs["total_frictional_drag_pct"] = (costs["total_frictional_drag"] / max(initial_investment, 1.0)) * 100.0
 
     metrics = build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades)
     run_id = f"bt-{uuid4()}"
@@ -772,6 +843,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
             f"{payload.rebalance_frequency.lower()} review cycle for {runtime_risk_mode.lower()} mode."
         ),
         f"Equity fees used the {fee_schedule.effective_from.isoformat()} rule set: {fee_schedule.notes}",
+        f"Explicit rebalance friction overlay was applied at 10 bps of traded notional; total frictional drag was {costs['total_frictional_drag_pct']:.2f}%.",
         f"Capital gains used the {tax_schedule.effective_from.isoformat()} rule set with FY-wise LTCG exemption handling: {tax_schedule.notes}",
         (
             f"Corporate actions were applied to {adjusted_names} portfolio instruments, including split/bonus price adjustment and dividend cash credits."
@@ -798,6 +870,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         )
 
     used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source == "ENSEMBLE")
+    runtime_status = get_model_runtime_status()
     top_model_drivers_by_symbol = {
         snapshot.symbol: list(snapshot.top_model_drivers) for snapshot, _ in model_portfolio if snapshot.top_model_drivers
     }
@@ -844,6 +917,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         model_source=model_source,  # type: ignore[arg-type]
         model_version=model_version,
         prediction_horizon_days=prediction_horizon_days,
+        active_mode=str(runtime_status.get("active_mode", "rules_only")),
+        artifact_classification=str(runtime_status.get("artifact_classification", "missing")),
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         run_id=run_id,
         status="completed",
@@ -901,11 +976,19 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         "Quality Factor": build_factor_portfolio(snapshots, factor_key="quality", count=12, sector_cap=0.25),
         "AMC Multi Factor": build_multifactor_portfolio(snapshots, count=15, sector_cap=0.22),
     }
-    benchmark_reference_returns = aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get("Nifty 50 Proxy", {}))
+    benchmark_reference_returns = aggregate_portfolio_returns(
+        snapshot_map,
+        benchmark_portfolios.get("Nifty 50 Proxy", {}),
+        clamp_daily_returns=True,
+    )
 
     strategies = []
     for name, category, description in BENCHMARK_UNIVERSES:
-        strategy_returns = aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {}))
+        strategy_returns = aggregate_portfolio_returns(
+            snapshot_map,
+            benchmark_portfolios.get(name, {}),
+            clamp_daily_returns=True,
+        )
         metrics = summarize_return_series(strategy_returns)
         expense_ratio = 0.08 if category == "AI" else 0.06 if category == "INDEX" else 0.34
         benchmark_metadata = BENCHMARK_METADATA.get(name, {})
@@ -946,6 +1029,8 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         f"Benchmark metrics were computed from ingested market data through {as_of_date.isoformat()}.",
         "Index benchmarks are proxy constructions over the ingested NSE universe because official constituent files are not yet part of the local pipeline.",
         "Factor benchmarks use the same factor model as the allocator: momentum, quality proxy, low-volatility, liquidity, and sector balancing.",
+        f"Benchmark daily returns are computed from adjusted close total-return series and clipped to +/-{BENCHMARK_DAILY_RETURN_CLAMP * 100:.0f}% before annualization to neutralize missing corporate-action outliers.",
+        f"Factor benchmark constituents exclude instruments with circuit-limit return days or clipped annualized returns above {BENCHMARK_MAX_CONSTITUENT_ANNUAL_RETURN_PCT:.0f}% to avoid selecting data-error winners.",
         "Benchmark series are still static point-in-time proxy portfolios rather than fully materialized historical reconstitution jobs.",
         "Benchmark beat rate is the share of overlapping trading days each strategy matched or outperformed the Nifty 50 proxy return.",
     ]
@@ -1021,11 +1106,12 @@ def load_snapshots(
         adjusted_opens = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["opens"]]
         adjusted_highs = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["highs"]]
         adjusted_lows = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["lows"]]
-        returns = build_total_return_series(adjusted_closes, dividend_by_date)
+        returns = clamp_daily_return_series(build_total_return_series(adjusted_closes, dividend_by_date))
         if len(returns) < max(5, min_history - 1):
             continue
 
         adjusted_prices = [price for _, price in adjusted_closes]
+        clipped_equity_curve = equity_curve_from_returns(returns)
         snapshots.append(
             Snapshot(
                 symbol=symbol,
@@ -1041,13 +1127,13 @@ def load_snapshots(
                 adjusted_highs=adjusted_highs,
                 adjusted_lows=adjusted_lows,
                 returns=returns,
-                annual_return_pct=annualize_return(adjusted_closes),
+                annual_return_pct=annualize_return_from_returns(returns),
                 annual_volatility_pct=annualize_volatility([item[1] for item in returns]),
-                momentum_1m_pct=compute_momentum_pct(adjusted_closes, window=21),
-                momentum_3m_pct=compute_momentum_pct(adjusted_closes, window=63),
-                momentum_6m_pct=compute_momentum_pct(adjusted_closes, window=126),
+                momentum_1m_pct=compute_momentum_pct_from_returns(returns, window=21),
+                momentum_3m_pct=compute_momentum_pct_from_returns(returns, window=63),
+                momentum_6m_pct=compute_momentum_pct_from_returns(returns, window=126),
                 downside_volatility_pct=annualize_volatility([item[1] for item in returns if item[1] < 0]),
-                max_drawdown_pct=compute_max_drawdown(adjusted_prices) * 100,
+                max_drawdown_pct=compute_max_drawdown(clipped_equity_curve or adjusted_prices) * 100,
                 avg_traded_value=sum(bucket["turnover"][-20:]) / max(len(bucket["turnover"][-20:]), 1),
                 corporate_action_count=len(action_map.get(symbol, [])),
             )
@@ -1226,7 +1312,7 @@ def select_portfolio_candidates_for_mandate(
     top_prior = [item[2] for item in diversified_selection]
     
     regime_dict = detect_market_regime(aligned_snapshots)
-    regime_name = "bear" if regime_dict.get("base_return", 0.1) < 0.09 else ("bull" if regime_dict.get("base_return", 0.1) > 0.11 else "neutral")
+    regime_name = str(regime_dict.get("regime", "neutral"))
     
     final_weights = project_weights_for_mandate(top_weights, top_snapshots, mandate_config, top_prior, regime_name)
     
@@ -1310,20 +1396,31 @@ def apply_ensemble_predictions_to_snapshots(
     required: bool,
 ) -> dict[str, object]:
     for snapshot in snapshots:
-        snapshot.expected_return_source = "RULES"
-        snapshot.model_version = "rules"
-        snapshot.ml_pred_21d_return = None
-        snapshot.ml_pred_annual_return = None
-        snapshot.top_model_drivers = []
-        snapshot.prediction_horizon_days = 21
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+        else:
+            snapshot.expected_return_source = "RULES"
+            snapshot.model_version = "rules"
+            snapshot.ml_pred_21d_return = None
+            snapshot.ml_pred_annual_return = None
+            snapshot.top_model_drivers = []
+            snapshot.prediction_horizon_days = 21
 
     if not snapshots:
         if required:
             raise ValueError("Ensemble runtime was requested, but there were no snapshots to score.")
         return {"available": False, "reason": "no_snapshots"}
 
+    ml_eligible_snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.instrument_type == "EQUITY" and not is_defensive_cash_equivalent(snapshot)
+    ]
+    if not ml_eligible_snapshots:
+        return {"available": False, "reason": "no_ml_eligible_equities"}
+
     try:
-        predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
+        predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, ml_eligible_snapshots, as_of_date)
     except Exception as exc:
         if required:
             raise ValueError(f"Ensemble runtime failed during inference: {exc}") from exc
@@ -1350,7 +1447,7 @@ def apply_ensemble_predictions_to_snapshots(
     prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
     for snapshot in snapshots:
         pred = predictions_by_symbol.get(snapshot.symbol)
-        if snapshot.instrument_type != "EQUITY" or pred is None:
+        if snapshot.instrument_type != "EQUITY" or pred is None or is_defensive_cash_equivalent(snapshot):
             continue
         snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
         snapshot.ml_pred_annual_return = float(pred.pred_annual_return)
@@ -1359,7 +1456,10 @@ def apply_ensemble_predictions_to_snapshots(
         snapshot.model_version = model_version
         snapshot.prediction_horizon_days = prediction_horizon_days
 
-    if required and not any(snapshot.expected_return_source == "ENSEMBLE" for snapshot in snapshots):
+    if required and any(
+        snapshot.instrument_type == "EQUITY" and not is_defensive_cash_equivalent(snapshot)
+        for snapshot in snapshots
+    ) and not any(snapshot.expected_return_source == "ENSEMBLE" for snapshot in snapshots):
         raise ValueError("Ensemble runtime was requested, but no equity snapshots received usable predictions.")
 
     return model_info
@@ -1378,6 +1478,10 @@ def estimate_expected_returns_for_mandate(
     holding_scale = mandate_holding_period_scale(mandate_config)
     rule_expected_returns: list[float] = []
     for index, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            rule_expected_returns.append(float(DEFENSIVE_CASH_BUFFER_RETURN))
+            continue
         series = return_matrix[index]
         daily_mean = sum(series) / max(len(series), 1)
         annual_mean = daily_mean * 252
@@ -1408,12 +1512,15 @@ def estimate_expected_returns_for_mandate(
 
     if model_variant != "LIGHTGBM_HYBRID":
         for snapshot in snapshots:
-            snapshot.expected_return_source = "RULES"
-            snapshot.model_version = "rules"
-            snapshot.ml_pred_21d_return = None
-            snapshot.ml_pred_annual_return = None
-            snapshot.top_model_drivers = []
-            snapshot.prediction_horizon_days = 21
+            if is_defensive_cash_equivalent(snapshot):
+                apply_defensive_cash_return(snapshot)
+            else:
+                snapshot.expected_return_source = "RULES"
+                snapshot.model_version = "rules"
+                snapshot.ml_pred_21d_return = None
+                snapshot.ml_pred_annual_return = None
+                snapshot.top_model_drivers = []
+                snapshot.prediction_horizon_days = 21
         return rule_expected_returns
 
     predictions_by_symbol = {
@@ -1431,15 +1538,25 @@ def estimate_expected_returns_for_mandate(
 
     expected_returns = rule_expected_returns[:]
     for index, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            expected_returns[index] = float(DEFENSIVE_CASH_BUFFER_RETURN)
+            continue
         pred_snapshot = predictions_by_symbol.get(snapshot.symbol)
         if snapshot.instrument_type != "EQUITY" or pred_snapshot is None or pred_snapshot.ml_pred_annual_return is None:
             continue
-        ml_expected = float(pred_snapshot.ml_pred_annual_return)
+        # Fiduciary guardrail: shrink and clamp model-implied annual return before blending.
+        raw_ml_expected = float(pred_snapshot.ml_pred_annual_return)
+        ml_expected = max(-0.15, min(0.20, raw_ml_expected))
         news_tilt = (
             snapshot.news_opportunity_score * 0.01 * mandate_config.news_boost_multiplier
             - snapshot.news_risk_score * 0.015 * mandate_config.news_penalty_multiplier
         )
-        expected_returns[index] = max(-0.15, min(0.35, (ml_expected * holding_scale) + news_tilt))
+        blended_expected = (0.65 * (ml_expected * holding_scale)) + (0.35 * rule_expected_returns[index]) + news_tilt
+        expected_returns[index] = max(-0.15, min(0.22, blended_expected))
+        if snapshot.top_model_drivers is None:
+            snapshot.top_model_drivers = []
+        snapshot.top_model_drivers.append(f"ml_annual_shrunk={ml_expected:+.3f}")
 
     return expected_returns
 
@@ -1558,32 +1675,39 @@ def project_weights_for_mandate(
     prior: list[float],
     regime_name: str = "neutral",
 ) -> list[float]:
+    # Fiduciary constraints:
+    # - hard single-name cap at 15%
+    # - sector tracking cap at min(20%, mandate cap)
+    max_weight_per_equity = min(0.15, mandate_config.max_position_weight)
+    sector_cap_weight = min(0.20, mandate_config.sector_cap_weight)
+    active_priors = [max(0.0, p) for p in prior]
+
     w = [max(0.0, weight) for weight in weights]
     if sum(w) == 0:
-        w = prior[:]
+        w = active_priors[:]
 
     for i in range(len(w)):
         if w[i] < 0.02:
             w[i] = 0.0
 
-    w = renormalize([min(mandate_config.max_position_weight, weight) for weight in w])
+    w = renormalize([min(max_weight_per_equity, weight) for weight in w])
 
-    for _ in range(12):
+    for _ in range(24):
         w = renormalize(w)
-        w = [0.82 * weight + 0.18 * base for weight, base in zip(w, prior)]
-        w = renormalize([min(mandate_config.max_position_weight, max(0.0, weight)) for weight in w])
+        w = [0.82 * weight + 0.18 * base for weight, base in zip(w, active_priors)]
+        w = renormalize([min(max_weight_per_equity, max(0.0, weight)) for weight in w])
 
         excess_pool = 0.0
         for index in range(len(w)):
-            capped = min(mandate_config.max_position_weight, w[index])
+            capped = min(max_weight_per_equity, w[index])
             excess_pool += max(0.0, w[index] - capped)
             w[index] = capped
 
         sector_totals = compute_sector_totals(w, snapshots)
         for sector, total in sector_totals.items():
-            if total <= mandate_config.sector_cap_weight:
+            if total <= sector_cap_weight:
                 continue
-            scale = mandate_config.sector_cap_weight / max(total, 1e-9)
+            scale = sector_cap_weight / max(total, 1e-9)
             for index, snapshot in enumerate(snapshots):
                 if snapshot.sector != sector:
                     continue
@@ -1607,9 +1731,104 @@ def project_weights_for_mandate(
                     excess_pool += reduced
 
         if excess_pool > 1e-9:
-            w = redistribute_weight_for_mandate(w, snapshots, mandate_config, prior, excess_pool)
+            w = redistribute_weight_for_mandate(
+                w,
+                snapshots,
+                mandate_config,
+                active_priors,
+                excess_pool,
+                max_position_weight=max_weight_per_equity,
+                sector_cap_weight=sector_cap_weight,
+            )
 
-    return renormalize([min(mandate_config.max_position_weight, max(0.0, weight)) for weight in w])
+    # Final hard pass to guarantee strict caps even after numerical drift.
+    for _ in range(8):
+        w = renormalize([max(0.0, weight) for weight in w])
+        excess_pool = 0.0
+        for i in range(len(w)):
+            capped = min(max_weight_per_equity, w[i])
+            excess_pool += max(0.0, w[i] - capped)
+            w[i] = capped
+        sector_totals = compute_sector_totals(w, snapshots)
+        for sector, total in sector_totals.items():
+            if total <= sector_cap_weight:
+                continue
+            scale = sector_cap_weight / max(total, 1e-9)
+            for i, snapshot in enumerate(snapshots):
+                if snapshot.sector == sector:
+                    reduced = w[i] * (1 - scale)
+                    w[i] *= scale
+                    excess_pool += reduced
+        if excess_pool <= 1e-9:
+            break
+        w = redistribute_weight_for_mandate(
+            w,
+            snapshots,
+            mandate_config,
+            active_priors,
+            excess_pool,
+            max_position_weight=max_weight_per_equity,
+            sector_cap_weight=sector_cap_weight,
+        )
+
+    final_weights = project_to_capped_simplex(
+        [max(0.0, weight) for weight in w],
+        max_position_weight=max_weight_per_equity,
+    )
+    shortfall = max(0.0, 1.0 - sum(final_weights))
+    if shortfall > 1e-9:
+        final_weights = redistribute_weight_for_mandate(
+            final_weights,
+            snapshots,
+            mandate_config,
+            active_priors,
+            shortfall,
+            max_position_weight=max_weight_per_equity,
+            sector_cap_weight=sector_cap_weight,
+        )
+
+    return project_to_capped_simplex(final_weights, max_position_weight=max_weight_per_equity)
+
+
+def project_to_capped_simplex(weights: list[float], *, max_position_weight: float) -> list[float]:
+    if not weights:
+        return []
+
+    cap = max(0.0, max_position_weight)
+    if cap <= 0:
+        return [0.0 for _ in weights]
+
+    if len(weights) * cap < 1.0 - 1e-9:
+        # Infeasible to be fully invested under the cap with this few names. Preserve
+        # the hard cap and leave the remainder for whole-share cash handling.
+        return [cap for _ in weights]
+
+    projected = [min(cap, max(0.0, weight)) for weight in weights]
+    if sum(projected) <= 1e-12:
+        projected = [min(cap, 1.0 / len(weights)) for _ in weights]
+
+    for _ in range(64):
+        total = sum(projected)
+        diff = 1.0 - total
+        if abs(diff) <= 1e-10:
+            break
+
+        if diff > 0:
+            eligible = [index for index, weight in enumerate(projected) if weight < cap - 1e-12]
+            if not eligible:
+                break
+            addition = diff / len(eligible)
+            for index in eligible:
+                projected[index] = min(cap, projected[index] + addition)
+        else:
+            eligible = [index for index, weight in enumerate(projected) if weight > 1e-12]
+            if not eligible:
+                break
+            reduction = (-diff) / len(eligible)
+            for index in eligible:
+                projected[index] = max(0.0, projected[index] - reduction)
+
+    return [min(cap, max(0.0, weight)) for weight in projected]
 
 def redistribute_weight_for_mandate(
     weights: list[float],
@@ -1617,22 +1836,48 @@ def redistribute_weight_for_mandate(
     mandate_config: MandateConfig,
     prior: list[float],
     excess_pool: float,
+    *,
+    max_position_weight: float | None = None,
+    sector_cap_weight: float | None = None,
 ) -> list[float]:
-    sector_totals = compute_sector_totals(weights, snapshots)
-    headroom: list[float] = []
-    for index, snapshot in enumerate(snapshots):
-        asset_headroom = max(0.0, mandate_config.max_position_weight - weights[index])
-        sector_headroom = max(0.0, mandate_config.sector_cap_weight - sector_totals[snapshot.sector])
-        score = min(asset_headroom, sector_headroom) * (1.0 + max(prior[index], 0.001))
-        headroom.append(score)
-
-    total_headroom = sum(headroom)
-    if total_headroom <= 1e-9:
-        return weights
-
     redistributed = weights[:]
-    for index, score in enumerate(headroom):
-        redistributed[index] += excess_pool * (score / total_headroom)
+    target_asset_cap = max_position_weight if max_position_weight is not None else mandate_config.max_position_weight
+    target_sector_cap = sector_cap_weight if sector_cap_weight is not None else mandate_config.sector_cap_weight
+
+    # Recursive redistribution using active priors, while respecting asset + sector caps.
+    remaining = max(0.0, excess_pool)
+    for _ in range(16):
+        if remaining <= 1e-9:
+            break
+        sector_totals = compute_sector_totals(redistributed, snapshots)
+        candidates: list[tuple[int, float, float]] = []
+        for index, snapshot in enumerate(snapshots):
+            asset_headroom = max(0.0, target_asset_cap - redistributed[index])
+            sector_headroom = max(0.0, target_sector_cap - sector_totals[snapshot.sector])
+            headroom = min(asset_headroom, sector_headroom)
+            if headroom <= 1e-9:
+                continue
+            score = max(0.001, prior[index])
+            candidates.append((index, headroom, score))
+
+        if not candidates:
+            break
+
+        # Higher-prior names absorb residual first, proportional within the active set.
+        candidates.sort(key=lambda item: item[2], reverse=True)
+        total_score = sum(item[2] for item in candidates)
+        allocated = 0.0
+        for index, headroom, score in candidates:
+            slice_weight = remaining * (score / max(total_score, 1e-9))
+            addition = min(headroom, slice_weight)
+            if addition <= 1e-12:
+                continue
+            redistributed[index] += addition
+            allocated += addition
+        if allocated <= 1e-12:
+            break
+        remaining -= allocated
+
     return redistributed
 
 
@@ -1821,6 +2066,7 @@ def initialize_positions(*, bar_matrix, weights, first_date, initial_investment,
 
 def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, risk_mode: str) -> int:
     trades = 0
+    rebalance_traded_notional = 0.0
     if not position_state:
         return 0
     config = RISK_MODEL_CONFIG[risk_mode]
@@ -1840,6 +2086,7 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             if shares_to_sell <= 0:
                 continue
             proceeds = shares_to_sell * bar.close_price
+            rebalance_traded_notional += proceeds
             trade_costs = calculate_trade_costs(
                 amount=proceeds,
                 trade_date=trade_date,
@@ -1860,6 +2107,7 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             if shares_to_buy <= 0:
                 continue
             trade_value = shares_to_buy * bar.close_price
+            rebalance_traded_notional += trade_value
             trade_costs = calculate_trade_costs(
                 amount=trade_value,
                 trade_date=trade_date,
@@ -1877,6 +2125,13 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             state["entry_price"] = weighted_average_entry_price(state["lots"])
             state["peak_price"] = max(state["peak_price"], bar.high_price)
             trades += 1
+
+    # Flat 10 bps friction penalty on total rebalance traded notional.
+    if rebalance_traded_notional > 0:
+        friction_penalty = rebalance_traded_notional * 0.001
+        cash_pool[0] -= friction_penalty
+        costs["total_frictional_drag"] += friction_penalty
+        costs["total_costs"] += friction_penalty
     return trades
 
 
@@ -1973,6 +2228,10 @@ def estimate_expected_returns(db, as_of_date,
     rule_expected_returns: list[float] = []
     config = RISK_MODEL_CONFIG[risk_mode]
     for index, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            rule_expected_returns.append(float(DEFENSIVE_CASH_BUFFER_RETURN))
+            continue
         series = return_matrix[index]
         daily_mean = sum(series) / max(len(series), 1)
         annual_mean = daily_mean * 252
@@ -2022,11 +2281,14 @@ def estimate_expected_returns(db, as_of_date,
 
     # 2) Default to rule-only, and annotate snapshot metadata accordingly.
     for snapshot in snapshots:
-        snapshot.expected_return_source = "RULES"
-        snapshot.model_version = "rules"
-        snapshot.ml_pred_21d_return = None
-        snapshot.ml_pred_annual_return = None
-        snapshot.top_model_drivers = []
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+        else:
+            snapshot.expected_return_source = "RULES"
+            snapshot.model_version = "rules"
+            snapshot.ml_pred_21d_return = None
+            snapshot.ml_pred_annual_return = None
+            snapshot.top_model_drivers = []
 
     if model_variant != "LIGHTGBM_HYBRID":
         return rule_expected_returns
@@ -2043,6 +2305,10 @@ def estimate_expected_returns(db, as_of_date,
     expected_returns = rule_expected_returns[:]
     any_ml_used = False
     for i, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            expected_returns[i] = float(DEFENSIVE_CASH_BUFFER_RETURN)
+            continue
         symbol = snapshot.symbol
         pred = predictions_by_symbol.get(symbol)
         if snapshot.instrument_type != "EQUITY" or pred is None:
@@ -2213,7 +2479,12 @@ def candidate_score(snapshot: Snapshot, risk_mode: str, preference_rank: int) ->
     )
 
 
-def aggregate_portfolio_returns(snapshot_map: dict[str, Snapshot], weights: dict[str, float]) -> dict[date, float]:
+def aggregate_portfolio_returns(
+    snapshot_map: dict[str, Snapshot],
+    weights: dict[str, float],
+    *,
+    clamp_daily_returns: bool = False,
+) -> dict[date, float]:
     combined: dict[date, float] = defaultdict(float)
     totals: dict[date, float] = defaultdict(float)
     for symbol, weight in weights.items():
@@ -2223,7 +2494,16 @@ def aggregate_portfolio_returns(snapshot_map: dict[str, Snapshot], weights: dict
         for trade_date, value in snapshot.returns:
             combined[trade_date] += value * weight
             totals[trade_date] += weight
-    return {trade_date: combined[trade_date] / max(totals[trade_date], 1e-9) for trade_date in sorted(combined)}
+    aggregated = {
+        trade_date: combined[trade_date] / max(totals[trade_date], 1e-9)
+        for trade_date in sorted(combined)
+    }
+    if not clamp_daily_returns:
+        return aggregated
+    return {
+        trade_date: float(np.clip(value, -BENCHMARK_DAILY_RETURN_CLAMP, BENCHMARK_DAILY_RETURN_CLAMP))
+        for trade_date, value in aggregated.items()
+    }
 
 
 def summarize_return_series(return_series: dict[date, float]) -> dict[str, float]:
@@ -2281,6 +2561,40 @@ def annualize_return(closes: list[tuple[date, float]]) -> float:
         return 0.0
     periods = max(len(closes) - 1, 1)
     return (((closes[-1][1] / closes[0][1]) ** (252 / periods)) - 1) * 100
+
+
+def clamp_daily_return_series(return_series: list[tuple[date, float]]) -> list[tuple[date, float]]:
+    return [
+        (trade_date, float(np.clip(value, -BENCHMARK_DAILY_RETURN_CLAMP, BENCHMARK_DAILY_RETURN_CLAMP)))
+        for trade_date, value in return_series
+    ]
+
+
+def equity_curve_from_returns(return_series: list[tuple[date, float]]) -> list[float]:
+    equity: list[float] = []
+    running = 1.0
+    for _, value in return_series:
+        running *= 1 + value
+        equity.append(running)
+    return equity
+
+
+def annualize_return_from_returns(return_series: list[tuple[date, float]]) -> float:
+    equity = equity_curve_from_returns(return_series)
+    if not equity:
+        return 0.0
+    years = max(len(return_series) / 252, 1 / 12)
+    return ((equity[-1] ** (1 / years)) - 1) * 100
+
+
+def compute_momentum_pct_from_returns(return_series: list[tuple[date, float]], window: int) -> float:
+    if not return_series:
+        return 0.0
+    window_returns = return_series[-window:] if len(return_series) > window else return_series
+    running = 1.0
+    for _, value in window_returns:
+        running *= 1 + value
+    return (running - 1) * 100
 
 
 def annualize_volatility(values: list[float]) -> float:
@@ -2455,19 +2769,19 @@ def compute_factor_exposures(weighted_snapshots: list[tuple[Snapshot, float]]) -
     return exposures
 
 
-def detect_market_regime(snapshots: list[Snapshot]) -> dict[str, float]:
+def detect_market_regime(snapshots: list[Snapshot]) -> dict[str, float | str]:
     benchmark = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
     if benchmark is None:
         benchmark = max(snapshots, key=lambda snapshot: snapshot.avg_traded_value, default=None)
     if benchmark is None:
-        return {"base_return": 0.10, "risk_on_bonus": 0.0}
+        return {"base_return": 0.10, "risk_on_bonus": 0.0, "regime": "neutral", "regime_name": "Neutral"}
     trailing_return = benchmark.momentum_3m_pct
     trailing_vol = benchmark.annual_volatility_pct
     if trailing_return < -5.0 or trailing_vol > 24.0:
-        return {"base_return": 0.08, "risk_on_bonus": -0.01}
+        return {"base_return": 0.08, "risk_on_bonus": -0.01, "regime": "bear", "regime_name": "Bear"}
     if trailing_return > 8.0 and trailing_vol < 18.0:
-        return {"base_return": 0.12, "risk_on_bonus": 0.015}
-    return {"base_return": 0.10, "risk_on_bonus": 0.0}
+        return {"base_return": 0.12, "risk_on_bonus": 0.015, "regime": "bull", "regime_name": "Bull"}
+    return {"base_return": 0.10, "risk_on_bonus": 0.0, "regime": "neutral", "regime_name": "Neutral"}
 
 
 def build_nifty50_proxy_portfolio(snapshots: list[Snapshot]) -> dict[str, float]:
@@ -2499,7 +2813,7 @@ def build_nifty500_proxy_portfolio(snapshots: list[Snapshot]) -> dict[str, float
 
 
 def build_factor_portfolio(snapshots: list[Snapshot], *, factor_key: str, count: int, sector_cap: float) -> dict[str, float]:
-    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    equities = [snapshot for snapshot in snapshots if is_benchmark_factor_eligible(snapshot)]
     ranked = sorted(equities, key=lambda snapshot: snapshot.factor_scores.get(factor_key, 0.0), reverse=True)[:count]
     if not ranked:
         return {}
@@ -2508,7 +2822,7 @@ def build_factor_portfolio(snapshots: list[Snapshot], *, factor_key: str, count:
 
 
 def build_multifactor_portfolio(snapshots: list[Snapshot], *, count: int, sector_cap: float) -> dict[str, float]:
-    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    equities = [snapshot for snapshot in snapshots if is_benchmark_factor_eligible(snapshot)]
     ranked = sorted(
         equities,
         key=lambda snapshot: (
@@ -2533,6 +2847,14 @@ def build_multifactor_portfolio(snapshots: list[Snapshot], *, count: int, sector
         for snapshot in ranked
     }
     return cap_sector_weights(normalize_score_weights(score_weights), {snapshot.symbol: snapshot for snapshot in ranked}, sector_cap)
+
+
+def is_benchmark_factor_eligible(snapshot: Snapshot) -> bool:
+    if snapshot.instrument_type != "EQUITY":
+        return False
+    if abs(snapshot.annual_return_pct) > BENCHMARK_MAX_CONSTITUENT_ANNUAL_RETURN_PCT:
+        return False
+    return all(abs(value) < BENCHMARK_DAILY_RETURN_CLAMP - 1e-9 for _, value in snapshot.returns)
 
 
 def normalize_score_weights(raw_weights: dict[str, float]) -> dict[str, float]:

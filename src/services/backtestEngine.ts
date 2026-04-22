@@ -65,6 +65,7 @@ export interface CostBreakdown {
     totalGST: number;
     totalSlippage: number;
     totalCosts: number;
+    totalFrictionalDragPct?: number;
 }
 
 // ─── Geometric Brownian Motion price path generator ─────────────────────────

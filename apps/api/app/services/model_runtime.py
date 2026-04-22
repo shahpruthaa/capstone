@@ -23,9 +23,31 @@ def resolve_artifact_dir(relative_or_absolute: str) -> Path:
     # Prefer artifacts rooted at apps/api, with fallback to legacy apps/ root.
     preferred = api_root() / path
     legacy = api_root().parent / path
-    if preferred.exists() or not legacy.exists():
-        return preferred
-    return legacy
+    candidates = [preferred, legacy]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    versioned = _latest_versioned_artifact_dir(preferred)
+    if versioned is not None:
+        return versioned
+    legacy_versioned = _latest_versioned_artifact_dir(legacy)
+    if legacy_versioned is not None:
+        return legacy_versioned
+    return preferred
+
+
+def _latest_versioned_artifact_dir(configured_path: Path) -> Path | None:
+    parent = configured_path.parent
+    stem = configured_path.name.rsplit("_v", 1)[0]
+    if not parent.exists() or not stem:
+        return None
+    matches = sorted(
+        (path for path in parent.glob(f"{stem}_v*") if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    return matches[0] if matches else None
 
 
 def _safe_json(path: Path) -> dict[str, Any]:
@@ -241,8 +263,9 @@ def get_model_runtime_status() -> dict[str, Any]:
         available = False
         reason = lightgbm.get("reason") or "ensemble_core_missing"
 
+    manifest_present = ensemble_manifest.get("reason") != "ensemble_manifest_missing"
     artifact_classification = str(
-        ensemble_manifest.get("artifact_classification")
+        (ensemble_manifest.get("artifact_classification") if manifest_present else None)
         or lightgbm.get("artifact_classification")
         or ("missing" if not available else "standard")
     )

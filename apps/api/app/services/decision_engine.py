@@ -10,7 +10,12 @@ from app.features.position_sizer import calculate_position_size
 from app.features.price_levels import calculate_price_levels
 from app.ml.lightgbm_alpha.technical_indicators import compute_technical_features
 from app.schemas.trade_idea import CheckResultModel, TenPointChecklistModel, TradeIdeaModel
-from app.services.db_quant_engine import Snapshot, get_effective_trade_date, load_snapshots
+from app.services.db_quant_engine import (
+    Snapshot,
+    get_effective_trade_date,
+    is_defensive_cash_equivalent,
+    load_snapshots,
+)
 from app.services.ensemble_scorer import get_shared_ensemble_scorer
 
 _TRADE_IDEA_CACHE: dict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]] = {}
@@ -50,18 +55,21 @@ class DecisionEngine:
         sector_cutoff = max(3, ceil(max(len(sector_ranks), 1) * 0.4))
 
         for snapshot in snapshots:
-            if snapshot.instrument_type == "ETF":
+            if is_defensive_cash_equivalent(snapshot):
                 continue
 
             prediction = predictions.get(snapshot.symbol)
             if prediction is None:
+                continue
+            expected_return_annual = float(prediction.pred_annual_return)
+            if expected_return_annual <= 0:
                 continue
 
             sector_rank = sector_ranks.get(snapshot.sector, len(sector_ranks) + 1)
             if regime_filter and sector_rank > sector_cutoff:
                 continue
 
-            levels = calculate_price_levels(snapshot, prediction.pred_annual_return)
+            levels = calculate_price_levels(snapshot, expected_return_annual)
             sizing = calculate_position_size(
                 portfolio_value=portfolio_value,
                 risk_per_trade_pct=risk_per_trade_pct,
@@ -95,6 +103,8 @@ class DecisionEngine:
                 checklist.position_sizing,
             ]
             checklist_score = sum(1 for item in checklist_items if item.passed)
+            if expected_return_annual <= 0:
+                checklist_score = 0
             if checklist_score < min_checklist_score:
                 continue
 
@@ -107,7 +117,7 @@ class DecisionEngine:
                     timestamp=datetime.utcnow(),
                     as_of_date=as_of_date,
                     ensemble_score=round(float(prediction.pred_21d_return), 4),
-                    expected_return_annual=round(float(prediction.pred_annual_return), 4),
+                    expected_return_annual=round(expected_return_annual, 4),
                     top_drivers=list(prediction.top_drivers),
                     checklist=checklist,
                     checklist_score=checklist_score,
@@ -185,7 +195,7 @@ class DecisionEngine:
     def _rank_sectors(self, snapshots: list[Snapshot], predictions: dict[str, object]) -> tuple[dict[str, int], dict[str, float]]:
         sector_buckets: dict[str, list[float]] = defaultdict(list)
         for snapshot in snapshots:
-            if snapshot.instrument_type == "ETF":
+            if is_defensive_cash_equivalent(snapshot):
                 continue
             prediction = predictions.get(snapshot.symbol)
             ml_score = float(prediction.pred_21d_return) if prediction is not None else 0.0
@@ -203,7 +213,7 @@ class DecisionEngine:
     def _build_sector_relative_strength(self, snapshots: list[Snapshot]) -> dict[str, float]:
         sector_groups: dict[str, list[Snapshot]] = defaultdict(list)
         for snapshot in snapshots:
-            if snapshot.instrument_type != "ETF":
+            if not is_defensive_cash_equivalent(snapshot):
                 sector_groups[snapshot.sector].append(snapshot)
 
         percentile_by_symbol: dict[str, float] = {}
@@ -239,6 +249,7 @@ class DecisionEngine:
         low_vol = snapshot.factor_scores.get("low_vol", 0.0)
         liquidity = snapshot.factor_scores.get("liquidity", 0.0)
         beta = snapshot.beta_proxy
+        expected_return_annual = float(prediction.pred_annual_return)
 
         if regime_name == "bull":
             regime_score = min(1.0, 0.5 + (0.2 if momentum > 0 else 0.0) + (0.2 if technicals.get("ema_ratio_50", 0.0) > 0 else 0.0) + (0.1 if sector_rank <= sector_cutoff else 0.0))
@@ -308,18 +319,22 @@ class DecisionEngine:
         )
 
         driver_text = prediction.top_drivers[0] if prediction.top_drivers else "No dominant catalyst surfaced"
-        catalyst_score = min(1.0, max(0.0, 0.35 + (0.35 if prediction.pred_21d_return > 0 else 0.0) + (0.30 if prediction.top_drivers else 0.0)))
+        catalyst_score = min(1.0, max(0.0, 0.35 + (0.35 if prediction.pred_21d_return > 0 and expected_return_annual > 0 else 0.0) + (0.30 if prediction.top_drivers else 0.0)))
         news_catalyst = CheckResultModel(
-            passed=catalyst_score >= 0.65,
+            passed=catalyst_score >= 0.65 and expected_return_annual > 0,
             score=round(catalyst_score, 2),
             reason=f"Bootstrap catalyst view uses model drivers until structured news/event ingestion is added: {driver_text}.",
         )
 
         levels_score = min(1.0, max(0.0, 0.45 + (0.35 if levels.rr_ratio >= 2.0 else 0.0) + (0.20 if levels.risk_pct <= 8.0 else 0.0)))
         entry_stop_target = CheckResultModel(
-            passed=levels_score >= 0.7,
-            score=round(levels_score, 2),
-            reason=f"Entry {levels.entry:.2f}, stop {levels.stop:.2f}, target {levels.target:.2f}, R:R {levels.rr_ratio:.2f}.",
+            passed=levels_score >= 0.7 and expected_return_annual > 0,
+            score=round(levels_score if expected_return_annual > 0 else 0.0, 2),
+            reason=(
+                f"Entry {levels.entry:.2f}, stop {levels.stop:.2f}, target {levels.target:.2f}, R:R {levels.rr_ratio:.2f}."
+                if expected_return_annual > 0
+                else f"Expected annual return is negative ({expected_return_annual:.1%}), so the long setup is rejected."
+            ),
         )
 
         sizing_score = min(1.0, max(0.0, 0.35 + (0.35 if sizing.units > 0 else 0.0) + (0.30 if 0 < sizing.allocation_pct <= 20 else 0.0)))

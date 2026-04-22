@@ -3,12 +3,13 @@ import { AlertTriangle, RefreshCw, ShieldCheck, Target, TrendingUp } from 'lucid
 
 import { TradeIdea, fetchTradeIdeasViaApi } from '../services/backendApi';
 import { Portfolio } from '../services/portfolioService';
+import { StockInsightDrawer } from './StockInsightDrawer';
 
 function formatPct(value: number): string {
     return `${(value * 100).toFixed(1)}%`;
 }
 
-function TradeIdeaCard({ idea }: { idea: TradeIdea }) {
+function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbol: string) => void }) {
     const checklistItems = [
         { name: 'Regime aligned', check: idea.checklist.regime_check },
         { name: 'Sector strength', check: idea.checklist.sector_strength },
@@ -23,11 +24,25 @@ function TradeIdeaCard({ idea }: { idea: TradeIdea }) {
     ];
 
     return (
-        <div className="card p-5">
+        <div
+            className="card p-5 cursor-pointer transition-colors hover:bg-slate-50 focus-visible:bg-slate-50"
+            role="button"
+            tabIndex={0}
+            onClick={() => onInspect(idea.symbol)}
+            onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onInspect(idea.symbol);
+                }
+            }}
+            aria-label={`Open AI stock insights for ${idea.symbol}`}
+        >
             <div className="flex items-start justify-between gap-4 mb-3">
                 <div>
                     <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-lg text-slate-900">{idea.symbol}</h3>
+                        <h3 className="font-bold text-lg text-slate-900">
+                            {idea.symbol}
+                        </h3>
                         <span className="badge badge-neutral">{idea.sector}</span>
                         <span
                             className="badge badge-neutral"
@@ -106,6 +121,8 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
     const [ideas, setIdeas] = useState<TradeIdea[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+    const [drawerOpen, setDrawerOpen] = useState(false);
 
     const loadIdeas = async () => {
         setLoading(true);
@@ -130,6 +147,11 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
     useEffect(() => {
         void loadIdeas();
     }, [portfolio]);
+
+    const openStockDrawer = (symbol: string) => {
+        setSelectedSymbol(symbol);
+        setDrawerOpen(true);
+    };
 
     return (
         <div className="space-y-5">
@@ -173,10 +195,15 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
             <div className="space-y-4">
                 {ideas.map(idea => (
                     <div key={idea.symbol}>
-                        <TradeIdeaCard idea={idea} />
+                        <TradeIdeaCard idea={idea} onInspect={openStockDrawer} />
                     </div>
                 ))}
             </div>
+            <StockInsightDrawer
+                symbol={selectedSymbol}
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+            />
         </div>
     );
 }

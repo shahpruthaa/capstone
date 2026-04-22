@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Plus, Search, Trash2, Info, ShieldCheck } from 'lucide-react';
 import { AnalysisResult } from '../services/portfolioService';
@@ -81,25 +81,34 @@ export function AnalyzeTab() {
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [analysisNotice, setAnalysisNotice] = useState<{ tone: 'info'; text: string } | null>(null);
     const [holdingsText, setHoldingsText] = useState('');
+    const analysisRequestId = useRef(0);
 
     const filtered = ALL_STOCKS.filter(s =>
         search && (s.symbol.toLowerCase().includes(search.toLowerCase()) || s.name.toLowerCase().includes(search.toLowerCase()))
     ).slice(0, 8);
 
     const refreshAnalysis = async (updated: { symbol: string; shares: number }[]) => {
+        const requestId = analysisRequestId.current + 1;
+        analysisRequestId.current = requestId;
         setLoadingAnalysis(true);
+        setResult(null);
         setAnalysisNotice(null);
         try {
-            setResult(await analyzePortfolioViaApi(updated));
+            const nextResult = await analyzePortfolioViaApi(updated);
+            if (requestId !== analysisRequestId.current) return;
+            setResult(nextResult);
             setAnalysisNotice({ tone: 'info', text: 'Risk analysis is being computed from backend market data.' });
         } catch (error) {
+            if (requestId !== analysisRequestId.current) return;
             setResult(null);
             setAnalysisNotice({
                 tone: 'info',
                 text: `Portfolio analysis is syncing: ${error instanceof Error ? error.message : 'The local analysis service is initializing.'}`,
             });
         } finally {
-            setLoadingAnalysis(false);
+            if (requestId === analysisRequestId.current) {
+                setLoadingAnalysis(false);
+            }
         }
     };
 
@@ -125,6 +134,10 @@ export function AnalyzeTab() {
     };
 
     const parseAndLoadHoldings = async () => {
+        analysisRequestId.current += 1;
+        setResult(null);
+        setHoldings([]);
+        setAnalysisNotice(null);
         const rows = holdingsText
             .split('\n')
             .map((row) => row.trim())
@@ -154,7 +167,9 @@ export function AnalyzeTab() {
         if (updated.length) {
             await refreshAnalysis(updated);
         } else {
+            analysisRequestId.current += 1;
             setResult(null);
+            setAnalysisNotice(null);
         }
     };
 
@@ -168,9 +183,7 @@ export function AnalyzeTab() {
             .map(([name, value]) => ({ name, value: +value.toFixed(2) }))
         : [];
 
-    const uniqueSectors = [...new Set(
-        holdings.map(h => ALL_STOCKS.find(s => s.symbol === h.symbol)?.sector).filter(Boolean)
-    )] as string[];
+    const uniqueSectors = result ? Object.keys(result.sectorWeights).filter(Boolean) : [];
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
@@ -192,10 +205,16 @@ export function AnalyzeTab() {
                             className="input-field px-3 py-2 text-xs h-24"
                             placeholder={'INFY 10\nHDFCBANK 8\nTCS,5'}
                             value={holdingsText}
-                            onChange={(event) => setHoldingsText(event.target.value)}
+                            onChange={(event) => {
+                                analysisRequestId.current += 1;
+                                setHoldingsText(event.target.value);
+                                setResult(null);
+                                setHoldings([]);
+                                setAnalysisNotice(null);
+                            }}
                         />
                         <button onClick={() => { void parseAndLoadHoldings(); }} className="btn-secondary mt-2 px-3 py-1.5 text-xs">
-                            Analyze Pasted Portfolio
+                            Analyze Posted Portfolio
                         </button>
                     </div>
 

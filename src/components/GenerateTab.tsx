@@ -14,6 +14,7 @@ import {
     UserMandate,
 } from '../services/backendApi';
 import { MetricCard, SectorChip } from './MetricCard';
+import { StockInsightDrawer } from './StockInsightDrawer';
 
 const COLORS = ['#D4A843', '#5B9CF6', '#52C97A', '#E05C5C', '#F59E0B', '#A78BFA'];
 
@@ -34,6 +35,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
     const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+    const [drawerOpen, setDrawerOpen] = useState(false);
     const runtimeLoaded = useRef(false);
 
     useEffect(() => {
@@ -141,6 +144,11 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         { id: 'balanced', label: 'Balanced', icon: <TrendingUp className="w-5 h-5" />, desc: 'Risk and upside in balance' },
         { id: 'growth', label: 'Growth', icon: <Zap className="w-5 h-5" />, desc: 'Higher upside bias' },
     ];
+
+    const openStockDrawer = (symbol: string) => {
+        setSelectedSymbol(symbol);
+        setDrawerOpen(true);
+    };
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
@@ -392,9 +400,24 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     </thead>
                                     <tbody>
                                         {portfolio.allocations.map((allocation, index) => (
-                                            <tr key={index}>
+                                            <tr
+                                                key={index}
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={() => openStockDrawer(allocation.stock.symbol)}
+                                                onKeyDown={(event) => {
+                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                        event.preventDefault();
+                                                        openStockDrawer(allocation.stock.symbol);
+                                                    }
+                                                }}
+                                                className="cursor-pointer hover:bg-slate-50 focus-visible:bg-slate-50"
+                                                aria-label={`Open AI stock insights for ${allocation.stock.symbol}`}
+                                            >
                                                 <td>
-                                                    <div className="font-semibold text-slate-900">{allocation.stock.symbol}</div>
+                                                    <div className="font-semibold text-slate-900">
+                                                        {allocation.stock.symbol}
+                                                    </div>
                                                     <div className="text-xs text-slate-400">{allocation.stock.name}</div>
                                                     {allocation.drivers && allocation.drivers.length > 0 && (
                                                         <div className="text-[10px] text-slate-500 mt-1">
@@ -428,6 +451,11 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                     </>
                 )}
             </div>
+            <StockInsightDrawer
+                symbol={selectedSymbol}
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+            />
         </div>
     );
 }

@@ -10,34 +10,25 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-EXPLAIN_PROMPT = """You are an expert NSE (National Stock Exchange of India) portfolio analyst.
-Explain why this stock was selected or rejected in a portfolio in 2-3 clear paragraphs.
-Be specific about the numbers. Write for a sophisticated retail investor. No bullet points.
+STOCK_SYSTEM_PROMPT_TEMPLATE = """You are an institutional Portfolio Fiduciary and Risk Evaluator for Indian Equities (NSE).
+Your job is to explain WHY the quantitative engine allocated capital to this specific stock, strictly using the provided quantitative data.
 
-Stock: {symbol}
-Sector: {sector}
-Ensemble Score: {score:.3f} (range -1 to +1, higher = more attractive)
-LightGBM Signal: {lgb_score:.3f}
-LSTM Signal: {lstm_score:.3f}
-Death Risk: {death_risk:.3f} (0=safe, 1=high risk of blow-up)
-News Sentiment: {news_sentiment:.3f}
+CURRENT MARKET REGIME: {regime_name}
+STOCK: {symbol}
+SECTOR: {sector}
 
-Top Feature Drivers: {drivers}
+QUANTITATIVE DRIVERS:
+{top_drivers}
 
-Current Technicals:
-- 21-day return: {ret_21d:.1%}
-- 63-day return: {ret_63d:.1%}
-- Volatility (21d): {vol_21d:.1%}
-- Distance from 52-week high: {dist_52w:.1%}
-- Beta: {beta:.2f}
-- Sector: {sector}
-- Market Cap Category: {market_cap}
+NEWS & SENTIMENT CONTEXT:
+{news_explanation}
 
-Portfolio Context: {context}
-
-Write a 2-3 paragraph explanation covering: (1) why the model scored this stock this way,
-(2) what the key risks or opportunities are, (3) what an investor should watch for.
-Be direct and quantitative."""
+INSTRUCTIONS:
+1. Do not use generic market platitudes.
+2. Explicitly cite the active regime and how the model weighted its components (LightGBM, LSTM, GNN, Death Risk).
+3. Explain the specific drivers (e.g., "Selected due to a strong LSTM sequence score and low downside risk").
+4. If the news context is negative but the stock was still selected, explain that the quantitative alpha offset the short-term sentiment.
+5. Keep the explanation to 2-3 concise, professional paragraphs."""
 
 
 def _fallback_stock_explanation(
@@ -93,26 +84,24 @@ def explain_stock(
     drivers: list[str],
     technicals: dict[str, Any],
     portfolio_context: str = "MODERATE risk portfolio",
+    regime_name: str = "Neutral",
+    news_explanation: str | None = None,
 ) -> str:
     if not settings.groq_api_key:
         return _fallback_stock_explanation(symbol, sector, score, death_risk, drivers, technicals)
 
-    prompt = EXPLAIN_PROMPT.format(
+    effective_news_context = (
+        news_explanation
+        or str(technicals.get("news_explanation") or "").strip()
+        or f"News sentiment score: {news_sentiment:+.3f}. No additional structured news narrative available."
+    )
+    top_drivers = "\n".join(f"- {driver}" for driver in (drivers[:8] or ["No top drivers provided by the quant engine."]))
+    system_prompt = STOCK_SYSTEM_PROMPT_TEMPLATE.format(
+        regime_name=regime_name,
         symbol=symbol,
         sector=sector,
-        score=score,
-        lgb_score=lgb_score,
-        lstm_score=lstm_score,
-        death_risk=death_risk,
-        news_sentiment=news_sentiment,
-        drivers=", ".join(drivers[:5]) if drivers else "N/A",
-        ret_21d=technicals.get("ret_21d", 0.0),
-        ret_63d=technicals.get("ret_63d", 0.0),
-        vol_21d=technicals.get("vol_21d", 0.0),
-        dist_52w=technicals.get("dist_to_52w_high", 0.0),
-        beta=technicals.get("beta_proxy", 1.0),
-        market_cap=technicals.get("market_cap_bucket", "Unknown"),
-        context=portfolio_context,
+        top_drivers=top_drivers,
+        news_explanation=effective_news_context,
     )
 
     try:
@@ -125,8 +114,16 @@ def explain_stock(
             json={
                 "model": settings.groq_model,
                 "max_tokens": 500,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Provide the evaluator note now in exactly 2-3 concise professional paragraphs."
+                        ),
+                    },
+                ],
+                "temperature": 0.2,
             },
             timeout=20,
         )

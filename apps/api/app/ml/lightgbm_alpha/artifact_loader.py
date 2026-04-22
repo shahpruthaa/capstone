@@ -39,9 +39,28 @@ def _resolve_artifact_dir() -> Path:
 
     preferred = _api_root() / relative
     legacy = _api_root().parent / relative
-    if preferred.exists() or not legacy.exists():
-        return preferred
-    return legacy
+    for candidate in (preferred, legacy):
+        if candidate.exists():
+            return candidate
+
+    for configured in (preferred, legacy):
+        versioned = _latest_versioned_artifact_dir(configured)
+        if versioned is not None:
+            return versioned
+    return preferred
+
+
+def _latest_versioned_artifact_dir(configured_path: Path) -> Path | None:
+    parent = configured_path.parent
+    stem = configured_path.name.rsplit("_v", 1)[0]
+    if not parent.exists() or not stem:
+        return None
+    matches = sorted(
+        (path for path in parent.glob(f"{stem}_v*") if path.is_dir()),
+        key=lambda path: path.name,
+        reverse=True,
+    )
+    return matches[0] if matches else None
 
 
 def _read_json(path: Path) -> dict[str, Any]:
