@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from math import ceil
 
@@ -11,12 +11,25 @@ from app.features.price_levels import calculate_price_levels
 from app.ml.lightgbm_alpha.technical_indicators import compute_technical_features
 from app.schemas.portfolio import PortfolioFitSummaryModel
 from app.schemas.trade_idea import CheckResultModel, TenPointChecklistModel, TradeIdeaContextModel, TradeIdeaListResponse, TradeIdeaModel
-from app.services.db_quant_engine import Snapshot, build_portfolio_fit_summary, build_runtime_descriptor, get_effective_trade_date, load_snapshots
+from app.services.db_quant_engine import Snapshot, build_portfolio_fit_summary, build_runtime_descriptor, detect_market_regime, get_effective_trade_date, load_snapshots
 from app.services.ensemble_scorer import get_shared_ensemble_scorer
 from app.services.model_runtime import get_model_runtime_status
 
-_TRADE_IDEA_CACHE: dict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]] = {}
+_TRADE_IDEA_CACHE: "OrderedDict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]]" = OrderedDict()
 _TRADE_IDEA_CACHE_TTL = timedelta(minutes=5)
+_TRADE_IDEA_CACHE_MAXSIZE = 64
+
+
+def _prune_trade_idea_cache(now: datetime) -> None:
+    expired_keys = [
+        cache_key
+        for cache_key, (cached_at, _) in list(_TRADE_IDEA_CACHE.items())
+        if now - cached_at > _TRADE_IDEA_CACHE_TTL
+    ]
+    for cache_key in expired_keys:
+        _TRADE_IDEA_CACHE.pop(cache_key, None)
+    while len(_TRADE_IDEA_CACHE) > _TRADE_IDEA_CACHE_MAXSIZE:
+        _TRADE_IDEA_CACHE.popitem(last=False)
 
 
 class DecisionEngine:
@@ -37,9 +50,11 @@ class DecisionEngine:
     ) -> TradeIdeaListResponse:
         as_of_date = get_effective_trade_date(self.db)
         cache_key = (str(as_of_date), regime_filter, min_checklist_score, max_ideas)
-        cached = _TRADE_IDEA_CACHE.get(cache_key)
         now = datetime.utcnow()
+        _prune_trade_idea_cache(now)
+        cached = _TRADE_IDEA_CACHE.get(cache_key)
         if cached is not None and now - cached[0] <= _TRADE_IDEA_CACHE_TTL and not current_holdings and not sector_exposures and cash_available is None:
+            _TRADE_IDEA_CACHE.move_to_end(cache_key)
             return TradeIdeaListResponse(
                 runtime=build_runtime_descriptor(get_model_runtime_status()),
                 portfolio_fit_summary=None,
@@ -52,7 +67,7 @@ class DecisionEngine:
             snapshots = load_snapshots(self.db, as_of_date=as_of_date, min_history=90)
 
         predictions, _ = self.ensemble_scorer.score(snapshots, self.db)
-        regime = self._detect_market_regime(snapshots)
+        regime = detect_market_regime(snapshots)
         sector_ranks, sector_scores = self._rank_sectors(snapshots, predictions)
         sector_relative_strength = self._build_sector_relative_strength(snapshots)
 
@@ -193,6 +208,8 @@ class DecisionEngine:
 
         final_ideas = ideas[:max_ideas] if max_ideas is not None else ideas
         _TRADE_IDEA_CACHE[cache_key] = (now, final_ideas)
+        _TRADE_IDEA_CACHE.move_to_end(cache_key)
+        _prune_trade_idea_cache(now)
         portfolio_fit_summary: PortfolioFitSummaryModel | None = None
         if holdings:
             portfolio_fit_summary = build_portfolio_fit_summary(
@@ -214,48 +231,6 @@ class DecisionEngine:
     def build_trade_idea(self, symbol: str) -> TradeIdeaModel | None:
         response = self.generate_trade_ideas(regime_filter=False, min_checklist_score=0)
         return next((idea for idea in response.ideas if idea.symbol == symbol), None)
-
-    def _detect_market_regime(self, snapshots: list[Snapshot]) -> dict[str, float | str]:
-        benchmark = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
-        reference = benchmark or max(snapshots, key=lambda snapshot: snapshot.avg_traded_value, default=None)
-        if reference is None:
-            return {"regime": "sideways", "confidence": 0.0}
-
-        closes = [price for _, price in reference.adjusted_closes]
-        latest = closes[-1]
-        sma50 = self._sma(closes, 50)
-        sma200 = self._sma(closes, 200)
-
-        stocks_with_50 = 0
-        stocks_with_200 = 0
-        above_50 = 0
-        above_200 = 0
-        for snapshot in snapshots:
-            series = [price for _, price in snapshot.adjusted_closes]
-            if len(series) >= 50:
-                stocks_with_50 += 1
-                above_50 += int(series[-1] > self._sma(series, 50))
-            if len(series) >= 200:
-                stocks_with_200 += 1
-                above_200 += int(series[-1] > self._sma(series, 200))
-
-        breadth_50 = above_50 / stocks_with_50 if stocks_with_50 else 0.5
-        breadth_200 = above_200 / stocks_with_200 if stocks_with_200 else 0.5
-
-        bull_signals = sum([latest > sma200, sma50 > sma200, breadth_50 > 0.55, breadth_200 > 0.50])
-        bear_signals = sum([latest < sma200, sma50 < sma200, breadth_50 < 0.45, breadth_200 < 0.45])
-
-        if bull_signals >= 3:
-            regime = "bull"
-            confidence = bull_signals / 4.0
-        elif bear_signals >= 3:
-            regime = "bear"
-            confidence = bear_signals / 4.0
-        else:
-            regime = "sideways"
-            confidence = max(0.5, max(bull_signals, bear_signals) / 4.0)
-
-        return {"regime": regime, "confidence": round(confidence, 2), "breadth_50": round(breadth_50, 2), "breadth_200": round(breadth_200, 2)}
 
     def _rank_sectors(self, snapshots: list[Snapshot], predictions: dict[str, object]) -> tuple[dict[str, int], dict[str, float]]:
         sector_buckets: dict[str, list[float]] = defaultdict(list)
@@ -394,11 +369,26 @@ class DecisionEngine:
             data_quality="proxy",
         )
 
-        levels_score = min(1.0, max(0.0, 0.45 + (0.35 if levels.rr_ratio >= 2.0 else 0.0) + (0.20 if levels.risk_pct <= 8.0 else 0.0)))
+        levels_score = min(
+            1.0,
+            max(
+                0.0,
+                0.20
+                + (0.30 if levels.stop_basis == "atr" else 0.0)
+                + (0.30 if levels.rr_ratio >= 2.0 else 0.0)
+                + (0.20 if levels.risk_pct <= 8.0 else 0.0),
+            ),
+        )
+        levels_passed = levels.stop_basis == "atr" and levels.rr_ratio >= 2.0 and levels.risk_pct <= 12.0
+        level_bits = [f"Entry {levels.entry:.2f}, stop {levels.stop:.2f}, target {levels.target:.2f}, R:R {levels.rr_ratio:.2f}."]
+        if levels.stop_basis == "risk_cap":
+            level_bits.append("ATR stop breached the max-risk cap, so the setup is not being credited as a clean ATR-defined trade.")
+        elif levels.target_basis == "rr_guardrail":
+            level_bits.append("Target was lifted by the minimum reward-to-risk guardrail.")
         entry_stop_target = CheckResultModel(
-            passed=levels_score >= 0.7,
+            passed=levels_passed,
             score=round(levels_score, 2),
-            reason=f"Entry {levels.entry:.2f}, stop {levels.stop:.2f}, target {levels.target:.2f}, R:R {levels.rr_ratio:.2f}.",
+            reason=" ".join(level_bits),
         )
 
         sizing_score = min(1.0, max(0.0, 0.35 + (0.35 if sizing.units > 0 else 0.0) + (0.30 if 0 < sizing.allocation_pct <= 20 else 0.0)))
@@ -428,9 +418,3 @@ class DecisionEngine:
         lows = [price for _, price in snapshot.adjusted_lows]
         closes = [price for _, price in snapshot.adjusted_closes]
         return compute_technical_features(opens, highs, lows, closes)
-
-    @staticmethod
-    def _sma(values: list[float], window: int) -> float:
-        if len(values) < window:
-            return sum(values) / len(values) if values else 0.0
-        return sum(values[-window:]) / window

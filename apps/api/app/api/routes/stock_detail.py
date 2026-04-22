@@ -7,7 +7,7 @@ from app.db.session import get_db
 router = APIRouter()
 
 @router.get("/{symbol}")
-async def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
+def get_stock_detail(symbol: str, db: Session = Depends(get_db)):
     """
     Returns full AI breakdown for a single stock:
     - LightGBM SHAP feature importances
