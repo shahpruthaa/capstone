@@ -17,7 +17,7 @@ export function MetricCard({ label, value, sub, color = 'slate', trend, icon }: 
         blue: 'text-blue-600',
         amber: 'text-amber-600',
         purple: 'text-violet-600',
-        slate: 'text-slate-800',
+        slate: 'text-slate-50',
     };
 
     const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus;
@@ -32,7 +32,7 @@ export function MetricCard({ label, value, sub, color = 'slate', trend, icon }: 
                     {icon && <span className="text-slate-400">{icon}</span>}
                 </div>
             </div>
-            <p className={`text-2xl font-bold ${colorMap[color]}`}>{value}</p>
+            <p className={`text-xl font-bold font-mono ${colorMap[color]}`}>{value}</p>
             {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
         </div>
     );

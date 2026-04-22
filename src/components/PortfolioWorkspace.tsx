@@ -16,7 +16,7 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="card p-5">
+      <div className="card p-4">
         <p className="section-title">Portfolio Workflow</p>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
@@ -25,7 +25,7 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
               Step 1: define the mandate. Step 2: review the recommended portfolio. Step 3: compare it against your real holdings using the same research stack.
             </p>
           </div>
-          <div className="flex gap-2 rounded-2xl border border-slate-700/60 bg-slate-950/40 p-1">
+          <div className="flex gap-2 rounded-sm border border-slate-700 bg-slate-800/50 p-1">
             <button
               className={`${view === 'build' ? 'btn-primary' : 'btn-secondary'} px-4 py-2 text-sm`}
               onClick={() => setView('build')}
@@ -43,7 +43,7 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
       </div>
       
       {portfolio?.regimeWarning && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+        <div className="rounded-sm border border-amber-500/30 bg-amber-500/10 p-4">
           <div className="flex gap-3">
             <div className="text-amber-500">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

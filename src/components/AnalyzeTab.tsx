@@ -21,7 +21,7 @@ function CorrelationMatrix({ sectors }: { sectors: string[] }) {
     }
 
     return (
-        <div className="card p-5">
+        <div className="card p-4">
             <p className="section-title">Sector Correlation Matrix</p>
             <div className="overflow-x-auto">
                 <table style={{ borderSpacing: '3px', borderCollapse: 'separate' }}>
@@ -200,9 +200,9 @@ export function AnalyzeTab() {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
             <div className="lg:col-span-4 space-y-5">
-                <div className="card p-6">
-                    <h2 className="font-bold text-base flex items-center gap-2 mb-5">
-                        <Plus className="w-4 h-4 text-teal-600" /> Add Holdings
+                <div className="card p-4">
+                    <h2 className="font-mono text-[10px] uppercase tracking-wider font-bold flex items-center gap-2 mb-4">
+                        <Plus className="w-4 h-4 text-blue-500" /> Add Holdings
                     </h2>
 
                     {analysisNotice && (
@@ -212,7 +212,7 @@ export function AnalyzeTab() {
                     )}
 
                     <div className="mb-4">
-                        <label className="block text-xs font-semibold text-slate-500 mb-1">Paste portfolio (SYMBOL SHARES)</label>
+                        <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-400 mb-1">Paste portfolio (SYMBOL SHARES)</label>
                         <textarea
                             className="input-field px-3 py-2 text-xs h-24"
                             placeholder={'INFY 10\nHDFCBANK 8\nTCS,5'}
@@ -240,14 +240,14 @@ export function AnalyzeTab() {
                             onChange={e => { setSearch(e.target.value); setSelectedSym(''); }}
                         />
                         {filtered.length > 0 && (
-                            <div className="absolute top-full left-0 mt-1 w-full z-50 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
+                            <div className="absolute top-full left-0 mt-1 w-full z-50 bg-slate-800 border border-slate-700 rounded-sm max-h-60 overflow-y-auto">
                                 {filtered.map(s => (
                                     <button
                                         key={s.symbol}
                                         onClick={() => { setSelectedSym(s.symbol); setSearch(s.symbol); }}
-                                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 border-b border-slate-50 last:border-0"
+                                        className="w-full text-left px-4 py-2.5 hover:bg-slate-700/50 border-b border-slate-700 last:border-0"
                                     >
-                                        <span className="font-bold text-sm text-slate-900">{s.symbol}</span>
+                                        <span className="font-bold text-sm text-slate-50">{s.symbol}</span>
                                         <span className="text-xs text-slate-400 ml-2">{s.name}</span>
                                         <span className="float-right"><SectorChip sector={s.sector} /></span>
                                     </button>
@@ -281,12 +281,12 @@ export function AnalyzeTab() {
                         {holdings.map(h => {
                             const stock = ALL_STOCKS.find(s => s.symbol === h.symbol);
                             return (
-                                <div key={h.symbol} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                <div key={h.symbol} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-sm border border-slate-700">
                                     <div>
-                                        <div className="font-bold text-sm">{h.symbol}</div>
-                                        <div className="text-xs text-slate-400">{h.shares} shares · Rs {((stock?.price || 0) * h.shares).toLocaleString()}</div>
+                                        <div className="font-bold text-sm font-mono">{h.symbol}</div>
+                                        <div className="text-[10px] text-slate-400 font-mono tracking-wide">{h.shares} shares &middot; Rs {((stock?.price || 0) * h.shares).toLocaleString()}</div>
                                     </div>
-                                    <button onClick={() => { void removeHolding(h.symbol); }} className="text-slate-300 hover:text-rose-500 transition-colors p-1">
+                                    <button onClick={() => { void removeHolding(h.symbol); }} className="text-slate-400 hover:text-rose-500 transition-colors p-1">
                                         <Trash2 className="w-4 h-4" />
                                     </button>
                                 </div>
@@ -299,10 +299,10 @@ export function AnalyzeTab() {
 
             <div className="lg:col-span-8 space-y-5">
                 {!result ? (
-                    <div className="card flex flex-col items-center justify-center text-slate-400 p-16 border-2 border-dashed" style={{ minHeight: '400px' }}>
+                    <div className="card flex flex-col items-center justify-center text-slate-400 p-8 border border-dashed border-slate-600" style={{ minHeight: '400px' }}>
                         <Info className="w-12 h-12 mb-4 opacity-20" />
-                        <p className="text-base font-semibold mb-1">{loadingAnalysis ? 'Analyzing holdings...' : 'Add your NSE holdings'}</p>
-                        <p className="text-sm">We will assess risk, diversification, and sector correlation.</p>
+                        <p className="text-sm font-mono uppercase tracking-wider mb-1">{loadingAnalysis ? 'Analyzing holdings...' : 'Add your NSE holdings'}</p>
+                        <p className="text-xs">We will assess risk, diversification, and sector correlation.</p>
                     </div>
                 ) : (
                     <>
@@ -323,7 +323,7 @@ export function AnalyzeTab() {
                             />
                         </div>
 
-                        <div className="card p-5">
+                        <div className="card p-4">
                             <p className="section-title">Model Runtime</p>
                             <div className="runtime-grid grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                                 <div className="stat-row">
@@ -362,29 +362,29 @@ export function AnalyzeTab() {
 
                         <div className="space-y-2">
                             {result.suggestions.length === 0 ? (
-                                <div className="flex items-center gap-2 text-sm text-slate-600">
-                                    <ShieldCheck className="w-4 h-4 flex-shrink-0 text-teal-600" />
+                                <div className="flex items-center gap-2 text-[11px] font-mono tracking-wide text-slate-300">
+                                    <ShieldCheck className="w-4 h-4 flex-shrink-0 text-emerald-500" />
                                     Portfolio looks well-balanced across sectors.
                                 </div>
                             ) : result.suggestions.map((s, i) => (
-                                <div key={i} className="flex items-center gap-2 text-sm text-slate-600">
+                                <div key={i} className="flex items-center gap-2 text-[11px] font-mono tracking-wide text-slate-300">
                                     <Info className="w-4 h-4 flex-shrink-0 text-slate-400" /> {s}
                                 </div>
                             ))}
                         </div>
 
                         {result.backendNotes && result.backendNotes.length > 0 && (
-                            <div className="card p-5">
+                            <div className="card p-4">
                                 <p className="section-title">Analysis Notes</p>
                                 <div className="space-y-2">
                                     {result.backendNotes.map((note, index) => (
-                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
+                                        <p key={index} className="text-[11px] font-mono tracking-wide text-slate-300 leading-relaxed">{note}</p>
                                     ))}
                                 </div>
                             </div>
                         )}
 
-                        <div className="card p-5">
+                        <div className="card p-4">
                             <p className="section-title">Sector Exposure</p>
                             <div className="h-52">
                                 <ResponsiveContainer width="100%" height="100%">
@@ -404,14 +404,14 @@ export function AnalyzeTab() {
                         </div>
 
                         {factorChartData.length > 0 && (
-                            <div className="card p-5">
+                            <div className="card p-4">
                                 <p className="section-title">Factor Exposures</p>
                                 <div className="space-y-3">
                                     {factorChartData.map((item) => (
                                         <div key={item.name}>
-                                            <div className="flex items-center justify-between text-xs mb-1">
-                                                <span className="font-semibold text-slate-600 uppercase tracking-wide">{item.name.replace('_', ' ')}</span>
-                                                <span className={`font-mono ${item.value >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}</span>
+                                            <div className="flex items-center justify-between text-[10px] mb-1">
+                                                <span className="font-mono text-slate-400 uppercase tracking-wider">{item.name.replace('_', ' ')}</span>
+                                                <span className={`font-mono ${item.value >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}</span>
                                             </div>
                                             <div className="progress-bar-track">
                                                 <div
@@ -429,22 +429,22 @@ export function AnalyzeTab() {
                         )}
 
                         {result.mlPredictions && Object.keys(result.mlPredictions).length > 0 && (
-                            <div className="card p-5">
+                            <div className="card p-4">
                                 <p className="section-title">ML Scores By Holding</p>
                                 <div className="space-y-2">
                                     {(Object.entries(result.mlPredictions) as [string, number][])
                                         .sort((left, right) => right[1] - left[1])
                                         .map(([symbol, score]) => (
-                                            <div key={symbol} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
+                                            <div key={symbol} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-sm border border-slate-700">
                                                 <div>
-                                                    <div className="font-bold text-sm text-slate-900">{symbol}</div>
+                                                    <div className="font-bold text-sm font-mono text-slate-50">{symbol}</div>
                                                     {(result.topModelDriversBySymbol?.[symbol] || []).length > 0 && (
-                                                        <div className="text-[10px] text-slate-500 mt-1">
+                                                        <div className="text-[9px] font-mono tracking-wider uppercase text-slate-400 mt-1">
                                                             {(result.topModelDriversBySymbol?.[symbol] || []).slice(0, 2).join(', ')}
                                                         </div>
                                                     )}
                                                 </div>
-                                                <span className={`font-mono text-sm ${score >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                                                <span className={`font-mono text-sm ${score >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                                                     {score >= 0 ? '+' : ''}{score.toFixed(3)}
                                                 </span>
                                             </div>
