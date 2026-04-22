@@ -289,8 +289,39 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     db.add(run)
     db.flush()
 
-    allocations: list[AllocationModel] = []
+    capital = float(payload.capital_amount)
+    cash_left = capital
+    temp_allocs = []
+    
     for snapshot, weight in selected:
+        price = snapshot.latest_price or 1.0
+        target_amt = capital * (weight / 100.0)
+        shares = int(target_amt // max(price, 1.0))
+        amt = shares * price
+        cash_left -= amt
+        temp_allocs.append({
+            "snapshot": snapshot,
+            "weight": weight,
+            "shares": shares,
+            "price": price,
+            "amount": amt,
+        })
+        
+    # Redistribute residual
+    temp_allocs.sort(key=lambda x: x["weight"], reverse=True)
+    for alloc in temp_allocs:
+        if cash_left <= 0:
+            break
+        extra_shares = int(cash_left // max(alloc["price"], 1.0))
+        if extra_shares > 0:
+            alloc["shares"] += extra_shares
+            alloc["amount"] += extra_shares * alloc["price"]
+            cash_left -= extra_shares * alloc["price"]
+
+    allocations: list[AllocationModel] = []
+    for alloc in temp_allocs:
+        snapshot = alloc["snapshot"]
+        weight = alloc["weight"]
         rationale = build_rationale_for_mandate(snapshot, payload.mandate, mandate_config)
         db.add(
             GeneratedPortfolioAllocation(
@@ -301,7 +332,6 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
                 rationale=rationale,
             )
         )
-        # Parse death_risk and lstm signal from drivers
         drivers = list(snapshot.top_model_drivers)
         death_risk_val = None
         lstm_val = None
@@ -318,6 +348,8 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
                 symbol=snapshot.symbol,
                 sector=snapshot.sector,
                 weight=round(weight, 2),
+                shares=alloc["shares"],
+                amount=round(alloc["amount"], 2),
                 rationale=rationale,
                 top_model_drivers=drivers,
                 ml_pred_21d_return=round(float(snapshot.ml_pred_21d_return), 4) if snapshot.ml_pred_21d_return is not None else None,
