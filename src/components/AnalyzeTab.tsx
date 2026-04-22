@@ -113,7 +113,7 @@ export function AnalyzeTab() {
     };
 
     const addHolding = async () => {
-        const symbol = (selectedSym || search).trim().toUpperCase();
+        const symbol = (selectedSym || search).replace(/,/g, '').trim().toUpperCase();
         if (!symbol || shares <= 0) return;
         const nextHolding = { symbol, shares };
         const existing = holdings.findIndex(h => h.symbol === symbol);
@@ -138,24 +138,30 @@ export function AnalyzeTab() {
         setResult(null);
         setHoldings([]);
         setAnalysisNotice(null);
-        const rows = holdingsText
-            .split('\n')
-            .map((row) => row.trim())
-            .filter(Boolean);
-        const parsed: { symbol: string; shares: number }[] = [];
-        for (const row of rows) {
-            const parts = row.split(/[,\s]+/).filter(Boolean);
-            const symbolRaw = parts[0];
-            const sharesRaw = parts[1];
-            
-            if (!symbolRaw) continue;
-            
-            const symbol = symbolRaw.trim().toUpperCase();
-            const shares = sharesRaw ? parseInt(sharesRaw.trim(), 10) : 1; 
-            const finalShares = isNaN(shares) || shares <= 0 ? 1 : shares;
+        const parsed = holdingsText.split('\n').map(line => {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) return null;
 
-            parsed.push({ symbol, shares: finalShares });
-        }
+            // 1. Convert any commas to spaces to normalize the string
+            const normalizedLine = trimmedLine.replace(/,/g, ' ');
+            
+            // 2. Split by any amount of whitespace
+            const parts = normalizedLine.split(/\s+/);
+            
+            if (parts.length < 1 || !parts[0]) return null;
+            
+            // 3. First part is always the symbol
+            const symbol = parts[0].toUpperCase();
+            
+            // 4. Second part is shares (default to 1 if missing or unreadable)
+            let shares = 1;
+            if (parts.length > 1) {
+                shares = parseInt(parts[1], 10);
+                if (isNaN(shares) || shares <= 0) shares = 1;
+            }
+
+            return { symbol, shares };
+        }).filter(Boolean) as { symbol: string; shares: number }[];
         if (!parsed.length) {
             setAnalysisNotice({
                 tone: 'info',
