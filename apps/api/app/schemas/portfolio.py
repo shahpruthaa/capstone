@@ -13,11 +13,7 @@ InvestmentHorizon = Literal["2-4", "4-8", "8-24"]
 
 class UserMandate(BaseModel):
     investment_horizon_weeks: InvestmentHorizon
-    max_portfolio_drawdown_pct: float = Field(..., gt=0, le=100)
-    max_position_size_pct: float = Field(..., gt=0, le=100)
     preferred_num_positions: int = Field(..., gt=0, le=50)
-    sector_inclusions: list[str] = Field(default_factory=list)
-    sector_exclusions: list[str] = Field(default_factory=list)
     allow_small_caps: bool = False
     risk_attitude: RiskAttitude
 
@@ -35,31 +31,6 @@ class UserMandate(BaseModel):
             .replace("to", "-")
             .replace("–", "-")
         )
-        return normalized
-
-    @field_validator("sector_inclusions", "sector_exclusions", mode="before")
-    @classmethod
-    def normalize_sector_lists(cls, value: object) -> object:
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value.strip()]
-        return value
-
-    @field_validator("sector_inclusions", "sector_exclusions")
-    @classmethod
-    def dedupe_sectors(cls, values: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            cleaned = value.strip()
-            if not cleaned:
-                continue
-            key = cleaned.lower()
-            if key in seen:
-                continue
-            normalized.append(cleaned)
-            seen.add(key)
         return normalized
 
 
@@ -102,7 +73,7 @@ class GeneratePortfolioRequest(BaseModel):
 
 class GeneratePortfolioResponse(BaseModel):
     model_variant: ModelVariant
-    model_source: Literal["RULES", "LIGHTGBM"]
+    model_source: Literal["RULES", "ENSEMBLE"]
     model_version: str
     prediction_horizon_days: int
     capital_amount: float
@@ -154,7 +125,7 @@ class AnalyzePortfolioResponse(BaseModel):
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
     model_variant_applied: ModelVariant
-    model_source: Literal["RULES", "LIGHTGBM"] = "RULES"
+    model_source: Literal["RULES", "ENSEMBLE"] = "RULES"
     active_mode: str = "rules_only"
     model_version: str = "rules"
     artifact_classification: str = "missing"
@@ -231,7 +202,7 @@ class CurvePointModel(BaseModel):
 
 class BacktestResultResponse(BaseModel):
     model_variant: ModelVariant
-    model_source: Literal["RULES", "LIGHTGBM"]
+    model_source: Literal["RULES", "ENSEMBLE"]
     model_version: str
     prediction_horizon_days: int
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)

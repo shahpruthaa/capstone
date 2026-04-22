@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
 import { postExplainChat, fetchPlatformContext, type ExplainChatHistoryItem } from '../services/backendApi';
-import { answerChatQuestion } from '../services/localAdvisor';
 
 interface Message {
     role: 'user' | 'ai';
@@ -18,16 +17,11 @@ interface AIChatProps {
 export function AIChat({ portfolio }: AIChatProps) {
     const [open, setOpen] = useState(false);
     const [messages, setMessages] = useState<Message[]>([
-        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant. I know your current portfolio, market regime, and top trade ideas. Ask me anything." }
+        { role: 'ai', text: "Hi! I'm your NSE AI Portfolio Assistant. I can explain the current portfolio, reason about NSE stocks, and answer strategy questions from the live platform context." }
     ]);
     const [input, setInput] = useState('');
     const [loading, setLoading] = useState(false);
-    const [platformContext, setPlatformContext] = useState<Record<string, unknown>>({});
     const bottomRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        fetchPlatformContext().then(ctx => setPlatformContext(ctx));
-    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -37,70 +31,67 @@ export function AIChat({ portfolio }: AIChatProps) {
         if (!input.trim() || loading) return;
 
         const userMsg = input.trim();
+        const placeholderIndex = messages.length + 1;
+        const historyMessages = [...messages, { role: 'user' as const, text: userMsg }]
+            .filter(message => message.text.trim().length > 0)
+            .slice(-6);
+
         setInput('');
-        setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+        setMessages(prev => [...prev, { role: 'user', text: userMsg }, { role: 'ai', text: '', thinking: [] }]);
         setLoading(true);
 
-        // Simulate thinking steps
         const thinkingSteps = [
-            "Retrieving historical volatility data...",
-            "Running LightGBM inference on market factors...",
-            "Analyzing news sentiment from financial feeds...",
-            "Cross-referencing with institutional flows...",
-            "Generating ensemble prediction..."
+            "Refreshing portfolio and market context...",
+            "Checking ensemble signals and recent drivers...",
+            "Reviewing news and sector context...",
+            "Drafting a portfolio-aware response..."
         ];
 
-        setMessages(prev => [...prev, { role: 'ai', text: '', thinking: thinkingSteps }]);
-
-        for (let i = 0; i < thinkingSteps.length; i++) {
-            await new Promise(resolve => setTimeout(resolve, 800));
-            setMessages(prev => prev.map((msg, idx) =>
-                idx === prev.length - 1 && msg.role === 'ai'
-                    ? { ...msg, thinking: thinkingSteps.slice(0, i + 1) }
-                    : msg
-            ));
-        }
-
         try {
-            const history: ExplainChatHistoryItem[] = messages.slice(-6).map(m => ({
-                role: m.role === 'ai' ? 'assistant' : 'user',
-                content: m.text,
+            const latestPlatformContext = await fetchPlatformContext();
+
+            for (let index = 0; index < thinkingSteps.length; index++) {
+                await new Promise(resolve => setTimeout(resolve, 350));
+                setMessages(prev => prev.map((message, messageIndex) =>
+                    messageIndex === placeholderIndex
+                        ? { ...message, thinking: thinkingSteps.slice(0, index + 1) }
+                        : message
+                ));
+            }
+
+            const history: ExplainChatHistoryItem[] = historyMessages.map(message => ({
+                role: message.role === 'ai' ? 'assistant' : 'user',
+                content: message.text,
             }));
 
-            const portfolioContextText = portfolio
-                ? `Portfolio: ${portfolio.mandate?.risk_attitude ?? portfolio.riskProfile}, horizon ${portfolio.mandate?.investment_horizon_weeks ?? 'n/a'} weeks, ₹${portfolio.totalInvested.toLocaleString('en-IN')}, ${portfolio.allocations.length} stocks (${portfolio.allocations.slice(0, 5).map(a => `${a.stock.symbol} (${a.weight.toFixed(1)}%)`).join(', ')})`
-                : 'No portfolio generated yet.';
-
-            const enrichedMessage = `${userMsg}\n\n[Context: ${portfolioContextText}]`;
-
-            // Merge the frontend portfolio object into the platform context payload
             const fullContextPayload = {
-                ...platformContext,
+                ...latestPlatformContext,
                 portfolio: portfolio ? {
                     allocations: portfolio.allocations,
                     mandate: portfolio.mandate,
-                    capital_amount: portfolio.totalInvested
-                } : null
+                    capital_amount: portfolio.totalInvested,
+                } : null,
             };
 
-            const data = await postExplainChat(enrichedMessage, history, fullContextPayload);
-            const fallbackRequired = /AI unavailable|temporarily unavailable/i.test(data.response);
-            const localAction = fallbackRequired ? inferLocalAiAction(userMsg) : data.action;
-            const localResponse = fallbackRequired ? answerChatQuestion(userMsg, portfolio) : data.response;
-            setMessages(prev => [...prev, { role: 'ai', text: localResponse, action: localAction }]);
-            if (localAction) {
-                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: localAction }));
+            const data = await postExplainChat(userMsg, history, fullContextPayload);
+            setMessages(prev => prev.map((message, messageIndex) =>
+                messageIndex === placeholderIndex
+                    ? { role: 'ai', text: data.response, action: data.action }
+                    : message
+            ));
+
+            if (data.action) {
+                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: data.action }));
             }
-        } catch {
-            const localAction = inferLocalAiAction(userMsg);
-            setMessages(prev => [...prev, {
-                role: 'ai',
-                text: answerChatQuestion(userMsg, portfolio),
-                action: localAction,
-            }]);
-            if (localAction) {
-                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: localAction }));
-            }
+        } catch (error) {
+            setMessages(prev => prev.map((message, messageIndex) =>
+                messageIndex === placeholderIndex
+                    ? {
+                        role: 'ai',
+                        text: `Assistant request failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
+                    }
+                    : message
+            ));
         } finally {
             setLoading(false);
         }
@@ -131,33 +122,33 @@ export function AIChat({ portfolio }: AIChatProps) {
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-3" style={{ maxHeight: '340px' }}>
-                        {messages.map((msg, i) => (
-                            <div key={i} className={`flex gap-2 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                                <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'ai' ? 'bg-teal-100' : 'bg-blue-100'}`}>
-                                    {msg.role === 'ai'
+                        {messages.map((message, index) => (
+                            <div key={index} className={`flex gap-2 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${message.role === 'ai' ? 'bg-teal-100' : 'bg-blue-100'}`}>
+                                    {message.role === 'ai'
                                         ? <Bot className="w-3.5 h-3.5 text-teal-700" />
                                         : <User className="w-3.5 h-3.5 text-blue-700" />}
                                 </div>
                                 <div
-                                    className={`px-3 py-2 rounded-2xl text-sm max-w-[80%] leading-relaxed whitespace-pre-wrap ${msg.role === 'ai'
+                                    className={`px-3 py-2 rounded-2xl text-sm max-w-[80%] leading-relaxed whitespace-pre-wrap ${message.role === 'ai'
                                         ? 'bg-slate-100 text-slate-800 rounded-tl-sm'
                                         : 'bg-teal-600 text-white rounded-tr-sm'
                                         }`}
                                 >
-                                    {msg.thinking && msg.thinking.length > 0 && (
+                                    {message.thinking && message.thinking.length > 0 && (
                                         <div className="thinking-blocks mb-2">
-                                            {msg.thinking.map((step, idx) => (
-                                                <div key={idx} className="thinking-step">
+                                            {message.thinking.map((step, thinkingIndex) => (
+                                                <div key={thinkingIndex} className="thinking-step">
                                                     <Sparkles className="w-3 h-3 inline mr-1" />
                                                     {step}
                                                 </div>
                                             ))}
                                         </div>
                                     )}
-                                    {msg.text}
-                                    {msg.action && (
+                                    {message.text}
+                                    {message.action && (
                                         <div className="mt-2 text-[10px] font-mono text-teal-700 bg-teal-50 border border-teal-200 rounded px-2 py-1 inline-flex items-center gap-1">
-                                            <Sparkles className="w-3 h-3" /> Executed: {msg.action.name.replace(/_/g, ' ')}
+                                            <Sparkles className="w-3 h-3" /> Executed: {message.action.name.replace(/_/g, ' ')}
                                         </div>
                                     )}
                                 </div>
@@ -186,10 +177,10 @@ export function AIChat({ portfolio }: AIChatProps) {
                             placeholder="Ask about stocks, taxes, strategy..."
                             value={input}
                             onChange={e => setInput(e.target.value)}
-                            onKeyDown={e => e.key === 'Enter' && send()}
+                            onKeyDown={e => e.key === 'Enter' && void send()}
                         />
                         <button
-                            onClick={send}
+                            onClick={() => void send()}
                             disabled={!input.trim() || loading}
                             className="btn-primary px-3 py-2 text-sm flex items-center gap-1"
                             style={{ borderRadius: '0.75rem' }}
@@ -202,7 +193,7 @@ export function AIChat({ portfolio }: AIChatProps) {
 
             <div className="chat-fab">
                 <button
-                    onClick={() => setOpen(o => !o)}
+                    onClick={() => setOpen(value => !value)}
                     className="btn-primary w-14 h-14 rounded-full flex items-center justify-center shadow-xl"
                     title="AI Strategy Assistant"
                 >
@@ -211,32 +202,4 @@ export function AIChat({ portfolio }: AIChatProps) {
             </div>
         </>
     );
-}
-
-function inferLocalAiAction(message: string): { name: string; arguments: any } | undefined {
-    const normalized = message.toLowerCase();
-
-    if (normalized.includes('compare') || normalized.includes('benchmark')) {
-        return { name: 'benchmark_portfolio', arguments: {} };
-    }
-    if (normalized.includes('trade idea') || normalized.includes('ideas')) {
-        return { name: 'navigate_to_tab', arguments: { tab_name: 'IDEAS' } };
-    }
-    if (normalized.includes('backtest')) {
-        return { name: 'run_backtest', arguments: {} };
-    }
-    if (normalized.includes('analyze') && normalized.includes('portfolio')) {
-        return { name: 'analyze_portfolio', arguments: {} };
-    }
-    if (normalized.includes('market event')) {
-        return { name: 'navigate_to_tab', arguments: { tab_name: 'EVENTS' } };
-    }
-    if (normalized.includes('market') || normalized.includes('news')) {
-        return { name: 'navigate_to_tab', arguments: { tab_name: 'MARKET' } };
-    }
-    if (normalized.includes('generate') || normalized.includes('build') || normalized.includes('create portfolio')) {
-        return { name: 'generate_portfolio', arguments: { capital: 500000, risk: 'MODERATE' } };
-    }
-
-    return undefined;
 }

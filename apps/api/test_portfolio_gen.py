@@ -8,38 +8,30 @@ from app.services.db_quant_engine import generate_portfolio
 def run_test():
     db = SessionLocal()
     
-    print("--- TEST 1: INFEASIBLE MANDATE (Only Banking) ---")
+    print("--- TEST 1: STANDARD ENSEMBLE MANDATE ---")
     try:
         req = GeneratePortfolioRequest(
             capital_amount=500000.0,
             mandate=UserMandate(
                 investment_horizon_weeks="4-8",
-                max_portfolio_drawdown_pct=12.0,
-                max_position_size_pct=12.5,
                 preferred_num_positions=10,
-                sector_inclusions=["Banking"], 
-                sector_exclusions=[],
                 allow_small_caps=False,
                 risk_attitude="balanced",
             )
         )
-        generate_portfolio(db, req)
-        print("FAILURE: It succeeded, but it should have been blocked.")
+        res = generate_portfolio(db, req)
+        print(f"SUCCESS: Generated {len(res.allocations)} allocations.")
     except Exception as e:
-        print(f"SUCCESS: Caught infeasible mandate -> {e}")
+        print(f"FAILURE: Unexpected generation error -> {e}")
 
-    print("\n--- TEST 2: STANDARD MANDATE ---")
+    print("\n--- TEST 2: SMALL-CAP ENABLED MANDATE ---")
     try:
         req = GeneratePortfolioRequest(
             capital_amount=500000.0,
             mandate=UserMandate(
                 investment_horizon_weeks="4-8",
-                max_portfolio_drawdown_pct=12.0,
-                max_position_size_pct=15.0,
                 preferred_num_positions=10,
-                sector_inclusions=[],
-                sector_exclusions=[],
-                allow_small_caps=False,
+                allow_small_caps=True,
                 risk_attitude="balanced",
             )
         )

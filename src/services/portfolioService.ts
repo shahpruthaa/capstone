@@ -29,18 +29,14 @@ export interface Portfolio {
   riskProfile: RiskProfile;
   mandate?: {
     investment_horizon_weeks: string;
-    max_portfolio_drawdown_pct: number;
-    max_position_size_pct: number;
     preferred_num_positions: number;
-    sector_inclusions: string[];
-    sector_exclusions: string[];
     allow_small_caps: boolean;
     risk_attitude: string;
   };
   metrics: PortfolioMetrics;
   backendNotes?: string[];
   modelVariant?: 'RULES' | 'LIGHTGBM_HYBRID';
-  modelSource?: 'RULES' | 'LIGHTGBM';
+  modelSource?: 'RULES' | 'ENSEMBLE';
   modelVersion?: string;
   predictionHorizonDays?: number;
   lookbackWindowDays?: number;
@@ -69,7 +65,7 @@ export interface AnalysisResult {
   totalValue: number;
   backendNotes?: string[];
   modelVariantApplied?: 'RULES' | 'LIGHTGBM_HYBRID';
-  modelSource?: 'RULES' | 'LIGHTGBM';
+  modelSource?: 'RULES' | 'ENSEMBLE';
   activeMode?: string;
   modelVersion?: string;
   artifactClassification?: string;

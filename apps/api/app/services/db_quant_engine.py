@@ -260,29 +260,8 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     )
     if not selected:
         raise ValueError(
-            "No securities cleared the mandate filters. Loosen the sector, small-cap, drawdown, or position-size constraints."
+            "No securities cleared the mandate filters. Loosen the position count, horizon, or small-cap setting."
         )
-
-    # Inject ML predictions into snapshots before scoring
-    if payload.model_variant == "LIGHTGBM_HYBRID":
-        ml_status = get_lightgbm_model_status()
-        if ml_status.get("available"):
-            try:
-                # Predict only the selected candidates to keep generation latency bounded.
-                ml_snapshots = [snapshot for snapshot, _ in selected]
-                predictor = get_ensemble_alpha_predictor()
-                pred_map, _ = predictor.predict(db, ml_snapshots, as_of_date)
-                for snapshot, _ in selected:
-                    if snapshot.symbol in pred_map:
-                        pred = pred_map[snapshot.symbol]
-                        snapshot.expected_return_source = "LIGHTGBM"
-                        snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
-                        snapshot.ml_pred_annual_return = float(pred.pred_annual_return)
-                        snapshot.model_version = "lightgbm_v1"
-                        snapshot.prediction_horizon_days = 21
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"ML injection failed, falling back to rules: {e}")
 
     weighted_stats = build_weighted_statistics(selected)
     factor_exposures = compute_factor_exposures([(snapshot, weight / 100.0) for snapshot, weight in selected])
@@ -296,16 +275,15 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
             f"and {mandate_config.holding_period_days}-day expected holding period."
         ),
         (
-            f"Universe filters applied: sectors include {sorted(mandate_config.included_sectors) or ['all']}, "
-            f"exclude {sorted(mandate_config.excluded_sectors) or ['none']}, "
+            f"Universe filters applied: target {payload.mandate.preferred_num_positions} positions, "
             f"small caps {'allowed' if payload.mandate.allow_small_caps else 'excluded'}."
         ),
         (
-            f"Risk constraints use max drawdown {payload.mandate.max_portfolio_drawdown_pct:.1f}%, "
-            f"volatility cap {mandate_config.max_annual_volatility_pct:.1f}%, and death-risk cap {mandate_config.max_death_risk:.2f}."
+            f"Risk profile {payload.mandate.risk_attitude.replace('_', ' ')} uses a volatility screen of "
+            f"{mandate_config.max_annual_volatility_pct:.1f}% and death-risk screen of {mandate_config.max_death_risk:.2f}."
         ),
-        "Expected returns blend horizon-aware momentum, downside-aware quality, liquidity, beta discipline, and news semantics scores.",
-        "Weights are produced by a constrained allocator over a shrinkage covariance matrix estimated from aligned total-return series.",
+        "Expected returns combine ensemble forecasts, factor context, and news semantics aligned to the chosen horizon.",
+        "Weights are produced by a long-only allocator over a shrinkage covariance matrix estimated from aligned total-return series.",
         f"Weighted factor exposures: momentum {factor_exposures['momentum']:+.2f}, quality {factor_exposures['quality']:+.2f}, low_vol {factor_exposures['low_vol']:+.2f}.",
         f"News overlay: weighted risk {average_news_risk:.2f}, opportunity {average_news_opportunity:.2f}.",
         (
@@ -315,18 +293,18 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         ),
     ]
 
-    used_ml_count = sum(1 for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM")
-    model_source = "LIGHTGBM" if used_ml_count > 0 else "RULES"
-    model_version = next((snapshot.model_version for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM"), "rules")
-    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in selected if snapshot.expected_return_source == "LIGHTGBM"), 21)
+    used_ml_count = sum(1 for snapshot, _ in selected if snapshot.expected_return_source == "ENSEMBLE")
+    model_source = "ENSEMBLE" if used_ml_count > 0 else "RULES"
+    model_version = next((snapshot.model_version for snapshot, _ in selected if snapshot.expected_return_source == "ENSEMBLE"), "rules")
+    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in selected if snapshot.expected_return_source == "ENSEMBLE"), 21)
 
     if payload.model_variant == "LIGHTGBM_HYBRID":
         if used_ml_count > 0:
             notes.append(
-                f"LightGBM hybrid used for {used_ml_count} equities; blended predicted annual return with rule expected returns (75/25). Model version: {model_version}."
+                f"Ensemble runtime used for {used_ml_count} equities and directly drove expected-return ranking. Model version: {model_version}."
             )
         else:
-            notes.append("LightGBM hybrid requested, but no valid ML predictions were produced; using rule expected returns for all instruments.")
+            raise ValueError("Ensemble runtime was requested, but no valid ensemble predictions were produced.")
 
     run = GeneratedPortfolioRun(
         risk_mode=payload.mandate.risk_attitude.upper(),
@@ -484,7 +462,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     if missing_symbols:
         notes.append(f"No market data found yet for: {', '.join(sorted(set(missing_symbols)))}.")
 
-    used_ml_count = sum(1 for snapshot, _ in target_portfolio if snapshot.expected_return_source == "LIGHTGBM")
+    used_ml_count = sum(1 for snapshot, _ in target_portfolio if snapshot.expected_return_source == "ENSEMBLE")
 
     model_source_note = ""
     if model_variant_applied == "LIGHTGBM_HYBRID":
@@ -505,7 +483,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
                 ml_predictions[sym] = pred.pred_annual_return
             for snapshot in snapshots:
                 if snapshot.symbol in pred_map and snapshot.instrument_type == "EQUITY":
-                    snapshot.expected_return_source = "LIGHTGBM"
+                    snapshot.expected_return_source = "ENSEMBLE"
                     snapshot.top_model_drivers = list(pred_map[snapshot.symbol].top_drivers)
                     snapshot.ml_pred_annual_return = float(pred_map[snapshot.symbol].pred_annual_return)
                     snapshot.ml_pred_21d_return = float(pred_map[snapshot.symbol].pred_21d_return)
@@ -526,7 +504,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         correlation_risk=correlation_risk,
         actions=actions,
         model_variant_applied=model_variant_applied,
-        model_source="LIGHTGBM" if ml_predictions else "RULES",
+        model_source="ENSEMBLE" if ml_predictions else "RULES",
         active_mode=str(runtime_status.get("active_mode", "rules_only")),
         model_version=str(runtime_status.get("model_version", "rules")),
         artifact_classification=str(runtime_status.get("artifact_classification", "missing")),
@@ -724,26 +702,25 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
             1,
             (
                 f"Mandate replay used horizon {payload.mandate.investment_horizon_weeks}, "
-                f"drawdown cap {payload.mandate.max_portfolio_drawdown_pct:.1f}%, "
                 f"{payload.mandate.preferred_num_positions} target positions, and "
                 f"{'small caps allowed' if payload.mandate.allow_small_caps else 'small caps excluded'}."
             ),
         )
 
-    used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM")
+    used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source == "ENSEMBLE")
     top_model_drivers_by_symbol = {
         snapshot.symbol: list(snapshot.top_model_drivers) for snapshot, _ in model_portfolio if snapshot.top_model_drivers
     }
-    model_source = "LIGHTGBM" if used_ml_count > 0 else "RULES"
-    model_version = next((snapshot.model_version for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM"), "rules")
-    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in model_portfolio if snapshot.expected_return_source == "LIGHTGBM"), 21)
+    model_source = "ENSEMBLE" if used_ml_count > 0 else "RULES"
+    model_version = next((snapshot.model_version for snapshot, _ in model_portfolio if snapshot.expected_return_source == "ENSEMBLE"), "rules")
+    prediction_horizon_days = next((snapshot.prediction_horizon_days for snapshot, _ in model_portfolio if snapshot.expected_return_source == "ENSEMBLE"), 21)
     if payload.model_variant == "LIGHTGBM_HYBRID":
         if used_ml_count > 0:
             notes.append(
-                f"LightGBM hybrid used for {used_ml_count} equities; blended predicted annual returns with rule expected returns (75/25). Model version: {model_version}."
+                f"Ensemble runtime used for {used_ml_count} equities during backtest selection. Model version: {model_version}."
             )
         else:
-            notes.append("LightGBM hybrid requested, but no valid equity predictions were produced; using rule expected returns for the portfolio.")
+            notes.append("Ensemble runtime was requested, but no valid equity predictions were produced for the backtest selection.")
 
     db.add(
         BacktestRun(
@@ -1112,6 +1089,9 @@ def select_portfolio_candidates_for_mandate(
         snapshot.news_impact = signal.news_impact
         snapshot.news_explanation = signal.news_explanation
 
+    if model_variant == "LIGHTGBM_HYBRID":
+        apply_ensemble_predictions_to_snapshots(db, filtered, as_of_date, required=True)
+
     screened = shortlist_candidates_for_mandate(filtered, mandate, mandate_config)
     if len(screened) < min(4, mandate_config.target_positions):
         return []
@@ -1170,16 +1150,10 @@ def select_portfolio_candidates_for_mandate(
 
 
 def filter_snapshots_for_mandate(snapshots: list[Snapshot], mandate_config: MandateConfig) -> list[Snapshot]:
-    from app.services.mandate import normalize_sector_code
     filtered: list[Snapshot] = []
     for snapshot in snapshots:
         market_cap_bucket = snapshot.market_cap_bucket or "Unknown"
         if market_cap_bucket == "Small" and "Small" not in mandate_config.allowed_market_caps:
-            continue
-        normalized_sector = normalize_sector_code(snapshot.sector)
-        if mandate_config.included_sectors and normalized_sector not in mandate_config.included_sectors:
-            continue
-        if normalized_sector in mandate_config.excluded_sectors:
             continue
         if snapshot.annual_volatility_pct > mandate_config.max_annual_volatility_pct:
             continue
@@ -1199,22 +1173,7 @@ def shortlist_candidates_for_mandate(
         key=lambda snapshot: candidate_score_for_mandate(snapshot, mandate, mandate_config),
         reverse=True,
     )
-    shortlisted: list[Snapshot] = []
-    sector_counts: dict[str, int] = defaultdict(int)
-    
-    if mandate_config.included_sectors:
-        per_sector_limit = mandate_config.target_positions
-    else:
-        per_sector_limit = max(2, int(round(mandate_config.target_positions / 2)))
-        
-    for snapshot in scored:
-        if sector_counts[snapshot.sector] >= per_sector_limit:
-            continue
-        shortlisted.append(snapshot)
-        sector_counts[snapshot.sector] += 1
-        if len(shortlisted) >= mandate_config.candidate_count:
-            break
-    return shortlisted
+    return scored[:mandate_config.candidate_count]
 
 
 def candidate_score_for_mandate(snapshot: Snapshot, mandate, mandate_config: MandateConfig) -> float:
@@ -1241,8 +1200,62 @@ def candidate_score_for_mandate(snapshot: Snapshot, mandate, mandate_config: Man
         (snapshot.news_opportunity_score * 9.0 * mandate_config.news_boost_multiplier)
         - (snapshot.news_risk_score * 11.0 * mandate_config.news_penalty_multiplier)
     )
-    sector_preference_bonus = 4.0 if snapshot.sector in mandate_config.included_sectors else 0.0
-    return base_score + news_adjustment + sector_preference_bonus + min(snapshot.avg_traded_value / 50_000_000.0, 6.0)
+    ensemble_bonus = 0.0
+    if snapshot.ml_pred_21d_return is not None:
+        ensemble_bonus += 18.0 * float(snapshot.ml_pred_21d_return)
+    if snapshot.ml_pred_annual_return is not None:
+        ensemble_bonus += 10.0 * float(snapshot.ml_pred_annual_return)
+    return base_score + news_adjustment + ensemble_bonus + min(snapshot.avg_traded_value / 50_000_000.0, 6.0)
+
+
+def apply_ensemble_predictions_to_snapshots(
+    db: Session,
+    snapshots: list[Snapshot],
+    as_of_date: date,
+    *,
+    required: bool,
+) -> dict[str, object]:
+    for snapshot in snapshots:
+        snapshot.expected_return_source = "RULES"
+        snapshot.model_version = "rules"
+        snapshot.ml_pred_21d_return = None
+        snapshot.ml_pred_annual_return = None
+        snapshot.top_model_drivers = []
+        snapshot.prediction_horizon_days = 21
+
+    if not snapshots:
+        if required:
+            raise ValueError("Ensemble runtime was requested, but there were no snapshots to score.")
+        return {"available": False, "reason": "no_snapshots"}
+
+    try:
+        predictor = get_ensemble_alpha_predictor()
+        predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
+    except Exception as exc:
+        if required:
+            raise ValueError(f"Ensemble runtime failed during inference: {exc}") from exc
+        return {"available": False, "reason": "ensemble_inference_failed"}
+
+    if required and not predictions_by_symbol:
+        raise ValueError("Ensemble runtime was requested, but it returned no usable predictions.")
+
+    model_version = str(model_info.get("model_version", "ensemble"))
+    prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
+    for snapshot in snapshots:
+        pred = predictions_by_symbol.get(snapshot.symbol)
+        if snapshot.instrument_type != "EQUITY" or pred is None:
+            continue
+        snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
+        snapshot.ml_pred_annual_return = float(pred.pred_annual_return)
+        snapshot.top_model_drivers = list(pred.top_drivers)
+        snapshot.expected_return_source = "ENSEMBLE"
+        snapshot.model_version = model_version
+        snapshot.prediction_horizon_days = prediction_horizon_days
+
+    if required and not any(snapshot.expected_return_source == "ENSEMBLE" for snapshot in snapshots):
+        raise ValueError("Ensemble runtime was requested, but no equity snapshots received usable predictions.")
+
+    return model_info
 
 
 def estimate_expected_returns_for_mandate(
@@ -1286,40 +1299,40 @@ def estimate_expected_returns_for_mandate(
             expected += regime["risk_on_bonus"] + (0.008 * snapshot.factor_scores.get("beta", 0.0))
         rule_expected_returns.append(max(-0.15, min(0.35, expected)))
 
-    for snapshot in snapshots:
-        snapshot.expected_return_source = "RULES"
-        snapshot.model_version = "rules"
-        snapshot.ml_pred_21d_return = None
-        snapshot.ml_pred_annual_return = None
-        snapshot.top_model_drivers = []
-
     if model_variant != "LIGHTGBM_HYBRID":
+        for snapshot in snapshots:
+            snapshot.expected_return_source = "RULES"
+            snapshot.model_version = "rules"
+            snapshot.ml_pred_21d_return = None
+            snapshot.ml_pred_annual_return = None
+            snapshot.top_model_drivers = []
+            snapshot.prediction_horizon_days = 21
         return rule_expected_returns
 
-    try:
-        predictor = get_ensemble_alpha_predictor()
-        predictions_by_symbol, model_info = predictor.predict(db, snapshots, as_of_date)
-    except Exception:
-        predictions_by_symbol, model_info = {}, {"available": False}
+    predictions_by_symbol = {
+        snapshot.symbol: snapshot
+        for snapshot in snapshots
+        if snapshot.expected_return_source == "ENSEMBLE" and snapshot.ml_pred_annual_return is not None
+    }
+    if not predictions_by_symbol:
+        apply_ensemble_predictions_to_snapshots(db, snapshots, as_of_date, required=True)
+        predictions_by_symbol = {
+            snapshot.symbol: snapshot
+            for snapshot in snapshots
+            if snapshot.expected_return_source == "ENSEMBLE" and snapshot.ml_pred_annual_return is not None
+        }
 
     expected_returns = rule_expected_returns[:]
-    model_version = str(model_info.get("model_version", "unknown"))
     for index, snapshot in enumerate(snapshots):
-        pred = predictions_by_symbol.get(snapshot.symbol)
-        if snapshot.instrument_type != "EQUITY" or pred is None:
+        pred_snapshot = predictions_by_symbol.get(snapshot.symbol)
+        if snapshot.instrument_type != "EQUITY" or pred_snapshot is None or pred_snapshot.ml_pred_annual_return is None:
             continue
-        ml_expected = float(pred.pred_annual_return)
+        ml_expected = float(pred_snapshot.ml_pred_annual_return)
         news_tilt = (
             snapshot.news_opportunity_score * 0.01 * mandate_config.news_boost_multiplier
             - snapshot.news_risk_score * 0.015 * mandate_config.news_penalty_multiplier
         )
-        expected_returns[index] = max(-0.15, min(0.35, (0.70 * ml_expected) + (0.30 * rule_expected_returns[index]) + news_tilt))
-        snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
-        snapshot.ml_pred_annual_return = ml_expected
-        snapshot.top_model_drivers = list(pred.top_drivers)
-        snapshot.expected_return_source = "LIGHTGBM"
-        snapshot.model_version = model_version
-        snapshot.prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
+        expected_returns[index] = max(-0.15, min(0.35, ml_expected + news_tilt))
 
     return expected_returns
 
@@ -1399,83 +1412,26 @@ def project_weights_for_mandate(
         total = 1.0
     w = [x / total for x in w]
     
-    for _ in range(50):
-        for i in range(len(w)):
-            if w[i] > mandate_config.max_weight:
-                w[i] = mandate_config.max_weight
-                
-        eff_sector_cap = min(mandate_config.sector_cap, 0.20)
-        
-        # Determine ETF cap based on regime
+    for _ in range(20):
+        w = renormalize(w)
+        w = [0.82 * weight + 0.18 * base for weight, base in zip(w, prior)]
+        w = renormalize(w)
+
         etf_cap = 0.15
         if regime_name == "bear":
             etf_cap = 0.20
         elif regime_name == "bull":
             etf_cap = 0.10
-            
-        sector_totals = compute_sector_totals(w, snapshots)
+
         etf_total = sum(w[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
-        
+        if etf_total <= etf_cap + 1e-6:
+            continue
+        ratio = etf_cap / max(etf_total, 1e-9)
         for i, snapshot in enumerate(snapshots):
-            if sector_totals[snapshot.sector] > eff_sector_cap:
-                ratio = eff_sector_cap / max(sector_totals[snapshot.sector], 1e-9)
+            if "BEES" in snapshot.symbol or snapshot.sector == "Index":
                 w[i] *= ratio
-                
-            is_etf = "BEES" in snapshot.symbol or snapshot.sector == "Index"
-            if is_etf and etf_total > etf_cap:
-                ratio = etf_cap / max(etf_total, 1e-9)
-                w[i] *= ratio
-                
-        deficit = 1.0 - sum(w)
-        if deficit <= 1e-6:
-            break
-            
-        sector_totals = compute_sector_totals(w, snapshots)
-        active_priors = []
-        for i, snapshot in enumerate(snapshots):
-            is_etf = "BEES" in snapshot.symbol or snapshot.sector == "Index"
-            eff_sector_cap = min(mandate_config.sector_cap, 0.20)
-            can_take_weight = (w[i] < mandate_config.max_weight - 1e-6) and (sector_totals[snapshot.sector] < eff_sector_cap - 1e-6)
-            if is_etf:
-                etf_cap = 0.20 if regime_name == "bear" else (0.10 if regime_name == "bull" else 0.15)
-                etf_total = sum(w[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
-                can_take_weight = can_take_weight and (etf_total < etf_cap - 1e-6)
-                
-            active_priors.append(prior[i] if can_take_weight else 0.0)
-            
-        tot_active_prior = sum(active_priors)
-        if tot_active_prior <= 1e-9:
-            break
-            
-        max_alpha = deficit / tot_active_prior
-        
-        for i, snapshot in enumerate(snapshots):
-            if active_priors[i] > 0:
-                alpha_stock = (mandate_config.max_weight - w[i]) / active_priors[i]
-                max_alpha = min(max_alpha, alpha_stock)
-                
-        sector_prior_sums = defaultdict(float)
-        for i, snapshot in enumerate(snapshots):
-            sector_prior_sums[snapshot.sector] += active_priors[i]
-            
-        eff_sector_cap = min(mandate_config.sector_cap, 0.20)
-        for sector, prior_sum in sector_prior_sums.items():
-            if prior_sum > 0:
-                alpha_sector = (eff_sector_cap - sector_totals[sector]) / prior_sum
-                max_alpha = min(max_alpha, alpha_sector)
-                
-        # Also constraint alpha by ETF cap
-        etf_prior_sum = sum(active_priors[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
-        if etf_prior_sum > 0:
-            etf_cap = 0.20 if regime_name == "bear" else (0.10 if regime_name == "bull" else 0.15)
-            etf_total = sum(w[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
-            alpha_etf = (etf_cap - etf_total) / etf_prior_sum
-            max_alpha = min(max_alpha, alpha_etf)
-                
-        for i in range(len(w)):
-            w[i] += max_alpha * active_priors[i]
-            
-    return w
+
+    return renormalize(w)
 
 def redistribute_weight_for_mandate(
     weights: list[float],
@@ -1492,10 +1448,20 @@ def build_rationale_for_mandate(snapshot: Snapshot, mandate, mandate_config: Man
     risk_text = (
         f"news risk {snapshot.news_risk_score:.2f}, opportunity {snapshot.news_opportunity_score:.2f}"
     )
+    ensemble_text = ""
+    if snapshot.ml_pred_21d_return is not None:
+        ensemble_text = (
+            f", ensemble 21d {snapshot.ml_pred_21d_return * 100:+.1f}%"
+            + (
+                f", annualized {snapshot.ml_pred_annual_return * 100:+.1f}%"
+                if snapshot.ml_pred_annual_return is not None
+                else ""
+            )
+        )
     return (
         f"{snapshot.sector} allocation for a {mandate.risk_attitude.replace('_', ' ')} mandate; "
         f"momentum {snapshot.factor_scores.get('momentum', 0):+.2f}, quality {snapshot.factor_scores.get('quality', 0):+.2f}, "
-        f"beta {snapshot.beta_proxy:.2f}, {risk_text}. {snapshot.news_explanation}"
+        f"beta {snapshot.beta_proxy:.2f}{ensemble_text}, {risk_text}. {snapshot.news_explanation}"
     )
 
 
@@ -1897,7 +1863,7 @@ def estimate_expected_returns(db, as_of_date,
         snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
         snapshot.ml_pred_annual_return = float(expected_ml_annual)
         snapshot.top_model_drivers = list(pred.top_drivers)
-        snapshot.expected_return_source = "LIGHTGBM"
+        snapshot.expected_return_source = "ENSEMBLE"
         snapshot.model_version = model_version
         snapshot.prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
         any_ml_used = True

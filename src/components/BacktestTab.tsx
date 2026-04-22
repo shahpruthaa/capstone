@@ -140,7 +140,7 @@ export function BacktestTab({ portfolio }: Props) {
                             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
                                 Backtest source: replaying the exact generated mandate rather than a generic risk profile.
                                 <div className="mt-2 text-[11px] text-slate-500">
-                                    {portfolio.mandate.risk_attitude.replace('_', ' ')} · {portfolio.mandate.investment_horizon_weeks} weeks · drawdown {portfolio.mandate.max_portfolio_drawdown_pct}% · {portfolio.mandate.preferred_num_positions} positions
+                                    {portfolio.mandate.risk_attitude.replace('_', ' ')} · {portfolio.mandate.investment_horizon_weeks} weeks · {portfolio.mandate.preferred_num_positions} positions · {portfolio.mandate.allow_small_caps ? 'small caps allowed' : 'small caps excluded'}
                                 </div>
                             </div>
                         )}
@@ -315,12 +315,12 @@ export function BacktestTab({ portfolio }: Props) {
                                         <span className="stat-value">{portfolio.mandate.investment_horizon_weeks} weeks</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Drawdown</span>
-                                        <span className="stat-value">{portfolio.mandate.max_portfolio_drawdown_pct}%</span>
+                                        <span className="stat-label">Positions</span>
+                                        <span className="stat-value">{portfolio.mandate.preferred_num_positions}</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Max Position</span>
-                                        <span className="stat-value">{portfolio.mandate.max_position_size_pct}%</span>
+                                        <span className="stat-label">Small Caps</span>
+                                        <span className="stat-value">{portfolio.mandate.allow_small_caps ? 'Allowed' : 'Excluded'}</span>
                                     </div>
                                 </div>
                             </div>

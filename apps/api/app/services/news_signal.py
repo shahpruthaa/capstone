@@ -11,8 +11,75 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from app.schemas.portfolio import UserMandate
-from app.services.mandate import normalize_sector_code
+ 
 
+def normalize_sector_code(value: str) -> str:
+    normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    aliases = {
+        "automobile": "Auto",
+        "automobiles": "Auto",
+        "autos": "Auto",
+        "banks": "Banking",
+        "bank": "Banking",
+        "financial": "Finance",
+        "financials": "Finance",
+        "nbfc": "Finance",
+        "consumer staples": "FMCG",
+        "oil": "Energy",
+        "power": "Energy",
+        "utilities": "Energy",
+        "healthcare": "Pharma",
+        "health care": "Pharma",
+        "realestate": "Real Estate",
+        "real-estate": "Real Estate",
+        "property": "Real Estate",
+        "technology": "IT",
+        "tech": "IT",
+        "internet": "Tech/Internet",
+        "ecommerce": "Tech/Internet",
+        "e-commerce": "Tech/Internet",
+        "capital goods": "Infra",
+        "infrastructure": "Infra",
+        "telecommunications": "Telecom",
+    }
+    sectors = [
+        "Auto",
+        "Banking",
+        "Cement",
+        "Chemicals",
+        "Consumer Durables",
+        "Energy",
+        "Finance",
+        "FMCG",
+        "Gold",
+        "Index",
+        "Infra",
+        "Insurance",
+        "IT",
+        "Liquid",
+        "Logistics",
+        "Metals",
+        "Pharma",
+        "Real Estate",
+        "Silver",
+        "Tech/Internet",
+        "Telecom",
+        "Tourism",
+    ]
+    compact = normalized.replace("&", "and").replace("/", "").replace("-", "").replace(" ", "")
+    alias = aliases.get(normalized) or aliases.get(compact)
+    if alias:
+        return alias
+    for sector in sectors:
+        sector_normalized = sector.lower()
+        sector_compact = sector_normalized.replace("/", "").replace("-", "").replace(" ", "")
+        if sector_normalized == normalized or sector_compact == compact:
+            return sector
+        if normalized in sector_normalized or sector_normalized in normalized:
+            return sector
+    return value.strip()
 
 REGION_KEYWORDS = {
     "Middle East": {"middle east", "gulf", "opec", "iran", "israel", "red sea", "saudi"},
@@ -333,7 +400,6 @@ def compute_stock_news_signals(
     mandate: UserMandate,
 ) -> dict[str, StockNewsSignal]:
     market_news = build_market_news_context()
-    mandate_inclusions = {normalize_sector_code(value) for value in mandate.sector_inclusions}
     signals: dict[str, StockNewsSignal] = {}
 
     for snapshot in snapshots:
@@ -371,9 +437,8 @@ def compute_stock_news_signals(
             if region_match: relevance += 0.3
             
             exposure_multiplier = 1.0 + (0.2 if sector_match and region_match else 0.0)
-            mandate_multiplier = 1.15 if sector in mandate_inclusions else 1.0
             normalized_impact = article.impact_score / 10.0
-            signed_effect = article.sentiment_score * normalized_impact * exposure_multiplier * mandate_multiplier
+            signed_effect = article.sentiment_score * normalized_impact * exposure_multiplier
             
             relevant_articles.append({
                 "article": article,

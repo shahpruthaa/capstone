@@ -14,26 +14,28 @@ import {
     RiskAttitude,
     UserMandate,
 } from '../services/backendApi';
-import { generatePortfolioInsight } from '../services/localAdvisor';
 import { MetricCard, SectorChip } from './MetricCard';
 
 const COLORS = ['#D4A843', '#5B9CF6', '#52C97A', '#E05C5C', '#F59E0B', '#A78BFA'];
 
 interface Props { onPortfolioGenerated: (p: Portfolio) => void; portfolio: Portfolio | null; }
+
 function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
     const [insight, setInsight] = useState('');
     const [loading, setLoading] = useState(false);
+
     const generate = async () => {
         setLoading(true);
         try {
             const data = await postExplainPortfolio(portfolio);
             setInsight(data.explanation || 'No explanation returned.');
-        } catch {
-            setInsight(generatePortfolioInsight(portfolio));
+        } catch (error) {
+            setInsight(`Portfolio analysis is unavailable right now: ${error instanceof Error ? error.message : 'unknown backend error'}.`);
         } finally {
             setLoading(false);
         }
     };
+
     return (
         <div className="card p-5" style={{ background: 'linear-gradient(135deg, rgba(14, 116, 144, 0.24), rgba(21, 94, 117, 0.1))', borderColor: 'rgba(103, 232, 249, 0.2)' }}>
             <div className="flex items-center gap-2 mb-2">
@@ -58,15 +60,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [amount, setAmount] = useState(500000);
     const [mandate, setMandate] = useState<UserMandate>({
         investment_horizon_weeks: '4-8',
-        max_portfolio_drawdown_pct: 12,
-        max_position_size_pct: 12.5,
         preferred_num_positions: 10,
-        sector_inclusions: [],
-        sector_exclusions: [],
         allow_small_caps: false,
         risk_attitude: 'balanced',
     });
-    const [sectorCodes, setSectorCodes] = useState<string[]>([]);
     const [generating, setGenerating] = useState(false);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
     const [activeModelVersion, setActiveModelVersion] = useState<string>('');
@@ -74,25 +71,27 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
     const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
-    const manualModelVariantSelection = useRef(false);
+    const runtimeLoaded = useRef(false);
 
     useEffect(() => {
         const loadModelStatus = async () => {
             try {
                 const status = await getCurrentModelStatusViaApi();
-                if (status.available && !manualModelVariantSelection.current) {
+                runtimeLoaded.current = true;
+                if (status.available) {
                     setActiveModelVariant('LIGHTGBM_HYBRID');
                     setModelStatusReason('');
                     if (typeof status.modelVersion === 'string') setActiveModelVersion(status.modelVersion);
                     if (typeof status.trainingMode === 'string') setActiveTrainingMode(status.trainingMode);
                     if (status.artifactClassification) setArtifactClassification(status.artifactClassification);
-                } else if (!manualModelVariantSelection.current) {
+                } else {
                     setActiveModelVariant('RULES');
                     setActiveTrainingMode('');
                     setArtifactClassification('');
                     setModelStatusReason(status.reason || 'missing_or_invalid_artifact');
                 }
             } catch {
+                runtimeLoaded.current = true;
                 setActiveModelVariant('RULES');
                 setActiveTrainingMode('');
                 setArtifactClassification('');
@@ -105,10 +104,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             try {
                 const questionnaire = await getMandateQuestionnaireViaApi();
                 setMandate(questionnaire.defaults);
-                setSectorCodes(questionnaire.sector_codes);
-            } catch {
-                setSectorCodes([]);
-            }
+            } catch {}
         };
         void loadQuestionnaire();
     }, []);
@@ -117,21 +113,36 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         setMandate(current => ({ ...current, [key]: value }));
     };
 
-    const handleGenerate = async () => {
+    const handleGenerate = async (capitalOverride?: number, riskOverride?: RiskAttitude) => {
+        if (activeModelVariant !== 'LIGHTGBM_HYBRID') {
+            setGenerationNotice({
+                tone: 'warning',
+                text: `Ensemble runtime is not ready${modelStatusReason ? ` (${modelStatusReason})` : ''}. Portfolio generation is blocked instead of falling back to rules.`,
+            });
+            return;
+        }
+
+        const capitalAmount = capitalOverride ?? amount;
+        const requestMandate = riskOverride ? { ...mandate, risk_attitude: riskOverride } : mandate;
+
         setGenerating(true);
         setGenerationNotice(null);
         try {
-            const payload: UserMandate = {
-                ...mandate
-            };
-            const p = await generatePortfolioViaApi(amount, payload, activeModelVariant);
-            onPortfolioGenerated(p);
+            if (capitalOverride !== undefined) {
+                setAmount(capitalOverride);
+            }
+            if (riskOverride) {
+                setMandate(current => ({ ...current, risk_attitude: riskOverride }));
+            }
+
+            const generated = await generatePortfolioViaApi(capitalAmount, requestMandate, activeModelVariant);
+            onPortfolioGenerated(generated);
             setGenerationNotice({
                 tone: 'info',
                 text:
-                    p.modelSource === 'LIGHTGBM'
-                        ? `Using local LightGBM hybrid expected returns${p.modelVersion ? ` (v${p.modelVersion})` : ''}${p.predictionHorizonDays ? ` over ${p.predictionHorizonDays} trading days` : ''}, with a ${p.lookbackWindowDays ?? '--'}-day lookback and ${p.expectedHoldingPeriodDays ?? '--'}-day holding target.`
-                        : 'Using the local rule-based portfolio allocator because no active LightGBM artifact is available.',
+                    generated.modelSource === 'ENSEMBLE'
+                        ? `Using ensemble runtime${generated.modelVersion ? ` ${generated.modelVersion}` : ''}${generated.predictionHorizonDays ? ` over ${generated.predictionHorizonDays} trading days` : ''}, with a ${generated.lookbackWindowDays ?? '--'}-day lookback and ${generated.expectedHoldingPeriodDays ?? '--'}-day holding target.`
+                        : 'Portfolio generation completed without ensemble output.',
             });
         } catch (error) {
             setGenerationNotice({
@@ -146,54 +157,47 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     useEffect(() => {
         const handleAction = async (e: any) => {
             const action = e.detail;
-            if (action.name === 'generate_portfolio') {
-                const capital = action.arguments.capital || amount;
-                const riskEnum = action.arguments.risk;
-                const rMap: any = { CONSERVATIVE: 'capital_preservation', MODERATE: 'balanced', AGGRESSIVE: 'growth' };
-                const newRisk = rMap[riskEnum] || mandate.risk_attitude;
-                
-                setAmount(capital);
-                setMandate(m => ({ ...m, risk_attitude: newRisk }));
-                
-                setGenerating(true);
-                setGenerationNotice(null);
-                try {
-                    const payload: UserMandate = {
-                        ...mandate,
-                        risk_attitude: newRisk
-                    };
-                    const p = await generatePortfolioViaApi(capital, payload, activeModelVariant);
-                    onPortfolioGenerated(p);
-                    setGenerationNotice({ tone: 'info', text: 'Portfolio generated successfully by AI Copilot.' });
-                } catch (error) {
-                    setGenerationNotice({ tone: 'warning', text: `Failed: ${error instanceof Error ? error.message : 'Unknown error'}` });
-                } finally {
-                    setGenerating(false);
-                }
+            if (action.name !== 'generate_portfolio') {
+                return;
             }
+
+            const capital = action.arguments.capital || amount;
+            const riskEnum = action.arguments.risk;
+            const riskMap: Record<string, RiskAttitude> = {
+                CONSERVATIVE: 'capital_preservation',
+                MODERATE: 'balanced',
+                AGGRESSIVE: 'growth',
+            };
+            await handleGenerate(capital, riskMap[riskEnum] || mandate.risk_attitude);
         };
         window.addEventListener('AI_ACTION', handleAction);
         return () => window.removeEventListener('AI_ACTION', handleAction);
-    }, [mandate, activeModelVariant, amount, onPortfolioGenerated]);
+    }, [amount, mandate, activeModelVariant, modelStatusReason, onPortfolioGenerated]);
 
-    const chartData = useMemo(() =>
-        portfolio?.allocations.map(a => ({ name: a.stock.symbol, value: a.amount })) ?? [], [portfolio]);
+    const chartData = useMemo(
+        () => portfolio?.allocations.map(a => ({ name: a.stock.symbol, value: a.amount })) ?? [],
+        [portfolio],
+    );
 
     const sectorData = useMemo(() => {
         if (!portfolio) return [];
-        const s: Record<string, number> = {};
-        portfolio.allocations.forEach(a => { s[a.stock.sector] = (s[a.stock.sector] || 0) + a.amount; });
-        return Object.entries(s).map(([name, value]) => ({ name, value }));
+        const totals: Record<string, number> = {};
+        portfolio.allocations.forEach(allocation => {
+            totals[allocation.stock.sector] = (totals[allocation.stock.sector] || 0) + allocation.amount;
+        });
+        return Object.entries(totals).map(([name, value]) => ({ name, value }));
     }, [portfolio]);
 
-    const costs = useMemo(() =>
-        portfolio ? calculatePortfolioTransactionCosts(portfolio.allocations, true) : null, [portfolio]);
+    const costs = useMemo(
+        () => (portfolio ? calculatePortfolioTransactionCosts(portfolio.allocations, true) : null),
+        [portfolio],
+    );
 
     const riskOpts: { id: RiskAttitude; label: string; icon: React.ReactNode; desc: string }[] = [
         { id: 'capital_preservation', label: 'Preserve', icon: <ShieldCheck className="w-5 h-5" />, desc: 'Strict downside control' },
         { id: 'balanced', label: 'Balanced', icon: <TrendingUp className="w-5 h-5" />, desc: 'Risk and upside in balance' },
-        { id: 'growth', label: 'Growth', icon: <Zap className="w-5 h-5" />, desc: 'Higher upside within caps' },
-    ] as const;
+        { id: 'growth', label: 'Growth', icon: <Zap className="w-5 h-5" />, desc: 'Higher upside bias' },
+    ];
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
@@ -209,42 +213,25 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 {generationNotice.text}
                             </div>
                         )}
+
                         <div className="alert-info text-xs">
-                            Active local engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `LightGBM hybrid${activeModelVersion ? ` v${activeModelVersion}` : ''}` : 'Rules only'}
-                            {activeModelVariant === 'RULES' && modelStatusReason ? ` (${modelStatusReason})` : ''}
+                            Active generation engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `Ensemble runtime${activeModelVersion ? ` ${activeModelVersion}` : ''}` : 'Unavailable'}
+                            {activeModelVariant !== 'LIGHTGBM_HYBRID' && modelStatusReason ? ` (${modelStatusReason})` : ''}
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    manualModelVariantSelection.current = true;
-                                    setActiveModelVariant('RULES');
-                                }}
-                                className={`risk-btn ${activeModelVariant === 'RULES' ? 'active-risk' : ''}`}
-                            >
-                                Rules only
-                                <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">Fast local baseline</span>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    manualModelVariantSelection.current = true;
-                                    setActiveModelVariant('LIGHTGBM_HYBRID');
-                                }}
-                                className={`risk-btn ${activeModelVariant === 'LIGHTGBM_HYBRID' ? 'active-risk' : ''}`}
-                            >
-                                LightGBM hybrid
-                                <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">Model-aware runtime</span>
-                            </button>
-                        </div>
-                        {activeModelVariant === 'LIGHTGBM_HYBRID' && (
+
+                        {activeModelVariant === 'LIGHTGBM_HYBRID' ? (
                             <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
-                                Training mode: {activeTrainingMode || 'unknown'}.
+                                Ensemble training mode: {activeTrainingMode || 'unknown'}.
                                 {artifactClassification === 'bootstrap'
                                     ? ' This is still a bootstrap artifact and should be treated as a development/demo model.'
                                     : ' This artifact passed the standard local validation flow.'}
                             </div>
-                        )}
+                        ) : runtimeLoaded.current ? (
+                            <div className="alert-warning text-xs">
+                                Ensemble runtime is unavailable, so generation stays blocked instead of silently switching to rules.
+                            </div>
+                        ) : null}
+
                         <div>
                             <label className="block text-xs font-600 text-slate-500 mb-1.5">Investment Amount (Rs)</label>
                             <input
@@ -254,9 +241,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 className="input-field px-4 py-2.5"
                                 placeholder="e.g. 500000"
                             />
-                            <p className="text-xs text-slate-400 mt-1">
-                                Approx. Rs {(amount / 100000).toFixed(1)}L
-                            </p>
+                            <p className="text-xs text-slate-400 mt-1">Approx. Rs {(amount / 100000).toFixed(1)}L</p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
@@ -283,101 +268,21 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Max Drawdown %</label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    max={100}
-                                    value={mandate.max_portfolio_drawdown_pct}
-                                    onChange={e => updateMandate('max_portfolio_drawdown_pct', Number(e.target.value))}
-                                    className="input-field px-4 py-2.5"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Max Position %</label>
-                                <input
-                                    type="number"
-                                    min={1}
-                                    max={100}
-                                    value={mandate.max_position_size_pct}
-                                    onChange={e => updateMandate('max_position_size_pct', Number(e.target.value))}
-                                    className="input-field px-4 py-2.5"
-                                />
-                            </div>
-                        </div>
-
                         <div>
                             <label className="block text-xs font-600 text-slate-500 mb-2">Risk Attitude</label>
                             <div className="grid grid-cols-3 gap-2">
-                                {riskOpts.map(r => (
+                                {riskOpts.map(risk => (
                                     <button
-                                        key={r.id}
-                                        onClick={() => updateMandate('risk_attitude', r.id)}
-                                        className={`risk-btn ${mandate.risk_attitude === r.id ? 'active-risk' : ''}`}
+                                        key={risk.id}
+                                        onClick={() => updateMandate('risk_attitude', risk.id)}
+                                        className={`risk-btn ${mandate.risk_attitude === risk.id ? 'active-risk' : ''}`}
                                     >
-                                        {r.icon}
-                                        <span>{r.label}</span>
-                                        <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">{r.desc}</span>
+                                        {risk.icon}
+                                        <span>{risk.label}</span>
+                                        <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">{risk.desc}</span>
                                     </button>
                                 ))}
                             </div>
-                        </div>
-
-                        <div className="col-span-1 md:col-span-2">
-                            <label className="block text-xs font-600 text-slate-500 mb-2">Sector Constraints</label>
-                            {sectorCodes.length > 0 ? (
-                                <div className="flex flex-wrap gap-2">
-                                    {sectorCodes.map(sector => {
-                                        const isIncluded = mandate.sector_inclusions.includes(sector);
-                                        const isExcluded = mandate.sector_exclusions.includes(sector);
-                                        
-                                        let btnClass = "px-3 py-1.5 text-[11px] font-medium rounded-full border transition-all duration-200";
-                                        if (isIncluded) {
-                                            btnClass += " bg-amber-50 text-amber-700 border-amber-200 ring-1 ring-amber-200";
-                                        } else if (isExcluded) {
-                                            btnClass += " bg-rose-50 text-rose-700 border-rose-200 ring-1 ring-rose-200 opacity-60";
-                                        } else {
-                                            btnClass += " bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300";
-                                        }
-                                        
-                                        return (
-                                            <button
-                                                key={sector}
-                                                type="button"
-                                                onClick={() => {
-                                                    let newInc = [...mandate.sector_inclusions];
-                                                    let newExc = [...mandate.sector_exclusions];
-                                                    if (isIncluded) {
-                                                        newInc = newInc.filter(s => s !== sector);
-                                                        newExc.push(sector);
-                                                    } else if (isExcluded) {
-                                                        newExc = newExc.filter(s => s !== sector);
-                                                    } else {
-                                                        newInc.push(sector);
-                                                    }
-                                                    setMandate(prev => ({
-                                                        ...prev,
-                                                        sector_inclusions: newInc,
-                                                        sector_exclusions: newExc
-                                                    }));
-                                                }}
-                                                className={btnClass}
-                                            >
-                                                {sector} {isIncluded && '✓'} {isExcluded && '✕'}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            ) : (
-                                <p className="text-xs text-slate-400">Loading sectors...</p>
-                            )}
-                            <p className="text-[10px] text-slate-400 mt-2 flex items-center gap-2">
-                                <span>Click to toggle:</span>
-                                <span className="inline-flex items-center gap-1 text-amber-600"><span className="w-2 h-2 rounded-full bg-amber-400"></span> Include</span>
-                                <span className="inline-flex items-center gap-1 text-rose-600"><span className="w-2 h-2 rounded-full bg-rose-400"></span> Exclude</span>
-                            </p>
                         </div>
 
                         <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
@@ -389,7 +294,11 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             />
                         </label>
 
-                        <button onClick={handleGenerate} disabled={generating} className="btn btn-primary btn-lg w-full flex items-center justify-center gap-2">
+                        <button
+                            onClick={() => void handleGenerate()}
+                            disabled={generating || activeModelVariant !== 'LIGHTGBM_HYBRID'}
+                            className="btn btn-primary btn-lg w-full flex items-center justify-center gap-2"
+                        >
                             {generating ? 'Generating...' : 'Generate AI Portfolio'} <ArrowRight className="w-4 h-4" />
                         </button>
                     </div>
@@ -399,13 +308,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                     <>
                         <div className="card p-5">
                             <div className="flex items-center justify-between">
-                                <div className="text-xs text-slate-400 font-medium">
-                                    MODEL GENERATION SUMMARY
-                                </div>
-                                {portfolio.modelSource === 'LIGHTGBM' 
-                                    ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">⚡ AI Ensemble Active</span>
-                                    : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">📊 Rules-Based Mode</span>
-                                }
+                                <div className="text-xs text-slate-400 font-medium">MODEL GENERATION SUMMARY</div>
+                                {portfolio.modelSource === 'ENSEMBLE'
+                                    ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">AI Ensemble Active</span>
+                                    : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Rules-Based Mode</span>}
                             </div>
                         </div>
 
@@ -414,9 +320,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 <h3 className="font-bold text-sm mb-3 text-slate-900">Backend Model Notes</h3>
                                 <div className="space-y-2">
                                     {portfolio.backendNotes.map((note, index) => (
-                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">
-                                            {note}
-                                        </p>
+                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
                                     ))}
                                 </div>
                             </div>
@@ -437,10 +341,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     ['SEBI Fees', `Rs ${costs!.sebi.toFixed(2)}`],
                                     ['GST', `Rs ${costs!.gst.toFixed(2)}`],
                                     ['Slippage (0.1%)', `Rs ${costs!.slippage.toFixed(2)}`],
-                                ].map(([k, v]) => (
-                                    <div key={k} className="stat-row">
-                                        <span className="stat-label text-xs">{k}</span>
-                                        <span className="stat-value text-xs text-rose-500">{v}</span>
+                                ].map(([label, value]) => (
+                                    <div key={label} className="stat-row">
+                                        <span className="stat-label text-xs">{label}</span>
+                                        <span className="stat-value text-xs text-rose-500">{value}</span>
                                     </div>
                                 ))}
                                 <div className="stat-row" style={{ fontWeight: 700 }}>
@@ -460,8 +364,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
                             <TrendingUp className="w-8 h-8 opacity-30" />
                         </div>
-                        <p className="text-base font-semibold mb-1">Set the mandate questionnaire and generate</p>
-                        <p className="text-sm">The allocator will respect horizon, drawdown, sector, and news constraints.</p>
+                        <p className="text-base font-semibold mb-1">Set the mandate and generate</p>
+                        <p className="text-sm">The ensemble allocator uses horizon, risk attitude, position count, and news context.</p>
                     </div>
                 ) : (
                     <>
@@ -494,12 +398,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                         <span className="stat-value">{portfolio.mandate.investment_horizon_weeks} weeks</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Drawdown</span>
-                                        <span className="stat-value">{portfolio.mandate.max_portfolio_drawdown_pct}%</span>
+                                        <span className="stat-label">Positions</span>
+                                        <span className="stat-value">{portfolio.mandate.preferred_num_positions}</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Max Position</span>
-                                        <span className="stat-value">{portfolio.mandate.max_position_size_pct}%</span>
+                                        <span className="stat-label">Small Caps</span>
+                                        <span className="stat-value">{portfolio.mandate.allow_small_caps ? 'Allowed' : 'Excluded'}</span>
                                     </div>
                                 </div>
                             </div>
@@ -512,9 +416,9 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     <ResponsiveContainer width="100%" height="100%">
                                         <PieChart>
                                             <Pie data={chartData} innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value">
-                                                {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                                                {chartData.map((_, index) => <Cell key={index} fill={COLORS[index % COLORS.length]} />)}
                                             </Pie>
-                                            <Tooltip formatter={(v: number) => [`Rs ${v.toLocaleString()}`, 'Amount']} />
+                                            <Tooltip formatter={(value: number) => [`Rs ${value.toLocaleString()}`, 'Amount']} />
                                             <Legend iconSize={8} iconType="circle" />
                                         </PieChart>
                                     </ResponsiveContainer>
@@ -529,7 +433,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                             <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                                             <XAxis type="number" hide />
                                             <YAxis dataKey="name" type="category" fontSize={10} width={56} />
-                                            <Tooltip formatter={(v: number) => [`Rs ${v.toLocaleString()}`]} />
+                                            <Tooltip formatter={(value: number) => [`Rs ${value.toLocaleString()}`]} />
                                             <Bar dataKey="value" fill="#D4A843" radius={[0, 6, 6, 0]} />
                                         </BarChart>
                                     </ResponsiveContainer>
@@ -546,34 +450,34 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {portfolio.allocations.map((a, i) => (
-                                            <tr key={i}>
+                                        {portfolio.allocations.map((allocation, index) => (
+                                            <tr key={index}>
                                                 <td>
-                                                    <div className="font-semibold text-slate-900">{a.stock.symbol}</div>
-                                                    <div className="text-xs text-slate-400">{a.stock.name}</div>
-                                                    {a.drivers && a.drivers.length > 0 && (
+                                                    <div className="font-semibold text-slate-900">{allocation.stock.symbol}</div>
+                                                    <div className="text-xs text-slate-400">{allocation.stock.name}</div>
+                                                    {allocation.drivers && allocation.drivers.length > 0 && (
                                                         <div className="text-[10px] text-slate-500 mt-1">
-                                                            ML drivers: {a.drivers.slice(0, 2).join(', ')}
+                                                            ML drivers: {allocation.drivers.slice(0, 2).join(', ')}
                                                         </div>
                                                     )}
                                                 </td>
-                                                <td><SectorChip sector={a.stock.sector} /></td>
+                                                <td><SectorChip sector={allocation.stock.sector} /></td>
                                                 <td>
                                                     <div className="flex items-center gap-2">
                                                         <div className="progress-bar-track w-12">
-                                                            <div className="progress-bar-fill" style={{ width: `${a.weight}%`, background: '#D4A843' }} />
+                                                            <div className="progress-bar-fill" style={{ width: `${allocation.weight}%`, background: '#D4A843' }} />
                                                         </div>
-                                                        <span className="font-mono text-xs">{a.weight}%</span>
+                                                        <span className="font-mono text-xs">{allocation.weight}%</span>
                                                     </div>
                                                 </td>
                                                 <td>
                                                     <div className="text-xs text-slate-600">
-                                                        <div className="font-medium">S {a.news_sentiment?.toFixed(2) ?? '0.00'} · I {a.news_impact?.toFixed(1) ?? '0.0'}</div>
-                                                        <div className="text-[10px] text-slate-400 max-w-52">{a.news_explanation ?? 'No mapped news.'}</div>
+                                                        <div className="font-medium">S {allocation.news_sentiment?.toFixed(2) ?? '0.00'} · I {allocation.news_impact?.toFixed(1) ?? '0.0'}</div>
+                                                        <div className="text-[10px] text-slate-400 max-w-52">{allocation.news_explanation ?? 'No mapped news.'}</div>
                                                     </div>
                                                 </td>
-                                                <td className="font-mono text-sm">{a.shares}</td>
-                                                <td className="text-right font-semibold font-mono">Rs {a.amount.toLocaleString()}</td>
+                                                <td className="font-mono text-sm">{allocation.shares}</td>
+                                                <td className="text-right font-semibold font-mono">Rs {allocation.amount.toLocaleString()}</td>
                                             </tr>
                                         ))}
                                     </tbody>

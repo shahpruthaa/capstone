@@ -19,11 +19,7 @@ export type InvestmentHorizon = '2-4' | '4-8' | '8-24';
 
 export interface UserMandate {
   investment_horizon_weeks: InvestmentHorizon;
-  max_portfolio_drawdown_pct: number;
-  max_position_size_pct: number;
   preferred_num_positions: number;
-  sector_inclusions: string[];
-  sector_exclusions: string[];
   allow_small_caps: boolean;
   risk_attitude: RiskAttitude;
 }
@@ -122,7 +118,7 @@ export interface TradeIdea {
 
 interface ApiGeneratePortfolioResponse {
   model_variant: ModelVariant;
-  model_source: 'RULES' | 'LIGHTGBM';
+  model_source: 'RULES' | 'ENSEMBLE';
   model_version: string;
   prediction_horizon_days: number;
   capital_amount: number;
@@ -170,7 +166,7 @@ interface ApiAnalyzePortfolioResponse {
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
   model_variant_applied: ModelVariant;
-  model_source?: 'RULES' | 'LIGHTGBM';
+  model_source?: 'RULES' | 'ENSEMBLE';
   active_mode?: string;
   model_version?: string;
   artifact_classification?: string;
@@ -184,7 +180,7 @@ interface ApiAnalyzePortfolioResponse {
 
 interface ApiBacktestResponse {
   model_variant: ModelVariant;
-  model_source: 'RULES' | 'LIGHTGBM';
+  model_source: 'RULES' | 'ENSEMBLE';
   model_version: string;
   prediction_horizon_days: number;
   top_model_drivers_by_symbol?: Record<string, string[]>;
@@ -334,10 +330,6 @@ interface ApiMarketContextResponse {
 
 type FetchJsonInit = RequestInit & { timeoutMs?: number };
 
-function isRequestTimeoutError(error: unknown): boolean {
-  return error instanceof Error && /timeout/i.test(error.message);
-}
-
 async function fetchJson<T>(path: string, init?: FetchJsonInit): Promise<T> {
   const { timeoutMs = 60000, ...requestInit } = init ?? {};
   const controller = new AbortController();
@@ -405,35 +397,15 @@ export async function generatePortfolioViaApi(
   mandate: UserMandate,
   modelVariant: ModelVariant = 'LIGHTGBM_HYBRID',
 ): Promise<Portfolio> {
-  const localNotes: string[] = [];
-  let response: ApiGeneratePortfolioResponse;
-
-  try {
-    response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
-      method: 'POST',
-      timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 120000 : 90000,
-      body: JSON.stringify({
-        capital_amount: capitalAmount,
-        mandate,
-        model_variant: modelVariant,
-      }),
-    });
-  } catch (error) {
-    if (modelVariant !== 'LIGHTGBM_HYBRID' || !isRequestTimeoutError(error)) {
-      throw error;
-    }
-
-    localNotes.push('LightGBM hybrid request timed out; automatically retried with rule-based allocator for responsiveness.');
-    response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
-      method: 'POST',
-      timeoutMs: 90000,
-      body: JSON.stringify({
-        capital_amount: capitalAmount,
-        mandate,
-        model_variant: 'RULES' as ModelVariant,
-      }),
-    });
-  }
+  const response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
+    method: 'POST',
+    timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 120000 : 90000,
+    body: JSON.stringify({
+      capital_amount: capitalAmount,
+      mandate,
+      model_variant: modelVariant,
+    }),
+  });
 
   const allocations = response.allocations
     .map((allocation) => {
@@ -475,7 +447,7 @@ export async function generatePortfolioViaApi(
     investmentUtilizationPct: capitalAmount > 0 ? (totalInvested / capitalAmount) * 100 : 0,
     riskProfile: fromRiskAttitude(response.mandate.risk_attitude),
     mandate: response.mandate,
-    backendNotes: [...localNotes, ...(response.notes ?? [])],
+    backendNotes: response.notes ?? [],
     modelVariant: response.model_variant,
     modelSource: response.model_source,
     modelVersion: response.model_version,
