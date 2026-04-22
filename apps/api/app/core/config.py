@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     ml_model_loader_max_symbols: int = 50
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
+    scheduler_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="APP_",

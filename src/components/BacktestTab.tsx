@@ -282,10 +282,11 @@ export function BacktestTab({ portfolio }: Props) {
                             />
                         </div>
 
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                             <MetricCard label="Sortino Ratio" value={fmt(result.sortino)} sub="Downside risk adj." color={result.sortino > 1 ? 'green' : 'amber'} />
                             <MetricCard label="Calmar Ratio" value={fmt(result.calmar)} sub="CAGR / Max Drawdown" color={result.calmar > 1 ? 'green' : 'amber'} />
                             <MetricCard label="Win Rate" value={`${fmt(result.winRate, 1)}%`} sub="Positive return days" color={result.winRate > 52 ? 'green' : 'red'} />
+                            <MetricCard label="Turnover" value={`${fmt(result.turnoverPct ?? 0, 1)}%`} sub="Executed gross notional / starting capital" color="blue" />
                             <MetricCard label="Total Trades" value={result.totalTrades} sub="Stop-loss + Take-profit + Rebalancing" />
                         </div>
 

@@ -19,6 +19,7 @@ from app.schemas.ingestion import (
 )
 from app.schemas.portfolio import IngestBhavcopyRequest, IngestBhavcopyResponse, MarketDashboardResponse, MarketDataSummaryResponse
 from app.services.db_quant_engine import build_market_dashboard
+from app.services.market_calendar import get_market_session_status
 
 
 router = APIRouter()
@@ -44,6 +45,7 @@ def market_data_summary_endpoint(
         max_trade_date=max_trade_date,
         daily_bar_count=daily_bar_count,
         instrument_count=instrument_count,
+        session_status=get_market_session_status().to_payload(),
         notes=notes,
     )
 

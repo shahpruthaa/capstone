@@ -1,11 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.services.model_runtime import get_model_runtime_status
+from app.db.session import get_db
+from app.services.model_overview import build_current_model_overview
 
 router = APIRouter()
 
 
 @router.get("/current")
-def current_model() -> dict:
-    return get_model_runtime_status()
+def current_model(db: Session = Depends(get_db)) -> dict:
+    return build_current_model_overview(db)
 

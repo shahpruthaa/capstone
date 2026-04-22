@@ -1385,6 +1385,9 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         "cess_tax": 0.0,
         "total_tax": 0.0,
     }
+    turnover_state = {
+        "gross_executed_notional": 0.0,
+    }
     tax_buckets: dict[str, dict] = {
         "stcg": defaultdict(float),
         "ltcg_positive": defaultdict(float),
@@ -1397,6 +1400,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         initial_investment=initial_investment,
         costs=costs,
         snapshot_by_symbol=snapshot_by_symbol,
+        turnover_state=turnover_state,
     )
     if not position_state:
         raise ValueError("Selected instruments do not have usable prices on the requested backtest start date.")
@@ -1432,6 +1436,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                 state["cash_pool"][0] += proceeds - trade_costs["total_costs"]
                 realize_tax_lots(state, sold_shares, exit_fill, trade_date, taxes, tax_buckets)
                 state["shares"] = 0
+                turnover_state["gross_executed_notional"] += proceeds
                 state["peak_price"] = 0.0
                 state["cooldown_until"] = trade_date + timedelta(days=RISK_MODEL_CONFIG[runtime_risk_mode]["cooldown_days"])
                 total_trades += 1
@@ -1439,7 +1444,18 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0 and index % rebalance_interval == 0 and payload.rebalance_frequency != "NONE":
-            total_trades += rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, runtime_risk_mode)
+            total_trades += rebalance_positions(
+                position_state,
+                bar_matrix,
+                weights,
+                trade_date,
+                portfolio_value,
+                costs,
+                taxes,
+                tax_buckets,
+                runtime_risk_mode,
+                turnover_state,
+            )
             portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0:
@@ -1462,7 +1478,14 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
 
     finalize_tax_buckets(taxes, tax_buckets)
 
-    metrics = build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades)
+    metrics = build_backtest_metrics(
+        equity_curve,
+        portfolio_returns,
+        costs,
+        taxes,
+        total_trades,
+        turnover_state["gross_executed_notional"],
+    )
     run_id = f"bt-{uuid4()}"
     fee_schedule = resolve_equity_fee_schedule(payload.end_date)
     tax_schedule = resolve_capital_gains_tax_schedule(payload.end_date)
@@ -1481,6 +1504,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
             if adjusted_names
             else "No corporate actions were loaded for the portfolio instruments in this backtest window."
         ),
+        "Turnover now reflects executed gross trade notional relative to starting capital instead of a trades-based heuristic.",
     ]
     if payload.mandate is not None:
         notes.insert(
@@ -2787,10 +2811,11 @@ def load_bar_matrix(db: Session, symbols: list[str], start_date: date, end_date:
     return matrix, dividend_cash
 
 
-def initialize_positions(*, bar_matrix, weights, first_date, initial_investment, costs, snapshot_by_symbol):
+def initialize_positions(*, bar_matrix, weights, first_date, initial_investment, costs, snapshot_by_symbol, turnover_state):
     cash_pool = [initial_investment]
     positions = {}
     trades = 0
+    del turnover_state
     for symbol, weight in weights.items():
         bar = bar_matrix.get(symbol, {}).get(first_date)
         snapshot = snapshot_by_symbol.get(symbol)
@@ -2839,7 +2864,7 @@ def initialize_positions(*, bar_matrix, weights, first_date, initial_investment,
     return positions, trades
 
 
-def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, risk_mode: str) -> int:
+def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, risk_mode: str, turnover_state) -> int:
     trades = 0
     if not position_state:
         return 0
@@ -2871,6 +2896,7 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             cash_pool[0] += proceeds - trade_costs["total_costs"]
             realize_tax_lots(state, shares_to_sell, bar.close_price, trade_date, taxes, tax_buckets)
             state["shares"] = sum(lot["shares"] for lot in state["lots"])
+            turnover_state["gross_executed_notional"] += proceeds
             trades += 1
         elif drift_value > 0:
             if state["cooldown_until"] is not None and trade_date < state["cooldown_until"]:
@@ -2896,11 +2922,12 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             state["lots"].append({"shares": shares_to_buy, "entry_price": bar.close_price, "entry_date": trade_date})
             state["entry_price"] = weighted_average_entry_price(state["lots"])
             state["peak_price"] = max(state["peak_price"], bar.high_price)
+            turnover_state["gross_executed_notional"] += trade_value
             trades += 1
     return trades
 
 
-def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades) -> BacktestMetricModel:
+def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades, gross_executed_notional) -> BacktestMetricModel:
     initial_value = equity_curve[0].portfolio_value
     final_value = equity_curve[-1].portfolio_value
     years = max((equity_curve[-1].date - equity_curve[0].date).days / 365.25, 1 / 12)
@@ -2917,6 +2944,7 @@ def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_
     win_rate_pct = (sum(1 for value in portfolio_returns if value > 0) / max(len(portfolio_returns), 1)) * 100
     tax_drag_pct = (taxes["total_tax"] / max(initial_value, 1)) * 100
     cost_drag_pct = (costs["total_costs"] / max(initial_value, 1)) * 100
+    turnover_pct = (gross_executed_notional / max(initial_value, 1)) * 100
     return BacktestMetricModel(
         cagr_pct=round(cagr_pct, 2),
         total_return_pct=round(total_return_pct, 2),
@@ -2924,7 +2952,7 @@ def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_
         sharpe_ratio=round(sharpe_ratio, 2),
         sortino_ratio=round(sortino_ratio, 2),
         calmar_ratio=round(calmar_ratio, 2),
-        turnover_pct=round(min(250.0, total_trades * 6.5), 2),
+        turnover_pct=round(turnover_pct, 2),
         win_rate_pct=round(win_rate_pct, 2),
         total_trades=total_trades,
         tax_drag_pct=round(tax_drag_pct, 2),
@@ -3647,6 +3675,7 @@ def finalize_tax_buckets(taxes: dict[str, float], tax_buckets: dict[str, dict]) 
         taxable_gain = max(0.0, gain)
         base_tax = taxable_gain * rate
         stcg_tax += base_tax
+        # Cess is computed only from the fresh base-tax subtotal for this bucket.
         cess_tax += base_tax * cess_rate
 
     ltcg_by_fy: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
@@ -3669,6 +3698,7 @@ def finalize_tax_buckets(taxes: dict[str, float], tax_buckets: dict[str, dict]) 
             allocated_taxable = taxable_total * (positive_gain / positive_total)
             base_tax = allocated_taxable * rate
             ltcg_tax += base_tax
+            # Do not apply cess on any value that already includes cess.
             cess_tax += base_tax * cess_rate
 
     taxes["stcg_tax"] = stcg_tax

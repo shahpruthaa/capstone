@@ -5,6 +5,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 from app.services.local_bootstrap import bootstrap_local_state
+from app.services.scheduler import start_scheduler, stop_scheduler
 
 
 app = FastAPI(
@@ -35,11 +36,17 @@ def _startup_bootstrap_local_runtime() -> None:
         lightgbm_status = get_lightgbm_model_status()
         app.state.bootstrap_status = bootstrap_status  # type: ignore[attr-defined]
         app.state.lightgbm_model_status = lightgbm_status  # type: ignore[attr-defined]
+        start_scheduler()
         logger.info("Startup bootstrap completed: %s", bootstrap_status)
         logger.info("LightGBM model status loaded: %s", lightgbm_status.get("available"))
     except Exception as error:
         logger.error("Startup error: %s", error, exc_info=True)
         raise
+
+
+@app.on_event("shutdown")
+def _shutdown_background_services() -> None:
+    stop_scheduler()
 
 
 @app.get("/", tags=["meta"])

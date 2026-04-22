@@ -47,6 +47,7 @@ Removed from the current product:
 - `apps/api/app/api/router.py` wires the active API routes.
 - `apps/api/app/services/db_quant_engine.py` handles portfolio generation, holdings analysis, and backtests.
 - `apps/api/app/services/model_runtime.py` reports ensemble readiness and artifact status.
+- `apps/api/app/services/model_overview.py` adds live current-signal and validation summaries for the Overview tab.
 - `apps/api/app/services/ensemble_scorer.py` combines component model predictions.
 - `apps/api/app/api/routes/stock_detail.py` exposes stock-level analysis surfaces.
 
@@ -69,6 +70,8 @@ Removed from the current product:
 - Mandate horizon controls portfolio decision logic, not model feature history depth.
 - Holdings analysis has a backend-first path with a local fallback when the API is unavailable.
 - Portfolio construction now applies stronger diversification controls across names and sectors.
+- Market session state is now derived from an NSE holiday calendar plus IST trading hours instead of static UI text.
+- Backtests in the active UI use the backend historical replay endpoint rather than a synthetic GBM simulation path.
 
 ## Local Setup
 

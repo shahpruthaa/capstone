@@ -416,6 +416,7 @@ class MarketDataSummaryResponse(BaseModel):
     max_trade_date: date | None = None
     daily_bar_count: int = 0
     instrument_count: int = 0
+    session_status: dict[str, object] | None = None
     notes: list[str] = Field(default_factory=list)
 
 

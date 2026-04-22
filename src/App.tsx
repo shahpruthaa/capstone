@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Home, PieChart, Lightbulb, FlaskConical, GitCompare, Activity } from "lucide-react";
 import "./index.css";
 import { Portfolio } from "./services/portfolioService";
@@ -8,6 +8,7 @@ import { TradeIdeasTab } from "./components/TradeIdeasTab";
 import { MarketTab } from "./components/MarketTab";
 import { PortfolioWorkspace } from "./components/PortfolioWorkspace";
 import { OverviewTab } from "./components/OverviewTab";
+import { CurrentModelStatus, getCurrentModelStatusViaApi, getMarketDataSummaryViaApi, MarketDataSummary } from "./services/backendApi";
 
 type Tab = "OVERVIEW" | "MARKET" | "PORTFOLIO" | "IDEAS" | "BACKTEST" | "COMPARE";
 
@@ -20,7 +21,24 @@ const PAGE_META: Record<Tab, { title: string; subtitle: string }> = {
   COMPARE: { title: "Compare", subtitle: "Mandate portfolio vs Nifty and factor-style benchmarks" },
 };
 
-function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
+function Sidebar({
+  tab,
+  setTab,
+  marketData,
+  modelStatus,
+}: {
+  tab: Tab;
+  setTab: (tab: Tab) => void;
+  marketData: MarketDataSummary | null;
+  modelStatus: CurrentModelStatus | null;
+}) {
+  const marketBadgeTone =
+    marketData?.sessionStatus?.status === "OPEN" || marketData?.sessionStatus?.status === "PRE_OPEN" || marketData?.sessionStatus?.status === "POST_CLOSE"
+      ? "open"
+      : "closed";
+  const researchBadgeTone = modelStatus?.available ? "open" : "closed";
+  const dataBadgeTone = marketData?.maxTradeDate ? "open" : "closed";
+
   return (
     <aside className="app-sidebar">
       <div className="sidebar-logo">
@@ -65,16 +83,16 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
 
       <div className="sidebar-bottom">
         <div className="market-status">
-          <div className="status-dot open" />
-          <div className="text-mono text-xs">NSE: Open/Closed</div>
+          <div className={`status-dot ${marketBadgeTone}`} />
+          <div className="text-mono text-xs">NSE: {marketData?.sessionStatus?.label ?? "Loading"}</div>
         </div>
         <div className="market-status">
-          <div className="status-dot open" />
-          <div className="text-mono text-xs">Research: Live</div>
+          <div className={`status-dot ${researchBadgeTone}`} />
+          <div className="text-mono text-xs">Research: {modelStatus?.available ? "Ensemble live" : modelStatus ? "Rules fallback" : "Loading"}</div>
         </div>
         <div className="market-status">
-          <div className="status-dot closed" />
-          <div className="text-mono text-xs">Data: Apr 2</div>
+          <div className={`status-dot ${dataBadgeTone}`} />
+          <div className="text-mono text-xs">Data: {marketData?.maxTradeDate ?? "Unavailable"}</div>
         </div>
       </div>
     </aside>
@@ -84,10 +102,37 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
 export default function App() {
   const [tab, setTab] = useState<Tab>("OVERVIEW");
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [marketData, setMarketData] = useState<MarketDataSummary | null>(null);
+  const [modelStatus, setModelStatus] = useState<CurrentModelStatus | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSidebarContext = async () => {
+      const [marketResult, modelResult] = await Promise.allSettled([
+        getMarketDataSummaryViaApi(),
+        getCurrentModelStatusViaApi(),
+      ]);
+
+      if (!active) return;
+      if (marketResult.status === "fulfilled") setMarketData(marketResult.value);
+      if (modelResult.status === "fulfilled") setModelStatus(modelResult.value);
+    };
+
+    void loadSidebarContext();
+    const interval = window.setInterval(() => {
+      void loadSidebarContext();
+    }, 60_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   return (
     <div className="app-shell">
-      <Sidebar tab={tab} setTab={setTab} />
+      <Sidebar tab={tab} setTab={setTab} marketData={marketData} modelStatus={modelStatus} />
 
       <div className="app-content">
         <header className="app-topbar">

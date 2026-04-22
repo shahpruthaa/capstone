@@ -132,6 +132,10 @@ Artifact storage:
 - `apps/api/artifacts/models/death_risk_v1/`
 - `apps/api/artifacts/models/ensemble_v1/`
 
+Model documentation:
+
+- `docs/models/death-risk-v1.md`
+
 ## Validation Surface
 
 Current validation focuses on:

@@ -19,6 +19,7 @@ from app.models.daily_bar import DailyBar
 from app.models.ingestion_run import IngestionRun
 from app.models.instrument import Instrument
 from app.services.instrument_master import enrich_instrument_from_master
+from app.services.market_calendar import is_nse_trading_day
 
 
 COMMON_REQUEST_HEADERS = {
@@ -532,7 +533,7 @@ def get_trading_days(start_date: date, end_date: date) -> list[date]:
     current = start_date
     trading_days: list[date] = []
     while current <= end_date:
-        if current.weekday() < 5:
+        if is_nse_trading_day(current):
             trading_days.append(current)
         current += timedelta(days=1)
     return trading_days

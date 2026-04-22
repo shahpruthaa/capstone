@@ -68,7 +68,9 @@ def train_death_risk_classifier(df):
     logger.info(f'Importances: {importances}')
     return {'model': model, 'scaler': scaler, 'feature_cols': feature_cols,
             'cv_auc': float(cv_scores.mean()), 'cv_auc_std': float(cv_scores.std()),
-            'train_accuracy': float(model.score(X_scaled, y))}
+            'train_accuracy': float(model.score(X_scaled, y)),
+            'dataset_rows': int(len(df)), 'positive_labels': int(y.sum()),
+            'negative_labels': int(len(y) - int(y.sum()))}
 
 def save_death_risk_artifacts(result, artifact_dir):
     artifact_dir = Path(artifact_dir)
@@ -81,6 +83,31 @@ def save_death_risk_artifacts(result, artifact_dir):
                'train_accuracy': result['train_accuracy'], 'feature_cols': result['feature_cols']}
     with (artifact_dir / 'death_risk_metrics.json').open('w') as f:
         json.dump(metrics, f, indent=2)
+    metadata = {
+        'model_version': artifact_dir.name,
+        'training_mode': 'research',
+        'target_variable_definition': 'Binary proxy label set to 1 when a symbol has fewer than 200 trading-history days in the local database snapshot; 0 otherwise.',
+        'training_methodology': 'GradientBoostingClassifier over summary price and liquidity features with 5-fold cross-validation.',
+        'validation_methodology': '5-fold cross-validation ROC AUC on the training snapshot only. No explicit out-of-sample time-series validation is currently available.',
+        'validation_summary': {
+            'cv_auc': result['cv_auc'],
+            'cv_auc_std': result['cv_auc_std'],
+            'train_accuracy': result['train_accuracy'],
+        },
+        'dataset_summary': {
+            'rows': result['dataset_rows'],
+            'positive_labels': result['positive_labels'],
+            'negative_labels': result['negative_labels'],
+        },
+        'limitations': [
+            'The target is a survivorship/listing-history proxy rather than a realized default, delisting, or permanent capital-impairment label.',
+            'The model has no documented out-of-sample time-series validation and should not be used as a production gating signal yet.',
+            'Feature set is intentionally narrow and should be treated as a coarse liquidity/stability heuristic.',
+        ],
+        'production_readiness': 'not_ready',
+    }
+    with (artifact_dir / 'death_risk_metadata.json').open('w', encoding='utf-8') as f:
+        json.dump(metadata, f, indent=2)
     logger.info(f'Saved to {artifact_dir}')
 
 def predict_death_risk(symbols, db, artifact_dir):

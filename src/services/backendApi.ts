@@ -79,6 +79,40 @@ export interface CurrentModelStatus {
   evaluationReport?: Record<string, unknown>;
   reason?: string;
   runtimeSitePackages?: string;
+  notes?: string[];
+  healthScorePct?: number;
+  currentSignalsAsOfDate?: string;
+  currentSignals?: Array<{
+    symbol: string;
+    sector: string;
+    action: 'BUY' | 'SELL' | 'HOLD';
+    confidence: number;
+    predictedReturn21dPct: number;
+    predictedAnnualReturnPct: number;
+    topDrivers: string[];
+  }>;
+  validationOverview?: {
+    available: boolean;
+    modelVersion?: string;
+    trainingMode?: string;
+    predictionHorizonDays?: number;
+    selectionStatus?: string;
+    foldCount?: number;
+    sampleCount?: number;
+    oosSharpeRatio?: number;
+    informationCoefficient?: number;
+    hitRatePct?: number;
+    avgTopBottomSpreadPct?: number;
+    walkForwardEquityCurve?: Array<{
+      date: string;
+      equityIndex: number;
+      periodReturnPct: number;
+      informationCoefficient: number;
+      hitRatePct: number;
+      sampleCount: number;
+    }>;
+    notes?: string[];
+  };
 }
 
 export interface MarketDataSummary {
@@ -87,6 +121,20 @@ export interface MarketDataSummary {
   maxTradeDate?: string;
   dailyBarCount: number;
   instrumentCount: number;
+  sessionStatus?: {
+    exchange: string;
+    timezone: string;
+    status: string;
+    label: string;
+    reason: string;
+    isTradingDay: boolean;
+    sessionDate: string;
+    currentTime: string;
+    nextOpenAt?: string;
+    nextCloseAt?: string;
+    holidayName?: string | null;
+    calendarSource?: string;
+  };
   notes: string[];
 }
 
@@ -520,6 +568,40 @@ interface ApiCurrentModelStatusResponse {
   evaluation_report?: Record<string, unknown>;
   runtime_site_packages?: string;
   reason?: string;
+  notes?: string[];
+  health_score_pct?: number;
+  current_signals_as_of_date?: string;
+  current_signals?: Array<{
+    symbol: string;
+    sector: string;
+    action: 'BUY' | 'SELL' | 'HOLD';
+    confidence: number;
+    predicted_return_21d_pct: number;
+    predicted_annual_return_pct: number;
+    top_drivers: string[];
+  }>;
+  validation_overview?: {
+    available: boolean;
+    model_version?: string;
+    training_mode?: string;
+    prediction_horizon_days?: number;
+    selection_status?: string;
+    fold_count?: number;
+    sample_count?: number;
+    oos_sharpe_ratio?: number;
+    information_coefficient?: number;
+    hit_rate_pct?: number;
+    avg_top_bottom_spread_pct?: number;
+    walk_forward_equity_curve?: Array<{
+      date: string;
+      equity_index: number;
+      period_return_pct: number;
+      information_coefficient: number;
+      hit_rate_pct: number;
+      sample_count: number;
+    }>;
+    notes?: string[];
+  };
 }
 
 interface ApiMarketDataSummaryResponse {
@@ -528,6 +610,20 @@ interface ApiMarketDataSummaryResponse {
   max_trade_date?: string;
   daily_bar_count: number;
   instrument_count: number;
+  session_status?: {
+    exchange: string;
+    timezone: string;
+    status: string;
+    label: string;
+    reason: string;
+    is_trading_day: boolean;
+    session_date: string;
+    current_time: string;
+    next_open_at?: string;
+    next_close_at?: string;
+    holiday_name?: string | null;
+    calendar_source?: string;
+  };
   notes?: string[];
 }
 
@@ -1062,6 +1158,7 @@ export async function runBacktestViaApi(
     sortino: response.metrics.sortino_ratio,
     calmar: response.metrics.calmar_ratio,
     winRate: response.metrics.win_rate_pct,
+    turnoverPct: response.metrics.turnover_pct,
     totalTrades: response.metrics.total_trades,
     taxLiability: {
       stcgGain: response.tax_liability.stcg_gain,
@@ -1207,6 +1304,42 @@ export async function getCurrentModelStatusViaApi(): Promise<CurrentModelStatus>
     evaluationReport: response.evaluation_report,
     runtimeSitePackages: response.runtime_site_packages,
     reason: response.reason,
+    notes: response.notes ?? [],
+    healthScorePct: response.health_score_pct,
+    currentSignalsAsOfDate: response.current_signals_as_of_date,
+    currentSignals: (response.current_signals ?? []).map((signal) => ({
+      symbol: signal.symbol,
+      sector: signal.sector,
+      action: signal.action,
+      confidence: signal.confidence,
+      predictedReturn21dPct: signal.predicted_return_21d_pct,
+      predictedAnnualReturnPct: signal.predicted_annual_return_pct,
+      topDrivers: signal.top_drivers ?? [],
+    })),
+    validationOverview: response.validation_overview
+      ? {
+          available: response.validation_overview.available,
+          modelVersion: response.validation_overview.model_version,
+          trainingMode: response.validation_overview.training_mode,
+          predictionHorizonDays: response.validation_overview.prediction_horizon_days,
+          selectionStatus: response.validation_overview.selection_status,
+          foldCount: response.validation_overview.fold_count,
+          sampleCount: response.validation_overview.sample_count,
+          oosSharpeRatio: response.validation_overview.oos_sharpe_ratio,
+          informationCoefficient: response.validation_overview.information_coefficient,
+          hitRatePct: response.validation_overview.hit_rate_pct,
+          avgTopBottomSpreadPct: response.validation_overview.avg_top_bottom_spread_pct,
+          walkForwardEquityCurve: (response.validation_overview.walk_forward_equity_curve ?? []).map((point) => ({
+            date: point.date,
+            equityIndex: point.equity_index,
+            periodReturnPct: point.period_return_pct,
+            informationCoefficient: point.information_coefficient,
+            hitRatePct: point.hit_rate_pct,
+            sampleCount: point.sample_count,
+          })),
+          notes: response.validation_overview.notes ?? [],
+        }
+      : undefined,
   };
 }
 
@@ -1218,6 +1351,22 @@ export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
     maxTradeDate: response.max_trade_date,
     dailyBarCount: response.daily_bar_count,
     instrumentCount: response.instrument_count,
+    sessionStatus: response.session_status
+      ? {
+          exchange: response.session_status.exchange,
+          timezone: response.session_status.timezone,
+          status: response.session_status.status,
+          label: response.session_status.label,
+          reason: response.session_status.reason,
+          isTradingDay: response.session_status.is_trading_day,
+          sessionDate: response.session_status.session_date,
+          currentTime: response.session_status.current_time,
+          nextOpenAt: response.session_status.next_open_at,
+          nextCloseAt: response.session_status.next_close_at,
+          holidayName: response.session_status.holiday_name,
+          calendarSource: response.session_status.calendar_source,
+        }
+      : undefined,
     notes: response.notes ?? [],
   };
 }
