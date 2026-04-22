@@ -137,6 +137,8 @@ interface ApiGeneratePortfolioResponse {
     weight: number;
     recommended_shares: number;
     recommended_amount: number;
+    shares?: number;
+    amount?: number;
     rationale: string;
     top_model_drivers?: string[];
     ml_pred_21d_return?: number | null;
@@ -155,6 +157,7 @@ interface ApiGeneratePortfolioResponse {
     beta: number;
     diversification_score: number;
   };
+  regime_warning?: string | null;
   notes?: string[];
 }
 
@@ -488,6 +491,7 @@ export async function generatePortfolioViaApi(
       correlationScore: response.metrics.diversification_score,
       sectorCount,
     },
+    regimeWarning: response.regime_warning || undefined,
   };
 }
 

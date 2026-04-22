@@ -141,25 +141,33 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
             "Mandate is infeasible: `max_position_size_pct * preferred_num_positions` must be at least 100."
         )
 
-    horizon = HORIZON_SETTINGS[mandate.investment_horizon_weeks]
-    attitude = ATTITUDE_SETTINGS[mandate.risk_attitude]
-    max_weight = mandate.max_position_size_pct / 100.0
-    sector_cap = max(attitude["sector_cap"], min(0.5, max_weight * 2.0))
-    drawdown_adjusted_vol = max(10.0, min(attitude["max_annual_volatility_pct"], mandate.max_portfolio_drawdown_pct * 1.8))
-    drawdown_adjusted_death_risk = max(0.18, min(attitude["max_death_risk"], mandate.max_portfolio_drawdown_pct / 32.0))
-    target_positions = mandate.preferred_num_positions
-    candidate_count = max(target_positions + 4, int(round(target_positions * attitude["candidate_multiple"])))
-    allowed_market_caps = {"Large", "Mid", "Unknown", ""}
-    if mandate.allow_small_caps:
-        allowed_market_caps.add("Small")
-
     included_sectors = {normalize_sector_code(value) for value in mandate.sector_inclusions if normalize_sector_code(value)}
     excluded_sectors = {normalize_sector_code(value) for value in mandate.sector_exclusions if normalize_sector_code(value)}
-
     overlap = included_sectors.intersection(excluded_sectors)
     if overlap:
         excluded_sectors = {sector for sector in excluded_sectors if sector not in overlap}
 
+    horizon = HORIZON_SETTINGS[mandate.investment_horizon_weeks]
+    attitude = ATTITUDE_SETTINGS[mandate.risk_attitude]
+    max_weight = mandate.max_position_size_pct / 100.0
+    sector_cap = max(attitude["sector_cap"], min(0.5, max_weight * 2.0))
+
+    available_sectors = len(NSE_SECTOR_CODES) - len(excluded_sectors)
+    if included_sectors:
+        available_sectors = len(included_sectors)
+
+    if available_sectors * sector_cap < 1.0:
+        raise ValueError(
+            f"Mandate is infeasible: Sector constraints (max {sector_cap*100:.1f}% per sector) and {available_sectors} allowed sectors limit maximum portfolio allocation to {available_sectors * sector_cap * 100:.1f}%."
+        )
+
+    drawdown_adjusted_vol = max(10.0, min(attitude["max_annual_volatility_pct"], mandate.max_portfolio_drawdown_pct * 1.8))
+    drawdown_adjusted_death_risk = max(0.18, min(attitude["max_death_risk"], mandate.max_portfolio_drawdown_pct / 32.0))
+    target_positions = mandate.preferred_num_positions
+    candidate_count = max(15, target_positions * 2, int(round(target_positions * attitude["candidate_multiple"])))
+    allowed_market_caps = {"Large", "Mid", "Unknown", ""}
+    if mandate.allow_small_caps:
+        allowed_market_caps.add("Small")
     return MandateConfig(
         lookback_days=horizon["lookback_days"],
         holding_period_days=horizon["holding_period_days"],

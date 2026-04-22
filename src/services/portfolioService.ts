@@ -45,6 +45,7 @@ export interface Portfolio {
   predictionHorizonDays?: number;
   lookbackWindowDays?: number;
   expectedHoldingPeriodDays?: number;
+  regimeWarning?: string;
 }
 
 export interface PortfolioMetrics {
