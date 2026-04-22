@@ -144,11 +144,17 @@ export function AnalyzeTab() {
             .filter(Boolean);
         const parsed: { symbol: string; shares: number }[] = [];
         for (const row of rows) {
-            const [symbolRaw, sharesRaw] = row.split(/[,\s]+/).filter(Boolean);
-            const symbol = (symbolRaw || '').toUpperCase();
-            const sharesValue = Number(sharesRaw);
-            if (!symbol || !Number.isFinite(sharesValue) || sharesValue <= 0) continue;
-            parsed.push({ symbol, shares: Math.floor(sharesValue) });
+            const parts = row.split(/[,\s]+/).filter(Boolean);
+            const symbolRaw = parts[0];
+            const sharesRaw = parts[1];
+            
+            if (!symbolRaw) continue;
+            
+            const symbol = symbolRaw.trim().toUpperCase();
+            const shares = sharesRaw ? parseInt(sharesRaw.trim(), 10) : 1; 
+            const finalShares = isNaN(shares) || shares <= 0 ? 1 : shares;
+
+            parsed.push({ symbol, shares: finalShares });
         }
         if (!parsed.length) {
             setAnalysisNotice({
@@ -218,16 +224,17 @@ export function AnalyzeTab() {
                         </button>
                     </div>
 
-                    <div className="relative mb-3">
+                    <div className="relative w-full mb-3">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                         <input
-                            className="input-field pl-9 pr-4 py-2.5 text-sm"
+                            type="text"
+                            className="w-full input-field pl-9 pr-4 py-2.5 text-sm"
                             placeholder="Search NSE stock..."
                             value={search}
                             onChange={e => { setSearch(e.target.value); setSelectedSym(''); }}
                         />
                         {filtered.length > 0 && (
-                            <div className="absolute top-full left-0 w-full bg-white border border-slate-200 rounded-xl mt-1 shadow-xl z-20 max-h-48 overflow-y-auto">
+                            <div className="absolute top-full left-0 mt-1 w-full z-50 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto">
                                 {filtered.map(s => (
                                     <button
                                         key={s.symbol}

@@ -326,10 +326,10 @@ export function BacktestTab({ portfolio }: Props) {
                                 trend={result.cagr >= 0 ? 'up' : 'down'}
                             />
                             <MetricCard
-                                label="Friction Drag"
-                                value={`${((result.costBreakdown.totalFrictionalDragPct ?? 0) * 100).toFixed(2)}%`}
+                                label="FRICTION DRAG"
+                                value={`${((result?.costBreakdown?.totalFrictionalDragPct ?? 0) * 100).toFixed(2)}%`}
                                 sub="Slippage, STT, brokerage impact"
-                                color="amber"
+                                color="purple"
                                 trend="down"
                             />
                             <MetricCard
