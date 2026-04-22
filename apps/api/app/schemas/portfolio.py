@@ -64,6 +64,64 @@ class PortfolioMetricsModel(BaseModel):
     diversification_score: float
 
 
+class StandardMetricDefinitionModel(BaseModel):
+    return_pct: float = 0.0
+    volatility_pct: float = 0.0
+    sharpe_ratio: float = 0.0
+    diversification_score: float | None = None
+    correlation: float | None = None
+    beta: float | None = None
+
+
+class RuntimeDescriptorModel(BaseModel):
+    variant: ModelVariant
+    model_source: Literal["RULES", "ENSEMBLE"]
+    active_mode: str = "rules_only"
+    model_version: str = "rules"
+    artifact_classification: str = "missing"
+    prediction_horizon_days: int = 21
+
+
+class RiskContributionModel(BaseModel):
+    name: str
+    weight_pct: float
+    contribution_pct: float
+    detail: str = ""
+
+
+class PortfolioConstraintStatusModel(BaseModel):
+    max_position_cap_pct: float
+    max_sector_cap_pct: float
+    largest_position_pct: float
+    largest_position_name: str = ""
+    largest_sector_weight_pct: float
+    largest_sector_name: str = ""
+    near_position_cap: bool = False
+    near_sector_cap: bool = False
+
+
+class ScenarioShockModel(BaseModel):
+    name: str
+    pnl_pct: float
+    commentary: str
+
+
+class BenchmarkRelativeStatsModel(BaseModel):
+    benchmark_name: str
+    active_share_pct: float = 0.0
+    tracking_error_pct: float = 0.0
+    ex_ante_alpha_pct: float = 0.0
+    information_ratio: float = 0.0
+
+
+class PortfolioFitSummaryModel(BaseModel):
+    summary: str
+    risk_level: str
+    diversification: str
+    concentration: str
+    next_action: str
+
+
 class GeneratePortfolioRequest(BaseModel):
     capital_amount: float = Field(..., gt=0)
     mandate: UserMandate
@@ -82,6 +140,18 @@ class GeneratePortfolioResponse(BaseModel):
     expected_holding_period_days: int
     allocations: list[AllocationModel]
     metrics: PortfolioMetricsModel
+    standard_metrics: StandardMetricDefinitionModel = Field(default_factory=StandardMetricDefinitionModel)
+    factor_exposures: dict[str, float] = Field(default_factory=dict)
+    position_risk_contributions: list[RiskContributionModel] = Field(default_factory=list)
+    sector_risk_contributions: list[RiskContributionModel] = Field(default_factory=list)
+    constraints: PortfolioConstraintStatusModel | None = None
+    turnover_estimate_pct: float = 0.0
+    deployment_efficiency_pct: float = 0.0
+    residual_cash: float = 0.0
+    scenario_tests: list[ScenarioShockModel] = Field(default_factory=list)
+    benchmark_relative: BenchmarkRelativeStatsModel | None = None
+    portfolio_fit_summary: PortfolioFitSummaryModel | None = None
+    runtime: RuntimeDescriptorModel | None = None
     holding_period_days_recommended: int = 21
     holding_period_reason: str = "Review the portfolio on the configured prediction horizon."
     regime_warning: str | None = None
@@ -120,16 +190,33 @@ class AnalyzePortfolioResponse(BaseModel):
     portfolio_value: float
     current_beta: float
     diversification_score: float
+    avg_pairwise_correlation: float
     sector_weights: dict[str, float]
+    largest_sector: str = ""
+    largest_sector_weight: float = 0.0
     factor_exposures: dict[str, float] = Field(default_factory=dict)
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
+    health_label: Literal["GOOD", "OKAY", "CAUTION"] = "OKAY"
+    health_summary: str = ""
+    risk_assessment: str = ""
+    diversification_assessment: str = ""
+    concentration_assessment: str = ""
+    factor_assessment: str = ""
+    correlation_assessment: str = ""
+    benchmark_assessment: str = ""
+    idiosyncratic_risk_assessment: str = ""
+    rebalance_summary: str = ""
+    portfolio_fit_summary: PortfolioFitSummaryModel | None = None
+    standard_metrics: StandardMetricDefinitionModel = Field(default_factory=StandardMetricDefinitionModel)
+    recommended_actions: list[str] = Field(default_factory=list)
     model_variant_applied: ModelVariant
     model_source: Literal["RULES", "ENSEMBLE"] = "RULES"
     active_mode: str = "rules_only"
     model_version: str = "rules"
     artifact_classification: str = "missing"
     prediction_horizon_days: int = 21
+    runtime: RuntimeDescriptorModel | None = None
     ml_predictions: dict[str, float] = Field(default_factory=dict)
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     holding_period_days_recommended: int = 21
@@ -250,7 +337,57 @@ class BenchmarkGrowthPointModel(BaseModel):
 class BenchmarkSummaryResponse(BaseModel):
     strategies: list[BenchmarkMetricModel]
     projected_growth: list[BenchmarkGrowthPointModel]
+    runtime: RuntimeDescriptorModel | None = None
     notes: list[str]
+
+
+class CompareAllocationInputModel(BaseModel):
+    symbol: str
+    weight_pct: float = Field(..., ge=0, le=100)
+
+
+class BenchmarkCompareRequest(BaseModel):
+    capital_amount: float | None = Field(default=None, gt=0)
+    mandate: UserMandate | None = None
+    allocations: list[CompareAllocationInputModel] = Field(default_factory=list)
+    benchmark_name: str | None = None
+    model_variant: ModelVariant | None = None
+
+
+class BenchmarkSeriesPointModel(BaseModel):
+    date: date
+    strategy_returns: dict[str, float]
+    rolling_excess_return: dict[str, float] = Field(default_factory=dict)
+    rolling_sharpe: dict[str, float] = Field(default_factory=dict)
+
+
+class BenchmarkCompareStatsModel(BaseModel):
+    strategy_name: str
+    annual_return_pct: float
+    volatility_pct: float
+    sharpe_ratio: float
+    max_drawdown_pct: float
+    tracking_error_pct: float = 0.0
+    information_ratio: float = 0.0
+    downside_capture_pct: float = 0.0
+    upside_capture_pct: float = 0.0
+    drawdown_duration_days: int = 0
+    recovery_days: int = 0
+    active_share_pct: float = 0.0
+    net_of_cost_return_pct: float = 0.0
+    net_of_tax_return_pct: float = 0.0
+    ex_ante_alpha_pct: float = 0.0
+    benchmark_name: str = ""
+    matched_on: str = ""
+
+
+class BenchmarkCompareResponse(BaseModel):
+    runtime: RuntimeDescriptorModel | None = None
+    portfolio_fit_summary: PortfolioFitSummaryModel | None = None
+    benchmark_match_summary: str = ""
+    strategies: list[BenchmarkCompareStatsModel]
+    series: list[BenchmarkSeriesPointModel] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
 
 
 class IngestBhavcopyRequest(BaseModel):
@@ -279,4 +416,53 @@ class MarketDataSummaryResponse(BaseModel):
     max_trade_date: date | None = None
     daily_bar_count: int = 0
     instrument_count: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
+class MarketTrendBlockModel(BaseModel):
+    index_symbol: str
+    spot: float
+    dma50: float
+    dma200: float
+    above_50_dma: bool
+    above_200_dma: bool
+    breadth_above_50_pct: float
+    breadth_above_200_pct: float
+    realized_volatility_pct: float
+    drawdown_pct: float
+    drawdown_state: str
+
+
+class MarketFactorWeatherItemModel(BaseModel):
+    factor: str
+    leadership_score: float
+    leader: str
+    note: str
+    data_quality: Literal["live", "proxy", "placeholder"] = "live"
+
+
+class CrossAssetToneItemModel(BaseModel):
+    asset: str
+    tone: str
+    move_pct: float
+    note: str
+    data_quality: Literal["live", "proxy", "placeholder"] = "proxy"
+
+
+class SectorRelativeStrengthModel(BaseModel):
+    sector: str
+    return_1m_pct: float
+    return_3m_pct: float
+    return_6m_pct: float
+    earnings_revision_trend: str
+    note: str = ""
+
+
+class MarketDashboardResponse(BaseModel):
+    runtime: RuntimeDescriptorModel | None = None
+    trend: MarketTrendBlockModel
+    factor_weather: list[MarketFactorWeatherItemModel]
+    cross_asset_tone: list[CrossAssetToneItemModel]
+    sector_relative_strength: list[SectorRelativeStrengthModel]
+    what_this_means_now: PortfolioFitSummaryModel | None = None
     notes: list[str] = Field(default_factory=list)

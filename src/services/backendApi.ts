@@ -7,6 +7,20 @@ import {
   RiskProfile,
   analyzePortfolio,
 } from './portfolioService';
+import {
+  BenchmarkRelativeStats,
+  CrossAssetToneItem,
+  defaultRuntimeDescriptor,
+  MarketFactorWeatherItem,
+  MarketTrendBlock,
+  PortfolioConstraintStatus,
+  PortfolioFitSummary,
+  RiskContribution,
+  RuntimeDescriptor,
+  ScenarioShock,
+  SectorRelativeStrength,
+  StandardMetrics,
+} from './analyticsSchema';
 
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
 export const API_BASE_URL = viteEnv?.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
@@ -76,10 +90,21 @@ export interface MarketDataSummary {
   notes: string[];
 }
 
+export interface MarketDashboard {
+  runtime?: RuntimeDescriptor;
+  trend: MarketTrendBlock;
+  factorWeather: MarketFactorWeatherItem[];
+  crossAssetTone: CrossAssetToneItem[];
+  sectorRelativeStrength: SectorRelativeStrength[];
+  whatThisMeansNow?: PortfolioFitSummary | null;
+  notes: string[];
+}
+
 export interface TradeIdeaCheck {
   passed: boolean;
   score: number;
   reason: string;
+  dataQuality?: 'live' | 'proxy' | 'placeholder';
 }
 
 export interface TradeIdeaChecklist {
@@ -110,10 +135,65 @@ export interface TradeIdea {
   target_price: number;
   risk_reward_ratio: number;
   suggested_allocation_pct: number;
+  suggested_allocation_value: number;
+  suggested_units: number;
   max_loss_per_unit: number;
   regime_alignment: string;
   sector_rank: number;
   catalyst?: string | null;
+  expected_holding_period_days: number;
+  liquidity_slippage_bps: number;
+  liquidity_commentary: string;
+  event_calendar: string[];
+  overlap_with_holdings: string[];
+  duplicate_factor_bets: string[];
+  hedge_factor_bets: string[];
+  marginal_risk_contribution_pct: number;
+  portfolio_fit_summary: string;
+  realized_hit_rate_by_type_pct?: number | null;
+}
+
+export interface TradeIdeasResponse {
+  runtime?: RuntimeDescriptor;
+  portfolioFitSummary?: PortfolioFitSummary | null;
+  notes: string[];
+  ideas: TradeIdea[];
+}
+
+export interface BenchmarkCompareStats {
+  strategyName: string;
+  annualReturnPct: number;
+  volatilityPct: number;
+  sharpeRatio: number;
+  maxDrawdownPct: number;
+  trackingErrorPct: number;
+  informationRatio: number;
+  downsideCapturePct: number;
+  upsideCapturePct: number;
+  drawdownDurationDays: number;
+  recoveryDays: number;
+  activeSharePct: number;
+  netOfCostReturnPct: number;
+  netOfTaxReturnPct: number;
+  exAnteAlphaPct: number;
+  benchmarkName: string;
+  matchedOn: string;
+}
+
+export interface BenchmarkComparePoint {
+  date: string;
+  strategyReturns: Record<string, number>;
+  rollingExcessReturn: Record<string, number>;
+  rollingSharpe: Record<string, number>;
+}
+
+export interface BenchmarkCompareResponse {
+  runtime?: RuntimeDescriptor;
+  portfolioFitSummary?: PortfolioFitSummary | null;
+  benchmarkMatchSummary: string;
+  strategies: BenchmarkCompareStats[];
+  series: BenchmarkComparePoint[];
+  notes: string[];
 }
 
 interface ApiGeneratePortfolioResponse {
@@ -153,24 +233,109 @@ interface ApiGeneratePortfolioResponse {
     beta: number;
     diversification_score: number;
   };
+  standard_metrics?: {
+    return_pct: number;
+    volatility_pct: number;
+    sharpe_ratio: number;
+    diversification_score?: number;
+    correlation?: number;
+    beta?: number;
+  };
+  factor_exposures?: Record<string, number>;
+  position_risk_contributions?: Array<{ name: string; weight_pct: number; contribution_pct: number; detail: string }>;
+  sector_risk_contributions?: Array<{ name: string; weight_pct: number; contribution_pct: number; detail: string }>;
+  constraints?: {
+    max_position_cap_pct: number;
+    max_sector_cap_pct: number;
+    largest_position_pct: number;
+    largest_position_name: string;
+    largest_sector_weight_pct: number;
+    largest_sector_name: string;
+    near_position_cap: boolean;
+    near_sector_cap: boolean;
+  };
+  turnover_estimate_pct?: number;
+  deployment_efficiency_pct?: number;
+  residual_cash?: number;
+  scenario_tests?: Array<{ name: string; pnl_pct: number; commentary: string }>;
+  benchmark_relative?: {
+    benchmark_name: string;
+    active_share_pct: number;
+    tracking_error_pct: number;
+    ex_ante_alpha_pct: number;
+    information_ratio: number;
+  };
+  portfolio_fit_summary?: {
+    summary: string;
+    risk_level: string;
+    diversification: string;
+    concentration: string;
+    next_action: string;
+  };
+  runtime?: {
+    variant: ModelVariant;
+    model_source: 'RULES' | 'ENSEMBLE';
+    active_mode: string;
+    model_version: string;
+    artifact_classification: string;
+    prediction_horizon_days: number;
+  };
   regime_warning?: string | null;
   notes?: string[];
 }
 
 interface ApiAnalyzePortfolioResponse {
+  total_holdings: number;
   portfolio_value: number;
   current_beta: number;
   diversification_score: number;
+  avg_pairwise_correlation: number;
   sector_weights: Record<string, number>;
+  largest_sector?: string;
+  largest_sector_weight?: number;
   factor_exposures?: Record<string, number>;
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
+  health_label?: 'GOOD' | 'OKAY' | 'CAUTION';
+  health_summary?: string;
+  risk_assessment?: string;
+  diversification_assessment?: string;
+  concentration_assessment?: string;
+  factor_assessment?: string;
+  correlation_assessment?: string;
+  benchmark_assessment?: string;
+  idiosyncratic_risk_assessment?: string;
+  rebalance_summary?: string;
+  portfolio_fit_summary?: {
+    summary: string;
+    risk_level: string;
+    diversification: string;
+    concentration: string;
+    next_action: string;
+  };
+  standard_metrics?: {
+    return_pct: number;
+    volatility_pct: number;
+    sharpe_ratio: number;
+    diversification_score?: number;
+    correlation?: number;
+    beta?: number;
+  };
+  recommended_actions?: string[];
   model_variant_applied: ModelVariant;
   model_source?: 'RULES' | 'ENSEMBLE';
   active_mode?: string;
   model_version?: string;
   artifact_classification?: string;
   prediction_horizon_days?: number;
+  runtime?: {
+    variant: ModelVariant;
+    model_source: 'RULES' | 'ENSEMBLE';
+    active_mode: string;
+    model_version: string;
+    artifact_classification: string;
+    prediction_horizon_days: number;
+  };
   ml_predictions?: Record<string, number>;
   top_model_drivers_by_symbol?: Record<string, string[]>;
   holding_period_days_recommended?: number;
@@ -241,6 +406,59 @@ interface ApiBenchmarkResponse {
     relative_accuracy_score_pct?: number;
   }[];
   projected_growth: { year: number; values: Record<string, number> }[];
+  runtime?: {
+    variant: ModelVariant;
+    model_source: 'RULES' | 'ENSEMBLE';
+    active_mode: string;
+    model_version: string;
+    artifact_classification: string;
+    prediction_horizon_days: number;
+  };
+  notes?: string[];
+}
+
+interface ApiBenchmarkCompareResponse {
+  runtime?: {
+    variant: ModelVariant;
+    model_source: 'RULES' | 'ENSEMBLE';
+    active_mode: string;
+    model_version: string;
+    artifact_classification: string;
+    prediction_horizon_days: number;
+  };
+  portfolio_fit_summary?: {
+    summary: string;
+    risk_level: string;
+    diversification: string;
+    concentration: string;
+    next_action: string;
+  };
+  benchmark_match_summary: string;
+  strategies: Array<{
+    strategy_name: string;
+    annual_return_pct: number;
+    volatility_pct: number;
+    sharpe_ratio: number;
+    max_drawdown_pct: number;
+    tracking_error_pct: number;
+    information_ratio: number;
+    downside_capture_pct: number;
+    upside_capture_pct: number;
+    drawdown_duration_days: number;
+    recovery_days: number;
+    active_share_pct: number;
+    net_of_cost_return_pct: number;
+    net_of_tax_return_pct: number;
+    ex_ante_alpha_pct: number;
+    benchmark_name: string;
+    matched_on: string;
+  }>;
+  series: Array<{
+    date: string;
+    strategy_returns: Record<string, number>;
+    rolling_excess_return: Record<string, number>;
+    rolling_sharpe: Record<string, number>;
+  }>;
   notes?: string[];
 }
 
@@ -313,6 +531,60 @@ interface ApiMarketDataSummaryResponse {
   notes?: string[];
 }
 
+interface ApiMarketDashboardResponse {
+  runtime?: {
+    variant: ModelVariant;
+    model_source: 'RULES' | 'ENSEMBLE';
+    active_mode: string;
+    model_version: string;
+    artifact_classification: string;
+    prediction_horizon_days: number;
+  };
+  trend: {
+    index_symbol: string;
+    spot: number;
+    dma50: number;
+    dma200: number;
+    above_50_dma: boolean;
+    above_200_dma: boolean;
+    breadth_above_50_pct: number;
+    breadth_above_200_pct: number;
+    realized_volatility_pct: number;
+    drawdown_pct: number;
+    drawdown_state: string;
+  };
+  factor_weather: Array<{
+    factor: string;
+    leadership_score: number;
+    leader: string;
+    note: string;
+    data_quality: 'live' | 'proxy' | 'placeholder';
+  }>;
+  cross_asset_tone: Array<{
+    asset: string;
+    tone: string;
+    move_pct: number;
+    note: string;
+    data_quality: 'live' | 'proxy' | 'placeholder';
+  }>;
+  sector_relative_strength: Array<{
+    sector: string;
+    return_1m_pct: number;
+    return_3m_pct: number;
+    return_6m_pct: number;
+    earnings_revision_trend: string;
+    note: string;
+  }>;
+  what_this_means_now?: {
+    summary: string;
+    risk_level: string;
+    diversification: string;
+    concentration: string;
+    next_action: string;
+  } | null;
+  notes?: string[];
+}
+
 interface ApiMandateQuestionnaireResponse {
   investment_horizon_weeks_options: InvestmentHorizon[];
   risk_attitude_options: RiskAttitude[];
@@ -377,6 +649,61 @@ function fromRiskAttitude(attitude: RiskAttitude): RiskProfile {
   return 'HIGH_RISK';
 }
 
+function mapRuntimeDescriptor(runtime?: {
+  variant: ModelVariant;
+  model_source: 'RULES' | 'ENSEMBLE';
+  active_mode: string;
+  model_version: string;
+  artifact_classification: string;
+  prediction_horizon_days: number;
+}): RuntimeDescriptor {
+  if (!runtime) return defaultRuntimeDescriptor();
+  return {
+    variant: runtime.variant,
+    modelSource: runtime.model_source,
+    activeMode: runtime.active_mode,
+    modelVersion: runtime.model_version,
+    artifactClassification: runtime.artifact_classification,
+    predictionHorizonDays: runtime.prediction_horizon_days,
+  };
+}
+
+function mapPortfolioFitSummary(summary?: {
+  summary: string;
+  risk_level: string;
+  diversification: string;
+  concentration: string;
+  next_action: string;
+} | null): PortfolioFitSummary | null {
+  if (!summary) return null;
+  return {
+    summary: summary.summary,
+    riskLevel: summary.risk_level,
+    diversification: summary.diversification,
+    concentration: summary.concentration,
+    nextAction: summary.next_action,
+  };
+}
+
+function mapStandardMetrics(metrics?: {
+  return_pct: number;
+  volatility_pct: number;
+  sharpe_ratio: number;
+  diversification_score?: number;
+  correlation?: number;
+  beta?: number;
+}): StandardMetrics | undefined {
+  if (!metrics) return undefined;
+  return {
+    returnPct: metrics.return_pct,
+    volatilityPct: metrics.volatility_pct,
+    sharpeRatio: metrics.sharpe_ratio,
+    diversificationScore: metrics.diversification_score,
+    correlation: metrics.correlation,
+    beta: metrics.beta,
+  };
+}
+
 function toApiRiskModeFromMandate(mandate?: UserMandate): ApiRiskMode {
   if (!mandate) return 'MODERATE';
   if (mandate.risk_attitude === 'capital_preservation') return 'ULTRA_LOW';
@@ -390,6 +717,50 @@ export async function getMandateQuestionnaireViaApi(): Promise<MandateQuestionna
 
 export async function getMarketContextViaApi(): Promise<MarketContext> {
   return fetchJson<ApiMarketContextResponse>('/api/v1/news/market-context');
+}
+
+export async function getMarketDashboardViaApi(): Promise<MarketDashboard> {
+  const response = await fetchJson<ApiMarketDashboardResponse>('/api/v1/market-data/regime');
+  return {
+    runtime: mapRuntimeDescriptor(response.runtime),
+    trend: {
+      indexSymbol: response.trend.index_symbol,
+      spot: response.trend.spot,
+      dma50: response.trend.dma50,
+      dma200: response.trend.dma200,
+      above50Dma: response.trend.above_50_dma,
+      above200Dma: response.trend.above_200_dma,
+      breadthAbove50Pct: response.trend.breadth_above_50_pct,
+      breadthAbove200Pct: response.trend.breadth_above_200_pct,
+      realizedVolatilityPct: response.trend.realized_volatility_pct,
+      drawdownPct: response.trend.drawdown_pct,
+      drawdownState: response.trend.drawdown_state,
+    },
+    factorWeather: response.factor_weather.map((item) => ({
+      factor: item.factor,
+      leadershipScore: item.leadership_score,
+      leader: item.leader,
+      note: item.note,
+      dataQuality: item.data_quality,
+    })),
+    crossAssetTone: response.cross_asset_tone.map((item) => ({
+      asset: item.asset,
+      tone: item.tone,
+      movePct: item.move_pct,
+      note: item.note,
+      dataQuality: item.data_quality,
+    })),
+    sectorRelativeStrength: response.sector_relative_strength.map((item) => ({
+      sector: item.sector,
+      return1mPct: item.return_1m_pct,
+      return3mPct: item.return_3m_pct,
+      return6mPct: item.return_6m_pct,
+      earningsRevisionTrend: item.earnings_revision_trend,
+      note: item.note,
+    })),
+    whatThisMeansNow: mapPortfolioFitSummary(response.what_this_means_now),
+    notes: response.notes ?? [],
+  };
 }
 
 export async function generatePortfolioViaApi(
@@ -454,6 +825,50 @@ export async function generatePortfolioViaApi(
     predictionHorizonDays: response.prediction_horizon_days,
     lookbackWindowDays: response.lookback_window_days,
     expectedHoldingPeriodDays: response.expected_holding_period_days,
+    runtime: mapRuntimeDescriptor(response.runtime),
+    standardMetrics: mapStandardMetrics(response.standard_metrics),
+    factorExposures: response.factor_exposures ?? {},
+    positionRiskContributions: (response.position_risk_contributions ?? []).map((item) => ({
+      name: item.name,
+      weightPct: item.weight_pct,
+      contributionPct: item.contribution_pct,
+      detail: item.detail,
+    })),
+    sectorRiskContributions: (response.sector_risk_contributions ?? []).map((item) => ({
+      name: item.name,
+      weightPct: item.weight_pct,
+      contributionPct: item.contribution_pct,
+      detail: item.detail,
+    })),
+    constraints: response.constraints
+      ? {
+          maxPositionCapPct: response.constraints.max_position_cap_pct,
+          maxSectorCapPct: response.constraints.max_sector_cap_pct,
+          largestPositionPct: response.constraints.largest_position_pct,
+          largestPositionName: response.constraints.largest_position_name,
+          largestSectorWeightPct: response.constraints.largest_sector_weight_pct,
+          largestSectorName: response.constraints.largest_sector_name,
+          nearPositionCap: response.constraints.near_position_cap,
+          nearSectorCap: response.constraints.near_sector_cap,
+        }
+      : undefined,
+    turnoverEstimatePct: response.turnover_estimate_pct,
+    deploymentEfficiencyPct: response.deployment_efficiency_pct,
+    scenarioTests: (response.scenario_tests ?? []).map((item) => ({
+      name: item.name,
+      pnlPct: item.pnl_pct,
+      commentary: item.commentary,
+    })),
+    benchmarkRelative: response.benchmark_relative
+      ? {
+          benchmarkName: response.benchmark_relative.benchmark_name,
+          activeSharePct: response.benchmark_relative.active_share_pct,
+          trackingErrorPct: response.benchmark_relative.tracking_error_pct,
+          exAnteAlphaPct: response.benchmark_relative.ex_ante_alpha_pct,
+          informationRatio: response.benchmark_relative.information_ratio,
+        }
+      : undefined,
+    portfolioFitSummary: mapPortfolioFitSummary(response.portfolio_fit_summary),
     metrics: {
       avgBeta: response.metrics.beta,
       estimatedAnnualReturn: response.metrics.estimated_return_pct,
@@ -471,12 +886,44 @@ export async function fetchTradeIdeasViaApi(params: {
   regimeAware?: boolean;
   minChecklistScore?: number;
   maxIdeas?: number;
-} = {}): Promise<TradeIdea[]> {
-  const query = new URLSearchParams();
-  query.set('regime_aware', String(params.regimeAware ?? true));
-  query.set('min_checklist_score', String(params.minChecklistScore ?? 7));
-  query.set('max_ideas', String(params.maxIdeas ?? 10));
-  return fetchJson<TradeIdea[]>(`/api/v1/trade-ideas?${query.toString()}`);
+  portfolio?: Portfolio | null;
+} = {}): Promise<TradeIdeasResponse> {
+  const portfolio = params.portfolio;
+  const sectorExposures = portfolio?.allocations.reduce<Record<string, number>>((acc, allocation) => {
+    acc[allocation.stock.sector] = (acc[allocation.stock.sector] || 0) + allocation.weight;
+    return acc;
+  }, {});
+
+  const response = await fetchJson<{
+    runtime?: ApiGeneratePortfolioResponse['runtime'];
+    portfolio_fit_summary?: ApiGeneratePortfolioResponse['portfolio_fit_summary'];
+    notes?: string[];
+    ideas: TradeIdea[];
+  }>('/api/v1/trade-ideas/screen', {
+    method: 'POST',
+    timeoutMs: 120000,
+    body: JSON.stringify({
+      regime_aware: params.regimeAware ?? true,
+      min_checklist_score: params.minChecklistScore ?? 7,
+      max_ideas: params.maxIdeas ?? 10,
+      portfolio_value: portfolio?.totalInvested || portfolio?.requestedCapital || undefined,
+      cash_available: portfolio?.cashRemaining ?? undefined,
+      sector_exposures: sectorExposures ?? {},
+      holdings:
+        portfolio?.allocations.map((allocation) => ({
+          symbol: allocation.stock.symbol,
+          sector: allocation.stock.sector,
+          weight_pct: allocation.weight,
+        })) ?? [],
+    }),
+  });
+
+  return {
+    runtime: mapRuntimeDescriptor(response.runtime),
+    portfolioFitSummary: mapPortfolioFitSummary(response.portfolio_fit_summary),
+    notes: response.notes ?? [],
+    ideas: response.ideas,
+  };
 }
 
 export async function analyzePortfolioViaApi(
@@ -504,7 +951,7 @@ export async function analyzePortfolioViaApi(
     return {
       riskScore: response.current_beta,
       diversificationScore: response.diversification_score,
-      suggestions: response.notes,
+      suggestions: response.recommended_actions?.length ? response.recommended_actions : response.notes,
       rebalancingActions: response.actions.map((action) => ({
         symbol: action.symbol,
         action: action.action,
@@ -521,12 +968,30 @@ export async function analyzePortfolioViaApi(
             ? ['Moderate cross-sector correlation risk detected.']
             : [],
       totalValue: response.portfolio_value,
+      totalHoldings: response.total_holdings,
+      avgPairwiseCorrelation: response.avg_pairwise_correlation,
+      largestSector: response.largest_sector ?? '',
+      largestSectorWeight: response.largest_sector_weight ?? 0,
+      healthLabel: response.health_label,
+      healthSummary: response.health_summary,
+      riskAssessment: response.risk_assessment,
+      diversificationAssessment: response.diversification_assessment,
+      concentrationAssessment: response.concentration_assessment,
+      factorAssessment: response.factor_assessment,
+      correlationAssessment: response.correlation_assessment,
+      benchmarkAssessment: response.benchmark_assessment,
+      idiosyncraticRiskAssessment: response.idiosyncratic_risk_assessment,
+      rebalanceSummary: response.rebalance_summary,
+      portfolioFitSummary: mapPortfolioFitSummary(response.portfolio_fit_summary),
+      standardMetrics: mapStandardMetrics(response.standard_metrics),
+      recommendedActions: response.recommended_actions ?? [],
       backendNotes: response.notes,
       modelVariantApplied: response.model_variant_applied,
       modelSource: response.model_source ?? 'RULES',
       activeMode: response.active_mode ?? 'rules_only',
       modelVersion: response.model_version ?? 'rules',
       artifactClassification: response.artifact_classification ?? 'missing',
+      runtime: response.runtime ? mapRuntimeDescriptor(response.runtime) : undefined,
       holdingPeriodDaysRecommended: response.holding_period_days_recommended,
       predictionHorizonDays: response.prediction_horizon_days,
       holdingPeriodReason: response.holding_period_reason,
@@ -548,6 +1013,14 @@ export async function analyzePortfolioViaApi(
       holdingPeriodDaysRecommended: 21,
       predictionHorizonDays: 21,
       holdingPeriodReason: 'Fallback analysis uses local price metadata and should be treated as an approximate review.',
+      runtime: defaultRuntimeDescriptor(),
+      standardMetrics: {
+        returnPct: 0,
+        volatilityPct: 0,
+        sharpeRatio: 0,
+        diversificationScore: fallback.diversificationScore,
+        beta: fallback.riskScore,
+      },
       mlPredictions: {},
       topModelDriversBySymbol: {},
     };
@@ -662,6 +1135,55 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
       ],
     };
   }
+}
+
+export async function getBenchmarkCompareViaApi(portfolio: Portfolio | null): Promise<BenchmarkCompareResponse> {
+  const response = await fetchJson<ApiBenchmarkCompareResponse>('/api/v1/benchmarks/compare', {
+    method: 'POST',
+    timeoutMs: 120000,
+    body: JSON.stringify({
+      capital_amount: portfolio?.requestedCapital ?? portfolio?.totalInvested ?? undefined,
+      mandate: portfolio?.mandate ?? undefined,
+      allocations:
+        portfolio?.allocations.map((allocation) => ({
+          symbol: allocation.stock.symbol,
+          weight_pct: allocation.weight,
+        })) ?? [],
+      model_variant: portfolio?.modelVariant ?? undefined,
+    }),
+  });
+
+  return {
+    runtime: mapRuntimeDescriptor(response.runtime),
+    portfolioFitSummary: mapPortfolioFitSummary(response.portfolio_fit_summary),
+    benchmarkMatchSummary: response.benchmark_match_summary,
+    strategies: response.strategies.map((strategy) => ({
+      strategyName: strategy.strategy_name,
+      annualReturnPct: strategy.annual_return_pct,
+      volatilityPct: strategy.volatility_pct,
+      sharpeRatio: strategy.sharpe_ratio,
+      maxDrawdownPct: strategy.max_drawdown_pct,
+      trackingErrorPct: strategy.tracking_error_pct,
+      informationRatio: strategy.information_ratio,
+      downsideCapturePct: strategy.downside_capture_pct,
+      upsideCapturePct: strategy.upside_capture_pct,
+      drawdownDurationDays: strategy.drawdown_duration_days,
+      recoveryDays: strategy.recovery_days,
+      activeSharePct: strategy.active_share_pct,
+      netOfCostReturnPct: strategy.net_of_cost_return_pct,
+      netOfTaxReturnPct: strategy.net_of_tax_return_pct,
+      exAnteAlphaPct: strategy.ex_ante_alpha_pct,
+      benchmarkName: strategy.benchmark_name,
+      matchedOn: strategy.matched_on,
+    })),
+    series: response.series.map((point) => ({
+      date: point.date,
+      strategyReturns: point.strategy_returns,
+      rollingExcessReturn: point.rolling_excess_return,
+      rollingSharpe: point.rolling_sharpe,
+    })),
+    notes: response.notes ?? [],
+  };
 }
 
 export async function getObservabilityKpisViaApi(): Promise<ApiObservabilityKpiResponse> {

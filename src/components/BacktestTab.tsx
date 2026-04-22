@@ -6,7 +6,7 @@ import {
 import { Play, Settings, TrendingUp, AlertTriangle, IndianRupee } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
 import { BacktestConfig, BacktestResult } from '../services/backtestEngine';
-import { getCurrentModelStatusViaApi, getMarketDataSummaryViaApi, ModelVariant, runBacktestViaApi } from '../services/backendApi';
+import { getMarketDataSummaryViaApi, runBacktestViaApi } from '../services/backendApi';
 import { MetricCard } from './MetricCard';
 
 interface Props { portfolio: Portfolio | null; }
@@ -42,19 +42,12 @@ export function BacktestTab({ portfolio }: Props) {
     const [result, setResult] = useState<BacktestResult | null>(null);
     const [running, setRunning] = useState(false);
     const [runNotice, setRunNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
-    const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
-    const [selectedModelVariant, setSelectedModelVariant] = useState<ModelVariant>('RULES');
+    const backtestVariant = portfolio?.modelVariant ?? 'RULES';
 
     useEffect(() => {
         const loadRuntimeContext = async () => {
             try {
-                const [status, marketData] = await Promise.all([
-                    getCurrentModelStatusViaApi(),
-                    getMarketDataSummaryViaApi(),
-                ]);
-                const variant: ModelVariant = status.available ? 'LIGHTGBM_HYBRID' : 'RULES';
-                setActiveModelVariant(variant);
-                setSelectedModelVariant(variant);
+                const marketData = await getMarketDataSummaryViaApi();
                 if (marketData.available && marketData.minTradeDate && marketData.maxTradeDate) {
                     setConfig(current => ({
                         ...current,
@@ -66,10 +59,7 @@ export function BacktestTab({ portfolio }: Props) {
                         text: 'No local market data is loaded yet. Start the API and let it bootstrap from cached bhavcopy archives, or ingest data manually.',
                     });
                 }
-            } catch {
-                setActiveModelVariant('RULES');
-                setSelectedModelVariant('RULES');
-            }
+            } catch {}
         };
         void loadRuntimeContext();
     }, []);
@@ -79,7 +69,7 @@ export function BacktestTab({ portfolio }: Props) {
         setRunning(true);
         setRunNotice(null);
         try {
-            setResult(await runBacktestViaApi(portfolio, config, selectedModelVariant));
+            setResult(await runBacktestViaApi(portfolio, config, backtestVariant));
             setRunNotice({ tone: 'info', text: 'Using the local backend historical replay with persisted market data, Indian taxes, and versioned fee logic.' });
         } catch (error) {
             setResult(null);
@@ -157,23 +147,6 @@ export function BacktestTab({ portfolio }: Props) {
                                     <option key={f} value={f}>{f}</option>
                                 ))}
                             </select>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">
-                                Expected-Return Engine
-                            </label>
-                            <select
-                                value={selectedModelVariant}
-                                onChange={e => setSelectedModelVariant(e.target.value as ModelVariant)}
-                                className="input-field px-3 py-2 text-sm"
-                            >
-                                <option value="RULES">Rules only</option>
-                                <option value="LIGHTGBM_HYBRID">Ensemble runtime</option>
-                            </select>
-                            {activeModelVariant === 'LIGHTGBM_HYBRID' && selectedModelVariant === 'LIGHTGBM_HYBRID' && (
-                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
-                            )}
                         </div>
 
                         <button onClick={handleRun} disabled={!portfolio || running} className="btn-primary w-full py-2.5 text-sm flex items-center justify-center gap-2">
@@ -254,36 +227,6 @@ export function BacktestTab({ portfolio }: Props) {
                             </div>
                         )}
 
-                        <div className="card p-5">
-                            <p className="section-title">Model Runtime</p>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                                <div className="stat-row">
-                                    <span className="stat-label">Variant</span>
-                                    <span className="stat-value">{result.modelVariant || selectedModelVariant}</span>
-                                </div>
-                                <div className="stat-row">
-                                    <span className="stat-label">Source</span>
-                                    <span className="stat-value">{result.modelSource || 'RULES'}</span>
-                                </div>
-                                <div className="stat-row">
-                                    <span className="stat-label">Mode</span>
-                                    <span className="stat-value">{result.activeMode || 'rules_only'}</span>
-                                </div>
-                                <div className="stat-row">
-                                    <span className="stat-label">Version</span>
-                                    <span className="stat-value">{result.modelVersion || 'rules'}</span>
-                                </div>
-                                <div className="stat-row">
-                                    <span className="stat-label">Horizon</span>
-                                    <span className="stat-value">{result.predictionHorizonDays || 21}D</span>
-                                </div>
-                                <div className="stat-row">
-                                    <span className="stat-label">Artifact</span>
-                                    <span className="stat-value">{result.artifactClassification || 'missing'}</span>
-                                </div>
-                            </div>
-                        </div>
-
                         {portfolio?.mandate && (
                             <div className="card p-5">
                                 <p className="section-title">Mandate Replay</p>
@@ -361,7 +304,7 @@ export function BacktestTab({ portfolio }: Props) {
                                         />
                                         <Legend />
                                         <ReferenceLine y={result.initialInvestment} stroke="#94a3b8" strokeDasharray="4 4" label={{ value: 'Invested', fill: '#94a3b8', fontSize: 10 }} />
-                                        <Line type="monotone" dataKey="value" name="AI Portfolio" stroke="#14b8a6" strokeWidth={2.5} dot={false} />
+                                        <Line type="monotone" dataKey="value" name="Portfolio" stroke="#14b8a6" strokeWidth={2.5} dot={false} />
                                         <Line type="monotone" dataKey="benchmark" name="Nifty Benchmark" stroke="#94a3b8" strokeWidth={1.5} dot={false} strokeDasharray="5 5" />
                                     </LineChart>
                                 </ResponsiveContainer>

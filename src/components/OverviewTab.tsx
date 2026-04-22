@@ -6,7 +6,7 @@ export function OverviewTab() {
     latency: 45,
     artifactSize: 2.3,
     dataFreshness: 'Apr 21',
-    ensembleHealth: 98
+    researchHealth: 98
   });
 
   const [marketRegime, setMarketRegime] = useState({
@@ -34,30 +34,30 @@ export function OverviewTab() {
 
   return (
     <div className="overview-grid">
-      {/* Ensemble Status */}
+      {/* Research Status */}
       <div className="metric-card">
         <div className="card-header">
           <Brain className="card-icon" />
-          <h3>Ensemble Status</h3>
+          <h3>Research Status</h3>
         </div>
         <div className="ensemble-health">
           <div className="health-bar">
-            <div className="health-fill" style={{ width: `${systemMetrics.ensembleHealth}%` }} />
+            <div className="health-fill" style={{ width: `${systemMetrics.researchHealth}%` }} />
           </div>
-          <div className="health-text">{systemMetrics.ensembleHealth}% Healthy</div>
+          <div className="health-text">{systemMetrics.researchHealth}% Healthy</div>
         </div>
         <div className="model-status">
           <div className="status-item">
             <div className="status-dot active" />
-            <span>LightGBM Model</span>
+            <span>Market Research</span>
           </div>
           <div className="status-item">
             <div className="status-dot active" />
-            <span>Rules Engine</span>
+            <span>Portfolio Analytics</span>
           </div>
           <div className="status-item">
             <div className="status-dot warning" />
-            <span>News Sentiment</span>
+            <span>News and Macro</span>
           </div>
         </div>
       </div>

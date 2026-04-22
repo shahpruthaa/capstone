@@ -17,7 +17,8 @@ from app.schemas.ingestion import (
     IngestMarketRegimeRequest,
     IngestOptionsRequest,
 )
-from app.schemas.portfolio import IngestBhavcopyRequest, IngestBhavcopyResponse, MarketDataSummaryResponse
+from app.schemas.portfolio import IngestBhavcopyRequest, IngestBhavcopyResponse, MarketDashboardResponse, MarketDataSummaryResponse
+from app.services.db_quant_engine import build_market_dashboard
 
 
 router = APIRouter()
@@ -45,6 +46,13 @@ def market_data_summary_endpoint(
         instrument_count=instrument_count,
         notes=notes,
     )
+
+
+@router.get("/regime", response_model=MarketDashboardResponse)
+def market_regime_endpoint(
+    db: Session = Depends(get_db),
+) -> MarketDashboardResponse:
+    return build_market_dashboard(db)
 
 
 @router.post("/ingestions/nse-bhavcopy", response_model=IngestBhavcopyResponse)

@@ -14,6 +14,7 @@ import {
     UserMandate,
 } from '../services/backendApi';
 import { MetricCard, SectorChip } from './MetricCard';
+import { PortfolioFitBanner } from './PortfolioFitBanner';
 
 const COLORS = ['#D4A843', '#5B9CF6', '#52C97A', '#E05C5C', '#F59E0B', '#A78BFA'];
 
@@ -29,10 +30,6 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     });
     const [generating, setGenerating] = useState(false);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
-    const [activeModelVersion, setActiveModelVersion] = useState<string>('');
-    const [activeTrainingMode, setActiveTrainingMode] = useState<string>('');
-    const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
-    const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
     const runtimeLoaded = useRef(false);
 
@@ -43,22 +40,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                 runtimeLoaded.current = true;
                 if (status.available) {
                     setActiveModelVariant('LIGHTGBM_HYBRID');
-                    setModelStatusReason('');
-                    if (typeof status.modelVersion === 'string') setActiveModelVersion(status.modelVersion);
-                    if (typeof status.trainingMode === 'string') setActiveTrainingMode(status.trainingMode);
-                    if (status.artifactClassification) setArtifactClassification(status.artifactClassification);
                 } else {
                     setActiveModelVariant('RULES');
-                    setActiveTrainingMode('');
-                    setArtifactClassification('');
-                    setModelStatusReason(status.reason || 'missing_or_invalid_artifact');
                 }
             } catch {
                 runtimeLoaded.current = true;
                 setActiveModelVariant('RULES');
-                setActiveTrainingMode('');
-                setArtifactClassification('');
-                setModelStatusReason('api_unreachable');
             }
         };
         void loadModelStatus();
@@ -77,14 +64,6 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     };
 
     const handleGenerate = async (capitalOverride?: number, riskOverride?: RiskAttitude) => {
-        if (activeModelVariant !== 'LIGHTGBM_HYBRID') {
-            setGenerationNotice({
-                tone: 'warning',
-                text: `Ensemble runtime is not ready${modelStatusReason ? ` (${modelStatusReason})` : ''}. Portfolio generation is blocked instead of falling back to rules.`,
-            });
-            return;
-        }
-
         const capitalAmount = capitalOverride ?? amount;
         const requestMandate = riskOverride ? { ...mandate, risk_attitude: riskOverride } : mandate;
 
@@ -102,10 +81,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             onPortfolioGenerated(generated);
             setGenerationNotice({
                 tone: 'info',
-                text:
-                    generated.modelSource === 'ENSEMBLE'
-                        ? `Using ensemble runtime${generated.modelVersion ? ` ${generated.modelVersion}` : ''}${generated.predictionHorizonDays ? ` over ${generated.predictionHorizonDays} trading days` : ''}, with a ${generated.lookbackWindowDays ?? '--'}-day lookback and ${generated.expectedHoldingPeriodDays ?? '--'}-day holding target.`
-                        : 'Portfolio generation completed without ensemble output.',
+                text: `Portfolio generated for a ${requestMandate.risk_attitude.replace('_', ' ')} mandate with a ${requestMandate.investment_horizon_weeks}-week horizon.`,
             });
         } catch (error) {
             setGenerationNotice({
@@ -157,21 +133,9 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         )}
 
-                        <div className="alert-info text-xs">
-                            Active generation engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `Ensemble runtime${activeModelVersion ? ` ${activeModelVersion}` : ''}` : 'Unavailable'}
-                            {activeModelVariant !== 'LIGHTGBM_HYBRID' && modelStatusReason ? ` (${modelStatusReason})` : ''}
-                        </div>
-
-                        {activeModelVariant === 'LIGHTGBM_HYBRID' ? (
-                            <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
-                                Ensemble training mode: {activeTrainingMode || 'unknown'}.
-                                {artifactClassification === 'bootstrap'
-                                    ? ' This is still a bootstrap artifact and should be treated as a development/demo model.'
-                                    : ' This artifact passed the standard local validation flow.'}
-                            </div>
-                        ) : runtimeLoaded.current ? (
+                        {runtimeLoaded.current && activeModelVariant !== 'LIGHTGBM_HYBRID' ? (
                             <div className="alert-warning text-xs">
-                                Ensemble runtime is unavailable, so generation stays blocked instead of silently switching to rules.
+                                Portfolio construction is using the fallback path because the primary research service is not available right now.
                             </div>
                         ) : null}
 
@@ -239,36 +203,16 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                         <button
                             onClick={() => void handleGenerate()}
-                            disabled={generating || activeModelVariant !== 'LIGHTGBM_HYBRID'}
+                            disabled={generating}
                             className="btn btn-primary btn-lg w-full flex items-center justify-center gap-2"
                         >
-                            {generating ? 'Generating...' : 'Generate AI Portfolio'} <ArrowRight className="w-4 h-4" />
+                            {generating ? 'Generating...' : 'Generate Portfolio'} <ArrowRight className="w-4 h-4" />
                         </button>
                     </div>
                 </div>
 
                 {portfolio && (
                     <>
-                        <div className="card p-5">
-                            <div className="flex items-center justify-between">
-                                <div className="text-xs text-slate-400 font-medium">MODEL GENERATION SUMMARY</div>
-                                {portfolio.modelSource === 'ENSEMBLE'
-                                    ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">AI Ensemble Active</span>
-                                    : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Rules-Based Mode</span>}
-                            </div>
-                        </div>
-
-                        {portfolio.backendNotes && portfolio.backendNotes.length > 0 && (
-                            <div className="card p-5">
-                                <h3 className="font-bold text-sm mb-3 text-slate-900">Backend Model Notes</h3>
-                                <div className="space-y-2">
-                                    {portfolio.backendNotes.map((note, index) => (
-                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
                         <div className="card p-5">
                             <h3 className="font-bold text-sm flex items-center gap-2 mb-4">
                                 <Info className="w-4 h-4 text-blue-500" /> Transaction Costs
@@ -301,12 +245,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
             <div className="lg:col-span-8 space-y-5">
                 {!portfolio ? (
-                    <div className="card flex flex-col items-center justify-center text-slate-400 p-16 border-2 border-dashed" style={{ minHeight: '400px' }}>
+                        <div className="card flex flex-col items-center justify-center text-slate-400 p-16 border-2 border-dashed" style={{ minHeight: '400px' }}>
                         <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
                             <TrendingUp className="w-8 h-8 opacity-30" />
                         </div>
                         <p className="text-base font-semibold mb-1">Set the mandate and generate</p>
-                        <p className="text-sm">The ensemble allocator uses horizon, risk attitude, position count, and news context.</p>
+                        <p className="text-sm">The portfolio builder uses your horizon, risk attitude, position count, and market context.</p>
                     </div>
                 ) : (
                     <>
@@ -350,6 +294,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         )}
 
+                        <PortfolioFitBanner summary={portfolio.portfolioFitSummary} />
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                             <div className="card p-5">
                                 <p className="section-title">Stock Allocation</p>
@@ -382,6 +328,106 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         </div>
 
+                        {Object.keys(portfolio.factorExposures || {}).length > 0 && (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                                <div className="card p-5">
+                                    <p className="section-title">Portfolio Factor Exposures</p>
+                                    <div className="space-y-3">
+                                        {Object.entries(portfolio.factorExposures || {})
+                                            .sort((left, right) => Math.abs(right[1]) - Math.abs(left[1]))
+                                            .slice(0, 6)
+                                            .map(([name, value]) => (
+                                                <div key={name}>
+                                                    <div className="flex items-center justify-between text-xs mb-1">
+                                                        <span className="font-semibold text-slate-600 uppercase tracking-wide">{name.replace('_', ' ')}</span>
+                                                        <span className={`font-mono ${value >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{value >= 0 ? '+' : ''}{value.toFixed(2)}</span>
+                                                    </div>
+                                                    <div className="progress-bar-track">
+                                                        <div
+                                                            className="progress-bar-fill"
+                                                            style={{
+                                                                width: `${Math.min(100, Math.abs(value) * 35)}%`,
+                                                                background: value >= 0 ? '#14b8a6' : '#ef4444',
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                    </div>
+                                </div>
+
+                                <div className="card p-5">
+                                    <p className="section-title">Risk Contribution</p>
+                                    <div className="space-y-3">
+                                        {(portfolio.positionRiskContributions || []).slice(0, 6).map((item) => (
+                                            <div key={item.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <p className="font-semibold text-slate-900">{item.name}</p>
+                                                        <p className="text-[11px] text-slate-500">{item.detail}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-sm font-semibold text-slate-900">{item.contributionPct.toFixed(1)}%</p>
+                                                        <p className="text-[11px] text-slate-500">weight {item.weightPct.toFixed(1)}%</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+                            <div className="card p-5">
+                                <p className="section-title">Book Constraints</p>
+                                <div className="space-y-2 text-sm text-slate-600">
+                                    <div className="stat-row"><span className="stat-label">Max position cap</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.maxPositionCapPct.toFixed(1)}%` : '--'}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Largest position</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.largestPositionName} ${portfolio.constraints.largestPositionPct.toFixed(1)}%` : '--'}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Sector cap</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.maxSectorCapPct.toFixed(1)}%` : '--'}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Largest sector</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.largestSectorName} ${portfolio.constraints.largestSectorWeightPct.toFixed(1)}%` : '--'}</span></div>
+                                    <p className="text-xs text-slate-500 mt-2">
+                                        {portfolio.constraints?.nearPositionCap || portfolio.constraints?.nearSectorCap ? 'The final book is close to at least one cap.' : 'The final book still has room under the current caps.'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="card p-5">
+                                <p className="section-title">Holding Period and Deployment</p>
+                                <div className="space-y-2 text-sm text-slate-600">
+                                    <div className="stat-row"><span className="stat-label">Expected holding period</span><span className="stat-value">{portfolio.expectedHoldingPeriodDays ?? '--'}D</span></div>
+                                    <div className="stat-row"><span className="stat-label">Turnover estimate</span><span className="stat-value">{portfolio.turnoverEstimatePct?.toFixed(1) ?? '--'}%</span></div>
+                                    <div className="stat-row"><span className="stat-label">Residual cash</span><span className="stat-value">Rs {(portfolio.cashRemaining ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Deployment efficiency</span><span className="stat-value">{portfolio.deploymentEfficiencyPct?.toFixed(1) ?? portfolio.investmentUtilizationPct?.toFixed(1) ?? '--'}%</span></div>
+                                </div>
+                            </div>
+
+                            <div className="card p-5">
+                                <p className="section-title">Benchmark Relative</p>
+                                <div className="space-y-2 text-sm text-slate-600">
+                                    <div className="stat-row"><span className="stat-label">Benchmark</span><span className="stat-value">{portfolio.benchmarkRelative?.benchmarkName || '--'}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Active share</span><span className="stat-value">{portfolio.benchmarkRelative ? `${portfolio.benchmarkRelative.activeSharePct.toFixed(1)}%` : '--'}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Tracking error</span><span className="stat-value">{portfolio.benchmarkRelative ? `${portfolio.benchmarkRelative.trackingErrorPct.toFixed(2)}%` : '--'}</span></div>
+                                    <div className="stat-row"><span className="stat-label">Ex-ante alpha</span><span className="stat-value">{portfolio.benchmarkRelative ? `${portfolio.benchmarkRelative.exAnteAlphaPct.toFixed(2)}%` : '--'}</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {(portfolio.scenarioTests?.length ?? 0) > 0 && (
+                            <div className="card p-5">
+                                <p className="section-title">Scenario Stress Tests</p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                                    {portfolio.scenarioTests?.map((scenario) => (
+                                        <div key={scenario.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                            <p className="text-sm font-semibold text-slate-900">{scenario.name}</p>
+                                            <p className={`text-lg font-bold mt-1 ${scenario.pnlPct >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{scenario.pnlPct.toFixed(2)}%</p>
+                                            <p className="text-[11px] text-slate-500 mt-2">{scenario.commentary}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="card overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="data-table">
@@ -398,7 +444,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                                     <div className="text-xs text-slate-400">{allocation.stock.name}</div>
                                                     {allocation.drivers && allocation.drivers.length > 0 && (
                                                         <div className="text-[10px] text-slate-500 mt-1">
-                                                            ML drivers: {allocation.drivers.slice(0, 2).join(', ')}
+                                                            Drivers: {allocation.drivers.slice(0, 2).join(', ')}
                                                         </div>
                                                     )}
                                                 </td>

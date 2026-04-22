@@ -12,12 +12,12 @@ import { OverviewTab } from "./components/OverviewTab";
 type Tab = "OVERVIEW" | "MARKET" | "PORTFOLIO" | "IDEAS" | "BACKTEST" | "COMPARE";
 
 const PAGE_META: Record<Tab, { title: string; subtitle: string }> = {
-  OVERVIEW: { title: "Research Command Center", subtitle: "Ensemble Status | Market Regime | Neural Signals | System Metrics" },
+  OVERVIEW: { title: "Research Command Center", subtitle: "Market Regime | Signals | Portfolio Health | System Metrics" },
   MARKET: { title: "Market", subtitle: "Regime | Sectors | Factor weather | News pulse" },
   PORTFOLIO: { title: "Portfolio", subtitle: "Mandate questionnaire | Recommended basket | Holdings review" },
   IDEAS: { title: "Trade Ideas", subtitle: "Why now checklist | Entries | Stops | News context" },
-  BACKTEST: { title: "Backtest", subtitle: "Replay the exact AI mandate portfolio vs Nifty" },
-  COMPARE: { title: "Compare", subtitle: "AI strategy vs Nifty and factor-style benchmarks" },
+  BACKTEST: { title: "Backtest", subtitle: "Replay the exact mandate portfolio vs Nifty" },
+  COMPARE: { title: "Compare", subtitle: "Mandate portfolio vs Nifty and factor-style benchmarks" },
 };
 
 function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
@@ -27,7 +27,7 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
         <div className="logo-mark">A</div>
         <div className="logo-text-wrap">
           <div className="logo-name">NSE Atlas</div>
-          <div className="logo-tag">AI portfolio research for Indian markets</div>
+          <div className="logo-tag">Portfolio research for Indian markets</div>
         </div>
       </div>
 
@@ -70,7 +70,7 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
         </div>
         <div className="market-status">
           <div className="status-dot open" />
-          <div className="text-mono text-xs">Ensemble: Active</div>
+          <div className="text-mono text-xs">Research: Live</div>
         </div>
         <div className="market-status">
           <div className="status-dot closed" />
@@ -106,7 +106,7 @@ export default function App() {
           {tab === "PORTFOLIO" && <PortfolioWorkspace onPortfolioGenerated={setPortfolio} portfolio={portfolio} />}
           {tab === "IDEAS" && <TradeIdeasTab portfolio={portfolio} />}
           {tab === "BACKTEST" && <BacktestTab portfolio={portfolio} />}
-          {tab === "COMPARE" && <CompareTab />}
+          {tab === "COMPARE" && <CompareTab portfolio={portfolio} />}
         </main>
       </div>
     </div>
