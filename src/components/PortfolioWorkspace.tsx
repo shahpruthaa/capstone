@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 
 import { AnalyzeTab } from './AnalyzeTab';
 import { GenerateTab } from './GenerateTab';
-import { RebalanceTab } from './RebalanceTab';
 import { Portfolio } from '../services/portfolioService';
 
-type WorkspaceView = 'build' | 'analyze' | 'rebalance';
+type WorkspaceView = 'build' | 'analyze';
 
 interface Props {
   onPortfolioGenerated: (portfolio: Portfolio) => void;
@@ -14,25 +13,6 @@ interface Props {
 
 export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
   const [view, setView] = useState<WorkspaceView>('build');
-
-  useEffect(() => {
-    if (window.pendingAiAction === 'analyze_portfolio') {
-      setView('analyze');
-      window.pendingAiAction = undefined;
-    }
-
-    const handleAction = (e: any) => {
-      if (e.detail.name === 'analyze_portfolio') {
-        setView('analyze');
-      } else if (e.detail.name === 'generate_portfolio') {
-        setView('build');
-      } else if (e.detail.name === 'rebalance_portfolio') {
-        setView('rebalance');
-      }
-    };
-    window.addEventListener('AI_ACTION', handleAction);
-    return () => window.removeEventListener('AI_ACTION', handleAction);
-  }, []);
 
   return (
     <div className="space-y-6">
@@ -58,13 +38,6 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
             >
               Analyze Holdings
             </button>
-            <button
-              className={`${view === 'rebalance' ? 'btn-primary' : 'btn-secondary'} px-4 py-2 text-sm`}
-              onClick={() => setView('rebalance')}
-              disabled={!portfolio}
-            >
-              Rebalance Portfolio
-            </button>
           </div>
         </div>
       </div>
@@ -78,7 +51,7 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
               </svg>
             </div>
             <div>
-              <h3 className="font-medium text-amber-500">⚠️ Bear Market Warning</h3>
+              <h3 className="font-medium text-amber-500">Bear Market Warning</h3>
               <p className="mt-1 text-sm text-amber-200/80">
                 {portfolio.regimeWarning}
               </p>
@@ -87,13 +60,7 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
         </div>
       )}
 
-      {view === 'build' ? (
-        <GenerateTab onPortfolioGenerated={onPortfolioGenerated} portfolio={portfolio} />
-      ) : view === 'analyze' ? (
-        <AnalyzeTab />
-      ) : (
-        <RebalanceTab portfolio={portfolio} />
-      )}
+      {view === 'build' ? <GenerateTab onPortfolioGenerated={onPortfolioGenerated} portfolio={portfolio} /> : <AnalyzeTab />}
     </div>
   );
 }

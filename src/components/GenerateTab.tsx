@@ -3,14 +3,13 @@ import {
     PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
     BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
-import { ArrowRight, Calculator, Info, RefreshCw, Zap, ShieldCheck, TrendingUp } from 'lucide-react';
+import { ArrowRight, Calculator, Info, Zap, ShieldCheck, TrendingUp } from 'lucide-react';
 import { calculatePortfolioTransactionCosts, Portfolio } from '../services/portfolioService';
 import {
     generatePortfolioViaApi,
     getCurrentModelStatusViaApi,
     getMandateQuestionnaireViaApi,
     ModelVariant,
-    postExplainPortfolio,
     RiskAttitude,
     UserMandate,
 } from '../services/backendApi';
@@ -19,42 +18,6 @@ import { MetricCard, SectorChip } from './MetricCard';
 const COLORS = ['#D4A843', '#5B9CF6', '#52C97A', '#E05C5C', '#F59E0B', '#A78BFA'];
 
 interface Props { onPortfolioGenerated: (p: Portfolio) => void; portfolio: Portfolio | null; }
-
-function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
-    const [insight, setInsight] = useState('');
-    const [loading, setLoading] = useState(false);
-
-    const generate = async () => {
-        setLoading(true);
-        try {
-            const data = await postExplainPortfolio(portfolio);
-            setInsight(data.explanation || 'No explanation returned.');
-        } catch (error) {
-            setInsight(`Portfolio analysis is unavailable right now: ${error instanceof Error ? error.message : 'unknown backend error'}.`);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div className="card p-5" style={{ background: 'linear-gradient(135deg, rgba(14, 116, 144, 0.24), rgba(21, 94, 117, 0.1))', borderColor: 'rgba(103, 232, 249, 0.2)' }}>
-            <div className="flex items-center gap-2 mb-2">
-                <Zap className="w-4 h-4 text-teal-600" />
-                <h3 className="font-bold text-sm text-slate-50">AI Portfolio Analysis</h3>
-                <span className="text-xs text-cyan-200 bg-cyan-500/10 px-2 py-0.5 rounded-full">Powered by Groq LLM</span>
-            </div>
-            {insight ? (
-                <p className="text-sm text-slate-200 leading-relaxed mb-3 whitespace-pre-wrap">{insight}</p>
-            ) : (
-                <p className="text-sm text-slate-300 mb-3">Get an AI-powered analysis of your portfolio using ensemble signals, sector trends, and market context.</p>
-            )}
-            <button onClick={generate} disabled={loading} className="btn-primary px-4 py-2 text-xs flex items-center gap-2">
-                {loading ? <RefreshCw className="w-3 h-3 spin" /> : <Zap className="w-3 h-3" />}
-                {loading ? 'Analysing with AI...' : insight ? 'Regenerate AI Analysis' : 'Generate AI Analysis'}
-            </button>
-        </div>
-    );
-}
 
 export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     const [amount, setAmount] = useState(500000);
@@ -153,26 +116,6 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             setGenerating(false);
         }
     };
-
-    useEffect(() => {
-        const handleAction = async (e: any) => {
-            const action = e.detail;
-            if (action.name !== 'generate_portfolio') {
-                return;
-            }
-
-            const capital = action.arguments.capital || amount;
-            const riskEnum = action.arguments.risk;
-            const riskMap: Record<string, RiskAttitude> = {
-                CONSERVATIVE: 'capital_preservation',
-                MODERATE: 'balanced',
-                AGGRESSIVE: 'growth',
-            };
-            await handleGenerate(capital, riskMap[riskEnum] || mandate.risk_attitude);
-        };
-        window.addEventListener('AI_ACTION', handleAction);
-        return () => window.removeEventListener('AI_ACTION', handleAction);
-    }, [amount, mandate, activeModelVariant, modelStatusReason, onPortfolioGenerated]);
 
     const chartData = useMemo(
         () => portfolio?.allocations.map(a => ({ name: a.stock.symbol, value: a.amount })) ?? [],
@@ -325,8 +268,6 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 </div>
                             </div>
                         )}
-
-                        <AIInsightPanel portfolio={portfolio} />
 
                         <div className="card p-5">
                             <h3 className="font-bold text-sm flex items-center gap-2 mb-4">

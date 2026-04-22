@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Plus, Search, Trash2, Info, ShieldCheck, Zap, RefreshCw } from 'lucide-react';
+import { Plus, Search, Trash2, Info, ShieldCheck } from 'lucide-react';
 import { AnalysisResult } from '../services/portfolioService';
 import { analyzePortfolioViaApi } from '../services/backendApi';
 import { NSE_STOCKS, LIQUID_ASSETS, SECTOR_CORRELATIONS } from '../data/stocks';
-import { generateRebalancingAdvice } from '../services/localAdvisor';
 import { MetricCard, SectorChip } from './MetricCard';
 
 const ALL_STOCKS = [...NSE_STOCKS, ...LIQUID_ASSETS];
@@ -79,8 +78,6 @@ export function AnalyzeTab() {
     const [selectedSym, setSelectedSym] = useState('');
     const [shares, setShares] = useState(1);
     const [result, setResult] = useState<AnalysisResult | null>(null);
-    const [aiAdvice, setAiAdvice] = useState('');
-    const [loadingAI, setLoadingAI] = useState(false);
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [analysisNotice, setAnalysisNotice] = useState<{ tone: 'info'; text: string } | null>(null);
     const [holdingsText, setHoldingsText] = useState('');
@@ -97,7 +94,6 @@ export function AnalyzeTab() {
             setAnalysisNotice({ tone: 'info', text: 'Risk analysis is being computed from backend market data.' });
         } catch (error) {
             setResult(null);
-            setAiAdvice('');
             setAnalysisNotice({
                 tone: 'info',
                 text: `Portfolio analysis is syncing: ${error instanceof Error ? error.message : 'The local analysis service is initializing.'}`,
@@ -108,9 +104,10 @@ export function AnalyzeTab() {
     };
 
     const addHolding = async () => {
-        if (!selectedSym) return;
-        const nextHolding = { symbol: selectedSym, shares };
-        const existing = holdings.findIndex(h => h.symbol === selectedSym);
+        const symbol = (selectedSym || search).trim().toUpperCase();
+        if (!symbol || shares <= 0) return;
+        const nextHolding = { symbol, shares };
+        const existing = holdings.findIndex(h => h.symbol === symbol);
 
         let updated: { symbol: string; shares: number }[];
         if (existing >= 0) {
@@ -158,19 +155,6 @@ export function AnalyzeTab() {
             await refreshAnalysis(updated);
         } else {
             setResult(null);
-        }
-    };
-
-    const getAIAdvice = async () => {
-        if (!result) return;
-        setLoadingAI(true);
-        try {
-            await new Promise(resolve => setTimeout(resolve, 250));
-            setAiAdvice(generateRebalancingAdvice(holdings, result));
-        } catch {
-            setAiAdvice('Local rebalancing engine is warming up. Please retry shortly.');
-        } finally {
-            setLoadingAI(false);
         }
     };
 
@@ -240,7 +224,7 @@ export function AnalyzeTab() {
                         )}
                     </div>
 
-                    {selectedSym && (
+                    {(selectedSym || search.trim()) && (
                         <div className="flex gap-2 mb-3">
                             <div className="flex-1">
                                 <input
@@ -279,22 +263,6 @@ export function AnalyzeTab() {
                     </div>
                 </div>
 
-                {result && (
-                    <div className="card p-5">
-                        <h3 className="font-bold text-sm mb-3 flex items-center gap-2">
-                            <Zap className="w-4 h-4 text-teal-600" /> Local Rebalancing Advice
-                        </h3>
-                        {aiAdvice ? (
-                            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{aiAdvice}</p>
-                        ) : (
-                            <p className="text-xs text-slate-400 mb-3">Generate local rebalancing guidance tailored to Indian market portfolios.</p>
-                        )}
-                        <button onClick={getAIAdvice} disabled={loadingAI} className="btn-primary px-4 py-2 text-xs flex items-center gap-2 mt-3">
-                            {loadingAI ? <RefreshCw className="w-3 h-3 spin" /> : <RefreshCw className="w-3 h-3" />}
-                            {aiAdvice ? 'Refresh Advice' : 'Get Advice'}
-                        </button>
-                    </div>
-                )}
             </div>
 
             <div className="lg:col-span-8 space-y-5">
@@ -373,6 +341,17 @@ export function AnalyzeTab() {
                             ))}
                         </div>
 
+                        {result.backendNotes && result.backendNotes.length > 0 && (
+                            <div className="card p-5">
+                                <p className="section-title">Analysis Notes</p>
+                                <div className="space-y-2">
+                                    {result.backendNotes.map((note, index) => (
+                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         <div className="card p-5">
                             <p className="section-title">Sector Exposure</p>
                             <div className="h-52">
@@ -444,22 +423,6 @@ export function AnalyzeTab() {
 
                         <CorrelationMatrix sectors={uniqueSectors} />
 
-                        {result.rebalancingActions.length > 0 && (
-                            <div className="card p-5">
-                                <p className="section-title">Rebalancing Suggestions</p>
-                                <div className="space-y-2">
-                                    {result.rebalancingActions.slice(0, 5).map((a, i) => (
-                                        <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl">
-                                            <div>
-                                                <span className="font-bold text-sm text-slate-900">{a.symbol}</span>
-                                                <span className="text-xs text-slate-500 ml-2">{a.reason}</span>
-                                            </div>
-                                            <span className={`badge ${a.action === 'SELL' ? 'badge-red' : 'badge-green'}`}>{a.action}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
                     </>
                 )}
             </div>

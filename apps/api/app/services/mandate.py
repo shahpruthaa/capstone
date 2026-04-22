@@ -81,6 +81,10 @@ class MandateConfig:
     model_feature_lookback_days: int
     model_min_history_days: int
     selection_bias: dict[str, float]
+    max_position_weight: float
+    sector_cap_weight: float
+    max_positions_per_sector: int
+    min_sector_count: int
     risk_aversion: float
     candidate_count: int
     target_positions: int
@@ -96,6 +100,30 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     attitude = ATTITUDE_SETTINGS[mandate.risk_attitude]
     target_positions = mandate.preferred_num_positions
     candidate_count = max(15, target_positions * 2, int(round(target_positions * attitude["candidate_multiple"])))
+    max_position_weight = min(
+        {
+            "capital_preservation": 0.18,
+            "balanced": 0.14,
+            "growth": 0.12,
+        }[mandate.risk_attitude],
+        max(0.08, 1.35 / max(target_positions, 1)),
+    )
+    sector_cap_weight = min(
+        {
+            "capital_preservation": 0.34,
+            "balanced": 0.28,
+            "growth": 0.26,
+        }[mandate.risk_attitude],
+        max(0.22, max_position_weight * 2.0),
+    )
+    max_positions_per_sector = 2 if target_positions >= 6 else 1
+    min_sector_count = min(
+        target_positions,
+        max(
+            4,
+            6 if mandate.risk_attitude == "balanced" else 5,
+        ),
+    )
     allowed_market_caps = {"Large", "Mid", "Unknown", ""}
     if mandate.allow_small_caps:
         allowed_market_caps.add("Small")
@@ -105,6 +133,10 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
         model_feature_lookback_days=max(450, int(horizon["decision_lookback_days"]) + 120),
         model_min_history_days=253,
         selection_bias=dict(horizon["selection_bias"]),
+        max_position_weight=max_position_weight,
+        sector_cap_weight=sector_cap_weight,
+        max_positions_per_sector=max_positions_per_sector,
+        min_sector_count=min_sector_count,
         risk_aversion=attitude["risk_aversion"],
         candidate_count=candidate_count,
         target_positions=target_positions,

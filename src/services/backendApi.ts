@@ -486,6 +486,7 @@ export async function analyzePortfolioViaApi(
   try {
     const response = await fetchJson<ApiAnalyzePortfolioResponse>('/api/v1/analysis/portfolio', {
       method: 'POST',
+      timeoutMs: 120000,
       body: JSON.stringify({
         holdings: holdings.map((holding) => {
           const stock = ALL_STOCKS.find((candidate) => candidate.symbol === holding.symbol);
@@ -496,6 +497,7 @@ export async function analyzePortfolioViaApi(
           };
         }),
         target_risk_mode: toApiRiskMode(targetRisk),
+        model_variant: 'RULES',
       }),
     });
 
@@ -698,58 +700,6 @@ export async function getMarketDataSummaryViaApi(): Promise<MarketDataSummary> {
   };
 }
 
-export type ExplainChatHistoryItem = { role: 'assistant' | 'user'; content: string };
-
-export async function fetchPlatformContext(): Promise<Record<string, unknown>> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/explain/context`);
-    if (!response.ok) return {};
-    return await response.json();
-  } catch {
-    return {};
-  }
-}
-
-export async function postExplainChat(message: string, history: ExplainChatHistoryItem[], portfolioContext: Record<string, unknown> = {}): Promise<{ response: string; action?: { name: string; arguments: any } }> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/explain/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history, portfolio_context: portfolioContext }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${response.status}: ${body}`);
-  }
-  return response.json() as Promise<{ response: string }>;
-}
-
-export async function postExplainPortfolio(portfolio: Portfolio): Promise<{ explanation: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/explain/portfolio`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      allocations: portfolio.allocations.map((a) => ({
-        symbol: a.stock.symbol,
-        sector: a.stock.sector,
-        weight: a.weight,
-        rationale: a.rationale ?? '',
-        top_model_drivers: a.drivers ?? [],
-        ml_pred_21d_return: a.ml_pred_21d_return ?? null,
-        ml_pred_annual_return: a.ml_pred_annual_return ?? null,
-        death_risk: a.death_risk ?? null,
-        lstm_signal: a.lstm_signal ?? null,
-      })),
-      risk_mode: toApiRiskModeFromMandate(portfolio.mandate as UserMandate | undefined),
-      total_amount: portfolio.totalInvested || 500000,
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${response.status}: ${body}`);
-  }
-  return response.json() as Promise<{ explanation: string }>;
-}
-
 function buildStockFromBackend(allocation: ApiGeneratePortfolioResponse['allocations'][number]): Stock {
   const localStock = ALL_STOCKS.find((candidate) => candidate.symbol === allocation.symbol);
   if (localStock) {
@@ -775,68 +725,4 @@ function buildStockFromBackend(allocation: ApiGeneratePortfolioResponse['allocat
     low52w: allocation.latest_price || 1,
     momentum6M: 0,
   };
-}
-
-export async function getMarketEventsAnalysis(): Promise<{ analysis: string; generated_at: string }> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/explain/market-events`);
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${response.status}: ${body}`);
-  }
-  return response.json() as Promise<{ analysis: string; generated_at: string }>;
-}
-
-export async function postPortfolioRebalancing(portfolio: Portfolio): Promise<{
-  overall_assessment: string;
-  risk_adjustment: string;
-  timeline: string;
-  explanation: string;
-  recommendations: Array<{
-    action: string;
-    symbol: string;
-    current_weight: number;
-    target_weight: number;
-    rationale: string;
-    urgency: string;
-    expected_impact: string;
-  }>;
-}> {
-  const response = await fetch(`${API_BASE_URL}/api/v1/explain/portfolio/rebalance`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      allocations: portfolio.allocations.map((a) => ({
-        symbol: a.stock.symbol,
-        sector: a.stock.sector,
-        weight: a.weight,
-        rationale: a.rationale ?? '',
-        top_model_drivers: a.drivers ?? [],
-        ml_pred_21d_return: a.ml_pred_21d_return ?? null,
-        ml_pred_annual_return: a.ml_pred_annual_return ?? null,
-        death_risk: a.death_risk ?? null,
-        lstm_signal: a.lstm_signal ?? null,
-      })),
-      risk_mode: toApiRiskModeFromMandate(portfolio.mandate as UserMandate | undefined),
-      total_amount: portfolio.totalInvested || 500000,
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${response.status}: ${body}`);
-  }
-  return response.json() as Promise<{
-    overall_assessment: string;
-    risk_adjustment: string;
-    timeline: string;
-    explanation: string;
-    recommendations: Array<{
-      action: string;
-      symbol: string;
-      current_weight: number;
-      target_weight: number;
-      rationale: string;
-      urgency: string;
-      expected_impact: string;
-    }>;
-  }>;
 }

@@ -105,8 +105,8 @@ Why the specific values are used
 - That choice avoids coupling core demo availability to a single external key or network dependency.
 
 Evidence in the directory
-- `app/api/router.py` keeps `explain.py` separate from the core quant routes.
-- The AI chat widget in the frontend is connected through the shared backend adapter, not by ad hoc browser-side fetches.
+- The previous explain/chat surface was kept separate from the core quant routes, which made its removal low-risk.
+- The current frontend no longer includes the AI chat widget.
 
 Research citations
 - Bender, E. M., Gebru, T., McMillan-Major, A., & Shmitchell, S. (2021). *On the Dangers of Stochastic Parrots: Can Language Models Be Too Big?* FAccT '21. Supports keeping LLM output as an assistive layer rather than a primary decision engine.
@@ -166,7 +166,7 @@ Why the specific values are used
 - The current tab set and route set are small enough that one adapter is simpler and more reliable than multiple divergent request implementations.
 
 Evidence in the directory
-- `backendApi.ts` maps the backend DTOs into frontend models used by Generate, Analyze, Backtest, Compare, and AI Chat.
+- `backendApi.ts` maps the backend DTOs into frontend models used by Generate, Analyze, Backtest, and Compare.
 - The current smoke validation confirms those tabs all work against the same backend contract.
 
 Research citations
@@ -187,7 +187,7 @@ Why the specific values are used
 
 Evidence in the directory
 - The smoke runner and screenshots live under `scripts/` and `tmp/ui-smoke/`.
-- The final smoke run in this snapshot marked Generate, Analyze, Backtest, Compare, and AI Chat as green.
+- The final smoke run in this snapshot marked Generate, Analyze, Backtest, and Compare as green.
 
 Research citations
 - Rothermel, G., & Harrold, M. J. (1997). *A Safe, Efficient Regression Test Selection Technique*. ACM TOSEM, 6(2), 173-210. Supports lightweight recurring regression checks.
@@ -254,7 +254,7 @@ Current proof from this directory snapshot
 - `GET /healthz` returned `200`.
 - `GET /api/v1/models/current` returned runtime metadata successfully.
 - `OPTIONS` preflight from `http://127.0.0.1:3001` returned `200` with the expected `Access-Control-Allow-Origin` header.
-- The final smoke pass marked Generate, Analyze, Backtest, Compare, and AI Chat as green.
+- The final smoke pass marked Generate, Analyze, Backtest, and Compare as green.
 
 Implementation caveats
 - These proofs support the current design and chosen constants, but they do not claim live-market outperformance.
