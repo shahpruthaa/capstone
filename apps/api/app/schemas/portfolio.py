@@ -65,8 +65,12 @@ class UserMandate(BaseModel):
 
 class AllocationModel(BaseModel):
     symbol: str
+    name: str
     sector: str
+    latest_price: float = Field(..., gt=0)
     weight: float = Field(..., ge=0, le=100)
+    recommended_shares: int = Field(default=0, ge=0)
+    recommended_amount: float = Field(default=0.0, ge=0)
     rationale: str
     top_model_drivers: list[str] = Field(default_factory=list)
     ml_pred_21d_return: float | None = None
@@ -147,6 +151,11 @@ class AnalyzePortfolioResponse(BaseModel):
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
     model_variant_applied: ModelVariant
+    model_source: Literal["RULES", "LIGHTGBM"] = "RULES"
+    active_mode: str = "rules_only"
+    model_version: str = "rules"
+    artifact_classification: str = "missing"
+    prediction_horizon_days: int = 21
     ml_predictions: dict[str, float] = Field(default_factory=dict)
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     holding_period_days_recommended: int = 21

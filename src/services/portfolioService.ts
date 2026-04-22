@@ -23,6 +23,9 @@ export interface Allocation {
 export interface Portfolio {
   allocations: Allocation[];
   totalInvested: number;
+  requestedCapital?: number;
+  cashRemaining?: number;
+  investmentUtilizationPct?: number;
   riskProfile: RiskProfile;
   mandate?: {
     investment_horizon_weeks: string;
@@ -113,6 +116,29 @@ export function calculateTransactionCosts(amount: number, isBuy: boolean = true)
   const slippage = amount * SLIPPAGE_RATE;
   const total = brokerage + stt + stampDuty + exchangeTxn + gst + sebi + slippage;
   return { brokerage, stt, stampDuty, exchangeTxn, gst, sebi, slippage, total };
+}
+
+export function calculatePortfolioTransactionCosts(
+  allocations: Array<{ amount: number }>,
+  isBuy: boolean = true,
+): {
+  brokerage: number; stt: number; stampDuty: number; exchangeTxn: number; gst: number; sebi: number; slippage: number; total: number;
+} {
+  return allocations.reduce(
+    (totals, allocation) => {
+      const costs = calculateTransactionCosts(allocation.amount, isBuy);
+      totals.brokerage += costs.brokerage;
+      totals.stt += costs.stt;
+      totals.stampDuty += costs.stampDuty;
+      totals.exchangeTxn += costs.exchangeTxn;
+      totals.gst += costs.gst;
+      totals.sebi += costs.sebi;
+      totals.slippage += costs.slippage;
+      totals.total += costs.total;
+      return totals;
+    },
+    { brokerage: 0, stt: 0, stampDuty: 0, exchangeTxn: 0, gst: 0, sebi: 0, slippage: 0, total: 0 },
+  );
 }
 
 // ─── Portfolio Sector Correlation Score ──────────────────────────────────────

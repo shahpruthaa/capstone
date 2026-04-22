@@ -1,10 +1,11 @@
-import { LIQUID_ASSETS, NSE_STOCKS } from '../data/stocks';
-import { ComparisonResult, BenchmarkStrategy } from './benchmarkService';
+import { LIQUID_ASSETS, NSE_STOCKS, Stock } from '../data/stocks';
+import { ComparisonResult, BenchmarkStrategy, getComparisonResult } from './benchmarkService';
 import { BacktestConfig, BacktestResult } from './backtestEngine';
 import {
   AnalysisResult,
   Portfolio,
   RiskProfile,
+  analyzePortfolio,
 } from './portfolioService';
 
 const viteEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
@@ -130,8 +131,12 @@ interface ApiGeneratePortfolioResponse {
   expected_holding_period_days: number;
   allocations: {
     symbol: string;
+    name: string;
     sector: string;
+    latest_price: number;
     weight: number;
+    recommended_shares: number;
+    recommended_amount: number;
     rationale: string;
     top_model_drivers?: string[];
     ml_pred_21d_return?: number | null;
@@ -162,8 +167,15 @@ interface ApiAnalyzePortfolioResponse {
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
   model_variant_applied: ModelVariant;
+  model_source?: 'RULES' | 'LIGHTGBM';
+  active_mode?: string;
+  model_version?: string;
+  artifact_classification?: string;
+  prediction_horizon_days?: number;
   ml_predictions?: Record<string, number>;
   top_model_drivers_by_symbol?: Record<string, string[]>;
+  holding_period_days_recommended?: number;
+  holding_period_reason?: string;
   notes: string[];
 }
 
@@ -422,15 +434,18 @@ export async function generatePortfolioViaApi(
 
   const allocations = response.allocations
     .map((allocation) => {
-      const stock = ALL_STOCKS.find((candidate) => candidate.symbol === allocation.symbol);
-      if (!stock) return null;
-      const stockAmount = (capitalAmount * allocation.weight) / 100;
-      const shares = Math.max(1, Math.floor(stockAmount / stock.price));
+      const stock = buildStockFromBackend(allocation);
+      const backendShares = Math.max(0, Math.floor(allocation.recommended_shares ?? 0));
+      const backendAmount = Number.isFinite(allocation.recommended_amount) ? allocation.recommended_amount : backendShares * stock.price;
+      const fallbackTargetAmount = (capitalAmount * allocation.weight) / 100;
+      const fallbackShares = Math.max(0, Math.floor(fallbackTargetAmount / stock.price));
+      const shares = backendShares > 0 ? backendShares : fallbackShares;
+      const amount = backendAmount > 0 ? backendAmount : shares * stock.price;
       return {
         stock,
         weight: allocation.weight,
         shares,
-        amount: shares * stock.price,
+        amount,
         drivers: allocation.top_model_drivers ?? [],
         rationale: allocation.rationale,
         ml_pred_21d_return: allocation.ml_pred_21d_return ?? null,
@@ -443,15 +458,18 @@ export async function generatePortfolioViaApi(
         news_impact: allocation.news_impact,
         news_explanation: allocation.news_explanation,
       };
-    })
-    .filter(Boolean) as Portfolio['allocations'];
+    }) as Portfolio['allocations'];
 
   const totalInvested = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
   const sectorCount = new Set(allocations.map((allocation) => allocation.stock.sector)).size;
+  const cashRemaining = Math.max(0, capitalAmount - totalInvested);
 
   return {
     allocations,
     totalInvested,
+    requestedCapital: capitalAmount,
+    cashRemaining,
+    investmentUtilizationPct: capitalAmount > 0 ? (totalInvested / capitalAmount) * 100 : 0,
     riskProfile: fromRiskAttitude(response.mandate.risk_attitude),
     mandate: response.mandate,
     backendNotes: [...localNotes, ...(response.notes ?? [])],
@@ -489,46 +507,73 @@ export async function analyzePortfolioViaApi(
   holdings: { symbol: string; shares: number }[],
   targetRisk: RiskProfile = 'LOW_RISK',
 ): Promise<AnalysisResult> {
-  const response = await fetchJson<ApiAnalyzePortfolioResponse>('/api/v1/analysis/portfolio', {
-    method: 'POST',
-    body: JSON.stringify({
-      holdings: holdings.map((holding) => {
-        const stock = ALL_STOCKS.find((candidate) => candidate.symbol === holding.symbol);
-        return {
-          symbol: holding.symbol,
-          quantity: holding.shares,
-          average_price: stock?.price,
-        };
+  try {
+    const response = await fetchJson<ApiAnalyzePortfolioResponse>('/api/v1/analysis/portfolio', {
+      method: 'POST',
+      body: JSON.stringify({
+        holdings: holdings.map((holding) => {
+          const stock = ALL_STOCKS.find((candidate) => candidate.symbol === holding.symbol);
+          return {
+            symbol: holding.symbol,
+            quantity: holding.shares,
+            average_price: stock?.price,
+          };
+        }),
+        target_risk_mode: toApiRiskMode(targetRisk),
       }),
-      target_risk_mode: toApiRiskMode(targetRisk),
-    }),
-  });
+    });
 
-  return {
-    riskScore: response.current_beta,
-    diversificationScore: response.diversification_score,
-    suggestions: response.notes,
-    rebalancingActions: response.actions.map((action) => ({
-      symbol: action.symbol,
-      action: action.action,
-      targetWeight: action.target_weight,
-      currentWeight: action.current_weight,
-      reason: action.reason,
-    })),
-    sectorWeights: response.sector_weights,
-    factorExposures: response.factor_exposures ?? {},
-    correlationWarnings:
-      response.correlation_risk === 'HIGH'
-        ? ['High empirical correlation risk detected by the backend analyzer.']
-        : response.correlation_risk === 'MODERATE'
-          ? ['Moderate cross-sector correlation risk detected.']
-          : [],
-    totalValue: response.portfolio_value,
-    backendNotes: response.notes,
-    modelVariantApplied: response.model_variant_applied,
-    mlPredictions: response.ml_predictions ?? {},
-    topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
-  };
+    return {
+      riskScore: response.current_beta,
+      diversificationScore: response.diversification_score,
+      suggestions: response.notes,
+      rebalancingActions: response.actions.map((action) => ({
+        symbol: action.symbol,
+        action: action.action,
+        targetWeight: action.target_weight,
+        currentWeight: action.current_weight,
+        reason: action.reason,
+      })),
+      sectorWeights: response.sector_weights,
+      factorExposures: response.factor_exposures ?? {},
+      correlationWarnings:
+        response.correlation_risk === 'HIGH'
+          ? ['High empirical correlation risk detected by the backend analyzer.']
+          : response.correlation_risk === 'MODERATE'
+            ? ['Moderate cross-sector correlation risk detected.']
+            : [],
+      totalValue: response.portfolio_value,
+      backendNotes: response.notes,
+      modelVariantApplied: response.model_variant_applied,
+      modelSource: response.model_source ?? 'RULES',
+      activeMode: response.active_mode ?? 'rules_only',
+      modelVersion: response.model_version ?? 'rules',
+      artifactClassification: response.artifact_classification ?? 'missing',
+      holdingPeriodDaysRecommended: response.holding_period_days_recommended,
+      predictionHorizonDays: response.prediction_horizon_days,
+      holdingPeriodReason: response.holding_period_reason,
+      mlPredictions: response.ml_predictions ?? {},
+      topModelDriversBySymbol: response.top_model_drivers_by_symbol ?? {},
+    };
+  } catch (error) {
+    const fallback = analyzePortfolio(holdings);
+    return {
+      ...fallback,
+      backendNotes: [
+        `Using local holdings analyzer because the backend analysis request failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
+      ],
+      modelVariantApplied: 'RULES',
+      modelSource: 'RULES',
+      activeMode: 'local_fallback',
+      modelVersion: 'local-rules',
+      artifactClassification: 'fallback',
+      holdingPeriodDaysRecommended: 21,
+      predictionHorizonDays: 21,
+      holdingPeriodReason: 'Fallback analysis uses local price metadata and should be treated as an approximate review.',
+      mlPredictions: {},
+      topModelDriversBySymbol: {},
+    };
+  }
 }
 
 export async function runBacktestViaApi(
@@ -597,37 +642,48 @@ export async function runBacktestViaApi(
 }
 
 export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> {
-  const response = await fetchJson<ApiBenchmarkResponse>('/api/v1/benchmarks/summary', {
-    timeoutMs: 120000,
-  });
-  const strategies: BenchmarkStrategy[] = response.strategies.map((strategy) => ({
-    name: strategy.name,
-    description: strategy.description,
-    constructionMethod: strategy.construction_method,
-    isProxy: strategy.is_proxy,
-    sourceWindow: strategy.source_window,
-    constituentMethod: strategy.constituent_method,
-    limitations: strategy.limitations ?? [],
-    annualReturn: strategy.annual_return_pct,
-    volatility: strategy.volatility_pct,
-    maxDrawdown: strategy.max_drawdown_pct,
-    sharpe: strategy.sharpe_ratio,
-    sortino: strategy.sortino_ratio,
-    cagr5Y: strategy.cagr_5y_pct,
-    expenseRatio: strategy.expense_ratio_pct,
-    type: strategy.category,
-    sourceType: strategy.source_type,
-    sourceProvider: strategy.source_provider,
-    relativeAccuracyScorePct: strategy.relative_accuracy_score_pct,
-  }));
+  try {
+    const response = await fetchJson<ApiBenchmarkResponse>('/api/v1/benchmarks/summary', {
+      timeoutMs: 120000,
+    });
+    const strategies: BenchmarkStrategy[] = response.strategies.map((strategy) => ({
+      name: strategy.name,
+      description: strategy.description,
+      constructionMethod: strategy.construction_method,
+      isProxy: strategy.is_proxy,
+      sourceWindow: strategy.source_window,
+      constituentMethod: strategy.constituent_method,
+      limitations: strategy.limitations ?? [],
+      annualReturn: strategy.annual_return_pct,
+      volatility: strategy.volatility_pct,
+      maxDrawdown: strategy.max_drawdown_pct,
+      sharpe: strategy.sharpe_ratio,
+      sortino: strategy.sortino_ratio,
+      cagr5Y: strategy.cagr_5y_pct,
+      expenseRatio: strategy.expense_ratio_pct,
+      type: strategy.category,
+      sourceType: strategy.source_type,
+      sourceProvider: strategy.source_provider,
+      relativeAccuracyScorePct: strategy.relative_accuracy_score_pct,
+    }));
 
-  const projectedGrowth = response.projected_growth.map((row) => ({
-    year: row.year,
-    ...row.values,
-  }));
+    const projectedGrowth = response.projected_growth.map((row) => ({
+      year: row.year,
+      ...row.values,
+    }));
 
-  const winner = strategies.reduce((best, current) => (current.sharpe > best.sharpe ? current : best)).name;
-  return { strategies, projectedGrowth, winner, notes: response.notes ?? [] };
+    const winner = strategies.reduce((best, current) => (current.sharpe > best.sharpe ? current : best)).name;
+    return { strategies, projectedGrowth, winner, notes: response.notes ?? [] };
+  } catch (error) {
+    const fallback = getComparisonResult(500000);
+    return {
+      ...fallback,
+      notes: [
+        ...(fallback.notes ?? []),
+        `Using local comparison fallback because the benchmark API failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
+      ],
+    };
+  }
 }
 
 export async function getObservabilityKpisViaApi(): Promise<ApiObservabilityKpiResponse> {
@@ -716,6 +772,33 @@ export async function postExplainPortfolio(portfolio: Portfolio): Promise<{ expl
     throw new Error(`API ${response.status}: ${body}`);
   }
   return response.json() as Promise<{ explanation: string }>;
+}
+
+function buildStockFromBackend(allocation: ApiGeneratePortfolioResponse['allocations'][number]): Stock {
+  const localStock = ALL_STOCKS.find((candidate) => candidate.symbol === allocation.symbol);
+  if (localStock) {
+    return {
+      ...localStock,
+      name: allocation.name || localStock.name,
+      sector: allocation.sector || localStock.sector,
+      price: allocation.latest_price || localStock.price,
+    };
+  }
+
+  return {
+    symbol: allocation.symbol,
+    name: allocation.name || allocation.symbol,
+    sector: allocation.sector || 'Unknown',
+    price: allocation.latest_price || 1,
+    beta: 1,
+    dividendYield: 0,
+    marketCap: 'Large',
+    pe: 0,
+    pbv: 0,
+    high52w: allocation.latest_price || 1,
+    low52w: allocation.latest_price || 1,
+    momentum6M: 0,
+  };
 }
 
 export async function getMarketEventsAnalysis(): Promise<{ analysis: string; generated_at: string }> {

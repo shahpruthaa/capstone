@@ -4,7 +4,7 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import { ArrowRight, Calculator, Info, RefreshCw, Zap, ShieldCheck, TrendingUp } from 'lucide-react';
-import { calculateTransactionCosts, Portfolio } from '../services/portfolioService';
+import { calculatePortfolioTransactionCosts, Portfolio } from '../services/portfolioService';
 import {
     generatePortfolioViaApi,
     getCurrentModelStatusViaApi,
@@ -14,6 +14,7 @@ import {
     RiskAttitude,
     UserMandate,
 } from '../services/backendApi';
+import { generatePortfolioInsight } from '../services/localAdvisor';
 import { MetricCard, SectorChip } from './MetricCard';
 
 const COLORS = ['#14b8a6', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316', '#10b981', '#6366f1', '#84cc16', '#f43f5e', '#0ea5e9', '#a855f7'];
@@ -28,7 +29,7 @@ function AIInsightPanel({ portfolio }: { portfolio: Portfolio }) {
             const data = await postExplainPortfolio(portfolio);
             setInsight(data.explanation || 'No explanation returned.');
         } catch {
-            setInsight('AI analysis temporarily unavailable.');
+            setInsight(generatePortfolioInsight(portfolio));
         } finally {
             setLoading(false);
         }
@@ -194,7 +195,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     }, [portfolio]);
 
     const costs = useMemo(() =>
-        portfolio ? calculateTransactionCosts(portfolio.totalInvested, true) : null, [portfolio]);
+        portfolio ? calculatePortfolioTransactionCosts(portfolio.allocations, true) : null, [portfolio]);
 
     const riskOpts: { id: RiskAttitude; label: string; icon: React.ReactNode; desc: string }[] = [
         { id: 'capital_preservation', label: 'Preserve', icon: <ShieldCheck className="w-5 h-5" />, desc: 'Strict downside control' },
@@ -471,7 +472,16 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                 ) : (
                     <>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            <MetricCard label="Total Invested" value={`Rs ${(portfolio.totalInvested / 100000).toFixed(2)}L`} sub="After rounding to whole shares" color="slate" />
+                            <MetricCard
+                                label="Total Invested"
+                                value={`Rs ${(portfolio.totalInvested / 100000).toFixed(2)}L`}
+                                sub={
+                                    portfolio.cashRemaining && portfolio.cashRemaining > 0
+                                        ? `Cash left: Rs ${portfolio.cashRemaining.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+                                        : 'Whole-share deployment'
+                                }
+                                color="slate"
+                            />
                             <MetricCard label="Portfolio Beta" value={portfolio.metrics.avgBeta.toFixed(2)} sub="vs Nifty 50 = 1.00" color={portfolio.metrics.avgBeta > 1.3 ? 'red' : portfolio.metrics.avgBeta < 0.8 ? 'green' : 'blue'} trend={portfolio.metrics.avgBeta > 1.3 ? 'up' : 'down'} />
                             <MetricCard label="Sharpe Ratio" value={portfolio.metrics.sharpeRatio.toFixed(2)} sub="Risk-free rate: 7% pa" color={portfolio.metrics.sharpeRatio > 1.2 ? 'green' : 'amber'} trend="up" />
                             <MetricCard label="Exp. Annual Return" value={`${portfolio.metrics.estimatedAnnualReturn.toFixed(1)}%`} sub={`Volatility: ${portfolio.metrics.estimatedVolatility.toFixed(1)}%`} color="green" trend="up" />

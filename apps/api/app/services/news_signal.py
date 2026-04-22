@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from html import unescape
 from statistics import mean
 from typing import Iterable
+from xml.etree import ElementTree as ET
+
+import httpx
 
 from app.schemas.portfolio import UserMandate
 from app.services.mandate import normalize_sector_code
@@ -74,6 +79,15 @@ SYMBOL_REGION_OVERRIDES = {
     "COFORGE": {"US", "Europe", "India"},
 }
 
+LIVE_NEWS_FEEDS = [
+    "https://news.google.com/rss/search?q=NSE%20India%20stocks%20when%3A7d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    "https://news.google.com/rss/search?q=RBI%20Indian%20markets%20when%3A7d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+    "https://news.google.com/rss/search?q=crude%20oil%20India%20markets%20when%3A7d&hl=en-IN&gl=IN&ceid=IN%3Aen",
+]
+NEWS_CACHE_TTL_SECONDS = 300
+_news_cache_articles: list["NewsArticle"] = []
+_news_cache_generated_at: datetime | None = None
+
 
 @dataclass(frozen=True)
 class NewsArticle:
@@ -117,9 +131,21 @@ class MarketNewsContext:
 
 
 def fetch_recent_news() -> list[NewsArticle]:
-    # TODO: Replace this deterministic fallback feed with a live NSE/news provider.
+    global _news_cache_articles, _news_cache_generated_at
+
+    if _news_cache_generated_at is not None:
+        cache_age = (datetime.now(timezone.utc) - _news_cache_generated_at).total_seconds()
+        if cache_age < NEWS_CACHE_TTL_SECONDS and _news_cache_articles:
+            return _news_cache_articles
+
+    live_articles = fetch_live_news()
+    if live_articles:
+        _news_cache_articles = live_articles
+        _news_cache_generated_at = datetime.now(timezone.utc)
+        return live_articles
+
     now = datetime.now(timezone.utc)
-    return [
+    fallback_articles = [
         NewsArticle(
             headline="Middle East tensions keep crude elevated; Indian refiners watch margins",
             summary="Persistent conflict in the Middle East is keeping crude prices firm and raising input-cost pressure for downstream oil marketing companies in India.",
@@ -151,6 +177,86 @@ def fetch_recent_news() -> list[NewsArticle]:
             source="LocalFallback",
         ),
     ]
+    _news_cache_articles = fallback_articles
+    _news_cache_generated_at = now
+    return fallback_articles
+
+
+def fetch_live_news() -> list[NewsArticle]:
+    seen: set[str] = set()
+    collected: list[NewsArticle] = []
+
+    try:
+        with httpx.Client(follow_redirects=True, timeout=8.0) as client:
+            for feed_url in LIVE_NEWS_FEEDS:
+                response = client.get(feed_url, headers={"User-Agent": "NSE-Atlas/1.0"})
+                if response.status_code != 200:
+                    continue
+                collected.extend(parse_rss_feed(response.text, seen))
+                if len(collected) >= 18:
+                    break
+    except Exception:
+        return []
+
+    collected.sort(key=lambda article: article.published_at, reverse=True)
+    return collected[:15]
+
+
+def parse_rss_feed(xml_text: str, seen: set[str]) -> list[NewsArticle]:
+    articles: list[NewsArticle] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return articles
+
+    for item in root.findall(".//item"):
+        title = clean_news_text(item.findtext("title", default=""))
+        link = item.findtext("link")
+        description = clean_news_text(item.findtext("description", default=""))
+        pub_date_raw = item.findtext("pubDate")
+        source = clean_news_text(item.findtext("source", default=""))
+        if " - " in title and not source:
+            title, source = [part.strip() for part in title.rsplit(" - ", 1)]
+        if not source:
+            source = "LiveFeed"
+
+        if not title:
+            continue
+        key = title.lower()
+        if key in seen:
+            continue
+
+        published_at = parse_rss_datetime(pub_date_raw)
+        summary = description or title
+        articles.append(
+            NewsArticle(
+                headline=title,
+                summary=summary,
+                published_at=published_at,
+                source=source,
+                url=link,
+            )
+        )
+        seen.add(key)
+
+    return articles
+
+
+def parse_rss_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return datetime.now(timezone.utc)
+
+
+def clean_news_text(value: str) -> str:
+    text = unescape(value or "").replace("<![CDATA[", "").replace("]]>", "")
+    return " ".join(text.split())
 
 
 def extract_article_semantics(article: NewsArticle) -> ArticleSemantics:

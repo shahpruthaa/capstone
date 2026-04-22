@@ -30,6 +30,34 @@ NSE_SECTOR_CODES = [
     "Tourism",
 ]
 
+SECTOR_ALIASES = {
+    "automobile": "Auto",
+    "automobiles": "Auto",
+    "autos": "Auto",
+    "banks": "Banking",
+    "bank": "Banking",
+    "financial": "Finance",
+    "financials": "Finance",
+    "nbfc": "Finance",
+    "consumer staples": "FMCG",
+    "oil": "Energy",
+    "power": "Energy",
+    "utilities": "Energy",
+    "healthcare": "Pharma",
+    "health care": "Pharma",
+    "realestate": "Real Estate",
+    "real-estate": "Real Estate",
+    "property": "Real Estate",
+    "technology": "IT",
+    "tech": "IT",
+    "internet": "Tech/Internet",
+    "ecommerce": "Tech/Internet",
+    "e-commerce": "Tech/Internet",
+    "capital goods": "Infra",
+    "infrastructure": "Infra",
+    "telecommunications": "Telecom",
+}
+
 HORIZON_SETTINGS = {
     "2-4": {"lookback_days": 84, "holding_period_days": 21},
     "4-8": {"lookback_days": 168, "holding_period_days": 42},
@@ -91,8 +119,18 @@ class MandateConfig:
 
 def normalize_sector_code(value: str) -> str:
     normalized = value.strip().lower()
+    if not normalized:
+        return ""
+    compact = normalized.replace("&", "and").replace("/", "").replace("-", "").replace(" ", "")
+    alias = SECTOR_ALIASES.get(normalized) or SECTOR_ALIASES.get(compact)
+    if alias:
+        return alias
     for sector in NSE_SECTOR_CODES:
-        if sector.lower() == normalized:
+        sector_normalized = sector.lower()
+        sector_compact = sector_normalized.replace("/", "").replace("-", "").replace(" ", "")
+        if sector_normalized == normalized or sector_compact == compact:
+            return sector
+        if normalized in sector_normalized or sector_normalized in normalized:
             return sector
     return value.strip()
 
@@ -115,8 +153,12 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     if mandate.allow_small_caps:
         allowed_market_caps.add("Small")
 
-    included_sectors = {normalize_sector_code(value) for value in mandate.sector_inclusions}
-    excluded_sectors = {normalize_sector_code(value) for value in mandate.sector_exclusions}
+    included_sectors = {normalize_sector_code(value) for value in mandate.sector_inclusions if normalize_sector_code(value)}
+    excluded_sectors = {normalize_sector_code(value) for value in mandate.sector_exclusions if normalize_sector_code(value)}
+
+    overlap = included_sectors.intersection(excluded_sectors)
+    if overlap:
+        excluded_sectors = {sector for sector in excluded_sectors if sector not in overlap}
 
     return MandateConfig(
         lookback_days=horizon["lookback_days"],

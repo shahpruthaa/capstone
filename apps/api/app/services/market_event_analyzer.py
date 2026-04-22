@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import logging
-from typing import Any
+
 import httpx
+
 from app.core.config import settings
 from app.services.news_signal import build_market_news_context
 
@@ -27,19 +29,18 @@ Provide a comprehensive analysis covering:
 
 Be specific about which stocks/sectors are most affected and provide actionable insights for portfolio positioning."""
 
+
 def analyze_market_events() -> str:
     """Generate comprehensive market event analysis using GenAI."""
+    news_context = build_market_news_context()
     if not settings.groq_api_key:
-        return "Market event analysis unavailable — GenAI service not configured."
+        return build_fallback_market_event_analysis(news_context)
 
     try:
-        # Get current market context
-        news_context = build_market_news_context()
-
-        # Format news articles for analysis
         news_articles = []
-        for article in news_context.articles[:8]:  # Limit to most recent/impactful
-            news_articles.append(f"""
+        for article in news_context.articles[:8]:
+            news_articles.append(
+                f"""
 Article: {article.headline}
 Source: {article.source}
 Regions: {', '.join(article.involved_regions)}
@@ -47,17 +48,13 @@ Sectors: {', '.join(article.affected_sectors)}
 Sentiment: {article.sentiment_score:+.2f}
 Impact: {article.impact_score:.1f}/10
 Summary: {article.explanation}
-""")
+"""
+            )
 
-        # Build market regime context
         regime_info = f"Overall Market Sentiment: {news_context.overall_market_sentiment:+.2f}"
-
-        # Format sector sentiment
-        sector_sentiment = "\n".join([
-            f"- {sector}: {sentiment:+.2f}"
-            for sector, sentiment in news_context.sector_sentiment.items()
-        ])
-
+        sector_sentiment = "\n".join(
+            [f"- {sector}: {sentiment:+.2f}" for sector, sentiment in news_context.sector_sentiment.items()]
+        )
         market_context = f"""
 Overall Market Sentiment: {news_context.overall_market_sentiment:+.2f}
 Sector Sentiment Breakdown:
@@ -69,7 +66,7 @@ Top Event Summary: {news_context.top_event_summary}
         prompt = MARKET_EVENT_ANALYSIS_PROMPT.format(
             market_context=market_context,
             news_articles="\n".join(news_articles),
-            regime_info=regime_info
+            regime_info=regime_info,
         )
 
         response = httpx.post(
@@ -89,10 +86,23 @@ Top Event Summary: {news_context.top_event_summary}
 
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"].strip()
-        else:
-            logger.error(f"Market event analysis failed: {response.status_code}")
-            return "Market event analysis temporarily unavailable."
 
-    except Exception as e:
-        logger.error(f"Market event analysis error: {e}")
-        return "Market event analysis temporarily unavailable."
+        logger.error("Market event analysis failed: %s", response.status_code)
+        return build_fallback_market_event_analysis(news_context)
+    except Exception as error:
+        logger.error("Market event analysis error: %s", error)
+        return build_fallback_market_event_analysis(news_context)
+
+
+def build_fallback_market_event_analysis(news_context) -> str:
+    strongest_sector = max(news_context.sector_sentiment.items(), key=lambda item: item[1], default=("Index", 0.0))
+    weakest_sector = min(news_context.sector_sentiment.items(), key=lambda item: item[1], default=("Index", 0.0))
+    market_tone = "supportive" if news_context.overall_market_sentiment >= 0 else "fragile"
+
+    return (
+        f"Market tone is currently {market_tone}, with aggregate news sentiment at {news_context.overall_market_sentiment:+.2f}. "
+        f"The strongest sector impulse is in {strongest_sector[0]} ({strongest_sector[1]:+.2f}), while {weakest_sector[0]} is the weakest pocket ({weakest_sector[1]:+.2f}).\n\n"
+        f"Top event: {news_context.top_event_summary}\n\n"
+        "Use the strongest sectors for idea generation, keep tighter stops in the weakest sectors, and refresh this view as new headlines arrive. "
+        "This summary is generated from the news-semantics layer when the GenAI explainer is unavailable."
+    )

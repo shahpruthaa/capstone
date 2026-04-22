@@ -2,6 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 from app.db.session import get_db
 from app.services.market_event_analyzer import analyze_market_events
 from app.services.portfolio_rebalancing import analyze_portfolio_rebalancing, RebalancingAnalysis
@@ -309,7 +310,7 @@ async def explain_portfolio_endpoint(req: PortfolioExplainRequest) -> dict:
 async def analyze_market_events_endpoint() -> dict:
     """Analyze current market events and news for investment implications."""
     analysis = analyze_market_events()
-    return {"analysis": analysis, "generated_at": "2024-01-01T00:00:00Z"}
+    return {"analysis": analysis, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 @router.post("/portfolio/rebalance")
 async def rebalance_portfolio_endpoint(

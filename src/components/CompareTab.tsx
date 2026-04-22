@@ -37,7 +37,7 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
                     {s.sourceType === 'THIRD_PARTY' ? ' (3rd-party)' : ' (local proxy)'}
                 </p>
                 <p className="text-[11px] text-slate-500">
-                    <span className="font-semibold text-slate-700">Relative Accuracy:</span> {(s.relativeAccuracyScorePct || 0).toFixed(1)}%
+                    <span className="font-semibold text-slate-700">Benchmark Beat Rate:</span> {(s.relativeAccuracyScorePct || 0).toFixed(1)}%
                 </p>
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1">
@@ -157,7 +157,7 @@ export function CompareTab() {
                     </div>
                 </div>
                 <p className="mt-3 text-xs text-slate-500">
-                    Disclaimer: This comparison view is for research/demo use. It mixes local proxy series with external benchmark references where available.
+                    This comparison view measures realized strategy performance against industry-style proxies and shows how often each strategy matched or beat the Nifty 50 proxy on overlapping trading days.
                 </p>
                 {compareNotice && (
                     <p className="mt-3 text-xs text-slate-500">
@@ -261,7 +261,7 @@ export function CompareTab() {
                             <tr>
                                 <th>Strategy</th><th>Type</th><th>Annual Ret%</th><th>Volatility%</th>
                                 <th>Sharpe</th><th>Sortino</th><th>Max DD%</th><th>5Y CAGR%</th><th>Expense%</th>
-                                <th>Source</th><th>Rel. Accuracy%</th>
+                                <th>Source</th><th>Beat Rate%</th>
                             </tr>
                         </thead>
                         <tbody>

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import ceil
 
 from sqlalchemy.orm import Session
@@ -11,13 +11,16 @@ from app.features.price_levels import calculate_price_levels
 from app.ml.lightgbm_alpha.technical_indicators import compute_technical_features
 from app.schemas.trade_idea import CheckResultModel, TenPointChecklistModel, TradeIdeaModel
 from app.services.db_quant_engine import Snapshot, get_effective_trade_date, load_snapshots
-from app.services.ensemble_scorer import EnsembleScorer
+from app.services.ensemble_scorer import get_shared_ensemble_scorer
+
+_TRADE_IDEA_CACHE: dict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]] = {}
+_TRADE_IDEA_CACHE_TTL = timedelta(minutes=5)
 
 
 class DecisionEngine:
     def __init__(self, db: Session):
         self.db = db
-        self.ensemble_scorer = EnsembleScorer()
+        self.ensemble_scorer = get_shared_ensemble_scorer()
 
     def generate_trade_ideas(
         self,
@@ -28,6 +31,12 @@ class DecisionEngine:
         risk_per_trade_pct: float = 1.0,
     ) -> list[TradeIdeaModel]:
         as_of_date = get_effective_trade_date(self.db)
+        cache_key = (str(as_of_date), regime_filter, min_checklist_score, max_ideas)
+        cached = _TRADE_IDEA_CACHE.get(cache_key)
+        now = datetime.utcnow()
+        if cached is not None and now - cached[0] <= _TRADE_IDEA_CACHE_TTL:
+            return cached[1]
+
         snapshots = load_snapshots(self.db, as_of_date=as_of_date, min_history=252)
         if len(snapshots) < 10:
             snapshots = load_snapshots(self.db, as_of_date=as_of_date, min_history=90)
@@ -123,7 +132,9 @@ class DecisionEngine:
             ),
             reverse=True,
         )
-        return ideas[:max_ideas] if max_ideas is not None else ideas
+        final_ideas = ideas[:max_ideas] if max_ideas is not None else ideas
+        _TRADE_IDEA_CACHE[cache_key] = (now, final_ideas)
+        return final_ideas
 
     def build_trade_idea(self, symbol: str) -> TradeIdeaModel | None:
         ideas = self.generate_trade_ideas(regime_filter=False, min_checklist_score=0)

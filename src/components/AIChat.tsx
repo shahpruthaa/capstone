@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { MessageCircle, X, Send, Bot, User, Sparkles } from 'lucide-react';
 import { Portfolio } from '../services/portfolioService';
 import { postExplainChat, fetchPlatformContext, type ExplainChatHistoryItem } from '../services/backendApi';
+import { answerChatQuestion } from '../services/localAdvisor';
 
 interface Message {
     role: 'user' | 'ai';
@@ -83,15 +84,23 @@ export function AIChat({ portfolio }: AIChatProps) {
             };
 
             const data = await postExplainChat(enrichedMessage, history, fullContextPayload);
-            setMessages(prev => [...prev, { role: 'ai', text: data.response, action: data.action }]);
-            if (data.action) {
-                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: data.action }));
+            const fallbackRequired = /AI unavailable|temporarily unavailable/i.test(data.response);
+            const localAction = fallbackRequired ? inferLocalAiAction(userMsg) : data.action;
+            const localResponse = fallbackRequired ? answerChatQuestion(userMsg, portfolio) : data.response;
+            setMessages(prev => [...prev, { role: 'ai', text: localResponse, action: localAction }]);
+            if (localAction) {
+                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: localAction }));
             }
         } catch {
+            const localAction = inferLocalAiAction(userMsg);
             setMessages(prev => [...prev, {
                 role: 'ai',
-                text: 'AI assistant is temporarily unavailable. Please try again in a moment.',
+                text: answerChatQuestion(userMsg, portfolio),
+                action: localAction,
             }]);
+            if (localAction) {
+                window.dispatchEvent(new CustomEvent('AI_ACTION', { detail: localAction }));
+            }
         } finally {
             setLoading(false);
         }
@@ -202,4 +211,32 @@ export function AIChat({ portfolio }: AIChatProps) {
             </div>
         </>
     );
+}
+
+function inferLocalAiAction(message: string): { name: string; arguments: any } | undefined {
+    const normalized = message.toLowerCase();
+
+    if (normalized.includes('compare') || normalized.includes('benchmark')) {
+        return { name: 'benchmark_portfolio', arguments: {} };
+    }
+    if (normalized.includes('trade idea') || normalized.includes('ideas')) {
+        return { name: 'navigate_to_tab', arguments: { tab_name: 'IDEAS' } };
+    }
+    if (normalized.includes('backtest')) {
+        return { name: 'run_backtest', arguments: {} };
+    }
+    if (normalized.includes('analyze') && normalized.includes('portfolio')) {
+        return { name: 'analyze_portfolio', arguments: {} };
+    }
+    if (normalized.includes('market event')) {
+        return { name: 'navigate_to_tab', arguments: { tab_name: 'EVENTS' } };
+    }
+    if (normalized.includes('market') || normalized.includes('news')) {
+        return { name: 'navigate_to_tab', arguments: { tab_name: 'MARKET' } };
+    }
+    if (normalized.includes('generate') || normalized.includes('build') || normalized.includes('create portfolio')) {
+        return { name: 'generate_portfolio', arguments: { capital: 500000, risk: 'MODERATE' } };
+    }
+
+    return undefined;
 }

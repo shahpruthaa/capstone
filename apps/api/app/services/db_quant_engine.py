@@ -46,6 +46,7 @@ from app.services.market_rules import (
     resolve_capital_gains_tax_schedule,
     resolve_equity_fee_schedule,
 )
+from app.services.model_runtime import get_model_runtime_status
 from app.services.news_signal import compute_stock_news_signals
 from app.ml.ensemble_alpha.predict import get_ensemble_alpha_predictor
 from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
@@ -191,6 +192,54 @@ class BarRecord:
     total_traded_value: float
 
 
+def allocate_whole_shares_for_capital(
+    selected: list[tuple[Snapshot, float]],
+    capital_amount: float,
+) -> tuple[dict[str, dict[str, float | int]], float]:
+    plan: dict[str, dict[str, float | int]] = {}
+    total_allocated = 0.0
+
+    for snapshot, weight in selected:
+        target_amount = max(0.0, capital_amount * (weight / 100.0))
+        latest_price = max(float(snapshot.latest_price), 0.01)
+        shares = int(target_amount // latest_price)
+        allocated_amount = round(shares * latest_price, 2)
+        plan[snapshot.symbol] = {
+            "target_amount": round(target_amount, 2),
+            "shares": shares,
+            "amount": allocated_amount,
+            "latest_price": round(latest_price, 2),
+        }
+        total_allocated += allocated_amount
+
+    remaining_cash = round(max(0.0, capital_amount - total_allocated), 2)
+
+    while remaining_cash > 0:
+        candidates: list[tuple[float, float, float, str]] = []
+        for snapshot, _ in selected:
+            latest_price = max(float(snapshot.latest_price), 0.01)
+            if latest_price > remaining_cash + 1e-9:
+                continue
+            entry = plan[snapshot.symbol]
+            current_amount = float(entry["amount"])
+            target_amount = float(entry["target_amount"])
+            target_gap = target_amount - current_amount
+            expected_return = float(snapshot.ml_pred_annual_return or 0.0)
+            candidates.append((target_gap, expected_return, -latest_price, snapshot.symbol))
+
+        if not candidates:
+            break
+
+        _, _, _, chosen_symbol = max(candidates)
+        chosen_entry = plan[chosen_symbol]
+        chosen_price = float(chosen_entry["latest_price"])
+        chosen_entry["shares"] = int(chosen_entry["shares"]) + 1
+        chosen_entry["amount"] = round(float(chosen_entry["amount"]) + chosen_price, 2)
+        remaining_cash = round(max(0.0, remaining_cash - chosen_price), 2)
+
+    return plan, remaining_cash
+
+
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
     mandate_config = derive_mandate_config(payload.mandate)
@@ -289,9 +338,16 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     db.add(run)
     db.flush()
 
+    whole_share_plan, residual_cash = allocate_whole_shares_for_capital(selected, payload.capital_amount)
+    if residual_cash > 0:
+        notes.append(
+            f"Whole-share sizing deployed Rs {payload.capital_amount - residual_cash:,.2f} with Rs {residual_cash:,.2f} left as residual cash."
+        )
+
     allocations: list[AllocationModel] = []
     for snapshot, weight in selected:
         rationale = build_rationale_for_mandate(snapshot, payload.mandate, mandate_config)
+        whole_share_entry = whole_share_plan.get(snapshot.symbol, {})
         db.add(
             GeneratedPortfolioAllocation(
                 portfolio_run_id=run.id,
@@ -316,8 +372,12 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         allocations.append(
             AllocationModel(
                 symbol=snapshot.symbol,
+                name=snapshot.name,
                 sector=snapshot.sector,
+                latest_price=round(float(snapshot.latest_price), 2),
                 weight=round(weight, 2),
+                recommended_shares=int(whole_share_entry.get("shares", 0)),
+                recommended_amount=round(float(whole_share_entry.get("amount", 0.0)), 2),
                 rationale=rationale,
                 top_model_drivers=drivers,
                 ml_pred_21d_return=round(float(snapshot.ml_pred_21d_return), 4) if snapshot.ml_pred_21d_return is not None else None,
@@ -350,6 +410,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
 def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzePortfolioResponse:
     ml_status = get_lightgbm_model_status()
+    runtime_status = get_model_runtime_status()
     if payload.model_variant is None:
         model_variant_applied: ModelVariant = "LIGHTGBM_HYBRID" if ml_status.get("available") else "RULES"
     else:
@@ -463,8 +524,19 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         correlation_risk=correlation_risk,
         actions=actions,
         model_variant_applied=model_variant_applied,
+        model_source="LIGHTGBM" if ml_predictions else "RULES",
+        active_mode=str(runtime_status.get("active_mode", "rules_only")),
+        model_version=str(runtime_status.get("model_version", "rules")),
+        artifact_classification=str(runtime_status.get("artifact_classification", "missing")),
+        prediction_horizon_days=int(runtime_status.get("prediction_horizon_days", 21)),
         ml_predictions=ml_predictions,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
+        holding_period_days_recommended=int(runtime_status.get("prediction_horizon_days", 21)),
+        holding_period_reason=(
+            "Review holdings on the active model horizon when ML scores are available."
+            if ml_predictions
+            else "Review holdings monthly; this analysis is currently using the rules-based fallback."
+        ),
         notes=notes,
     )
 
@@ -760,13 +832,15 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         "Quality Factor": build_factor_portfolio(snapshots, factor_key="quality", count=12, sector_cap=0.25),
         "AMC Multi Factor": build_multifactor_portfolio(snapshots, count=15, sector_cap=0.22),
     }
+    benchmark_reference_returns = aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get("Nifty 50 Proxy", {}))
 
     strategies = []
     for name, category, description in BENCHMARK_UNIVERSES:
-        metrics = summarize_return_series(aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {})))
+        strategy_returns = aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {}))
+        metrics = summarize_return_series(strategy_returns)
         expense_ratio = 0.08 if category == "AI" else 0.06 if category == "INDEX" else 0.34
         benchmark_metadata = BENCHMARK_METADATA.get(name, {})
-        relative_accuracy_score_pct = 100.0 if name == "NSE AI Portfolio" else 92.0 if name == "Nifty 50 Proxy" else 88.0 if name == "Nifty 500 Proxy" else 84.0 if name == "Quality Factor" else 81.0 if name == "AMC Multi Factor" else 79.0
+        relative_accuracy_score_pct = compute_relative_outperformance_score(strategy_returns, benchmark_reference_returns)
         strategies.append(
             BenchmarkMetricModel(
                 name=name,
@@ -804,6 +878,7 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         "Index benchmarks are proxy constructions over the ingested NSE universe because official constituent files are not yet part of the local pipeline.",
         "Factor benchmarks use the same factor model as the allocator: momentum, quality proxy, low-volatility, liquidity, and sector balancing.",
         "Benchmark series are still static point-in-time proxy portfolios rather than fully materialized historical reconstitution jobs.",
+        "Benchmark beat rate is the share of overlapping trading days each strategy matched or outperformed the Nifty 50 proxy return.",
     ]
     return BenchmarkSummaryResponse(strategies=strategies, projected_growth=projected_growth, notes=notes)
 
@@ -1930,6 +2005,26 @@ def summarize_return_series(return_series: dict[date, float]) -> dict[str, float
         "max_drawdown_pct": round(max_drawdown_pct, 2),
         "cagr_pct": round(cagr_pct, 2),
     }
+
+
+def compute_relative_outperformance_score(
+    strategy_returns: dict[date, float],
+    benchmark_returns: dict[date, float],
+) -> float:
+    overlap_dates = [trade_date for trade_date in strategy_returns if trade_date in benchmark_returns]
+    if not overlap_dates:
+        return 0.0
+
+    wins = 0.0
+    for trade_date in overlap_dates:
+        strategy_value = strategy_returns[trade_date]
+        benchmark_value = benchmark_returns[trade_date]
+        if strategy_value > benchmark_value + 1e-9:
+            wins += 1.0
+        elif abs(strategy_value - benchmark_value) <= 1e-9:
+            wins += 0.5
+
+    return round((wins / len(overlap_dates)) * 100.0, 1)
 
 
 def annualize_return(closes: list[tuple[date, float]]) -> float:

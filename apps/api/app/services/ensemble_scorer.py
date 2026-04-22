@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.ml.lightgbm_alpha.predict import LightGBMAlphaPredictor, MLPrediction
 
 logger = logging.getLogger(__name__)
+_SHARED_SCORER: "EnsembleScorer | None" = None
 
 class EnsembleScorer:
     def __init__(self):
@@ -162,3 +163,10 @@ class EnsembleScorer:
         model_info["ensemble"] = True
         model_info["components"] = ["lightgbm", "lstm", "gnn", "death_risk"]
         return results, model_info
+
+
+def get_shared_ensemble_scorer() -> EnsembleScorer:
+    global _SHARED_SCORER
+    if _SHARED_SCORER is None:
+        _SHARED_SCORER = EnsembleScorer()
+    return _SHARED_SCORER
