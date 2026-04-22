@@ -1023,7 +1023,7 @@ def select_portfolio_candidates_for_mandate(
     model_variant: ModelVariant = "RULES",
 ) -> list[tuple[Snapshot, float]]:
     filtered = filter_snapshots_for_mandate(snapshots, mandate_config)
-    if len(filtered) < max(4, mandate_config.target_positions):
+    if len(filtered) < min(4, mandate_config.target_positions):
         return []
 
     news_signals = compute_stock_news_signals(filtered, mandate)
@@ -1038,11 +1038,11 @@ def select_portfolio_candidates_for_mandate(
         snapshot.news_explanation = signal.news_explanation
 
     screened = shortlist_candidates_for_mandate(filtered, mandate, mandate_config)
-    if len(screened) < max(4, mandate_config.target_positions):
+    if len(screened) < min(4, mandate_config.target_positions):
         return []
 
     aligned_snapshots, return_matrix = align_return_matrix(screened)
-    if len(aligned_snapshots) < max(4, mandate_config.target_positions) or len(return_matrix[0]) < 20:
+    if len(aligned_snapshots) < min(4, mandate_config.target_positions) or len(return_matrix[0]) < 20:
         return []
 
     expected_returns = estimate_expected_returns_for_mandate(
@@ -1064,24 +1064,44 @@ def select_portfolio_candidates_for_mandate(
     )
     if not optimized_weights:
         return []
+        
+    all_prior = build_prior_weights_for_mandate(aligned_snapshots, mandate, mandate_config)
+    
     ordered = sorted(
-        zip(aligned_snapshots, optimized_weights),
+        zip(aligned_snapshots, optimized_weights, all_prior),
         key=lambda item: item[1],
         reverse=True,
     )[:mandate_config.target_positions]
-    total_weight = sum(weight for _, weight in ordered)
-    return [(snapshot, round((weight / max(total_weight, 1e-9)) * 100, 2)) for snapshot, weight in ordered]
+    
+    top_snapshots = [item[0] for item in ordered]
+    top_weights = [item[1] for item in ordered]
+    top_prior = [item[2] for item in ordered]
+    
+    final_weights = project_weights_for_mandate(top_weights, top_snapshots, mandate_config, top_prior)
+    
+    result = [(s, round(w * 100, 2)) for s, w in zip(top_snapshots, final_weights)]
+    
+    total_pct = sum(w for _, w in result)
+    if result and abs(total_pct - 100.0) < 2.0 and abs(total_pct - 100.0) > 1e-4:
+        max_idx = max(range(len(result)), key=lambda i: result[i][1])
+        diff = round(100.0 - total_pct, 2)
+        s, w = result[max_idx]
+        result[max_idx] = (s, round(w + diff, 2))
+        
+    return [x for x in result if x[1] > 0]
 
 
 def filter_snapshots_for_mandate(snapshots: list[Snapshot], mandate_config: MandateConfig) -> list[Snapshot]:
+    from app.services.mandate import normalize_sector_code
     filtered: list[Snapshot] = []
     for snapshot in snapshots:
         market_cap_bucket = snapshot.market_cap_bucket or "Unknown"
         if market_cap_bucket == "Small" and "Small" not in mandate_config.allowed_market_caps:
             continue
-        if mandate_config.included_sectors and snapshot.sector not in mandate_config.included_sectors:
+        normalized_sector = normalize_sector_code(snapshot.sector)
+        if mandate_config.included_sectors and normalized_sector not in mandate_config.included_sectors:
             continue
-        if snapshot.sector in mandate_config.excluded_sectors:
+        if normalized_sector in mandate_config.excluded_sectors:
             continue
         if snapshot.annual_volatility_pct > mandate_config.max_annual_volatility_pct:
             continue
@@ -1103,7 +1123,12 @@ def shortlist_candidates_for_mandate(
     )
     shortlisted: list[Snapshot] = []
     sector_counts: dict[str, int] = defaultdict(int)
-    per_sector_limit = max(1, min(3, int(round(mandate_config.target_positions / 3))))
+    
+    if mandate_config.included_sectors:
+        per_sector_limit = mandate_config.target_positions
+    else:
+        per_sector_limit = max(1, int(round(mandate_config.target_positions / 3)))
+        
     for snapshot in scored:
         if sector_counts[snapshot.sector] >= per_sector_limit:
             continue
@@ -1281,26 +1306,65 @@ def project_weights_for_mandate(
     mandate_config: MandateConfig,
     prior: list[float],
 ) -> list[float]:
-    projected = [min(mandate_config.max_weight, max(0.0, weight)) for weight in weights]
-    projected = renormalize(projected)
-    for _ in range(6):
-        sector_totals = compute_sector_totals(projected, snapshots)
-        excess_pool = 0.0
-        for sector, total in sector_totals.items():
-            if total <= mandate_config.sector_cap:
-                continue
-            scale = mandate_config.sector_cap / max(total, 1e-9)
-            for index, snapshot in enumerate(snapshots):
-                if snapshot.sector != sector:
-                    continue
-                reduced = projected[index] * (1 - scale)
-                projected[index] *= scale
-                excess_pool += reduced
-        if excess_pool <= 1e-9:
+    w = [max(0.0, weight) for weight in weights]
+    if sum(w) == 0:
+        w = prior[:]
+        
+    for i in range(len(w)):
+        if w[i] < 0.02:
+            w[i] = 0.0
+            
+    total = sum(w)
+    if total == 0:
+        w = [1.0 / len(w)] * len(w)
+        total = 1.0
+    w = [x / total for x in w]
+    
+    for _ in range(50):
+        for i in range(len(w)):
+            if w[i] > mandate_config.max_weight:
+                w[i] = mandate_config.max_weight
+                
+        sector_totals = compute_sector_totals(w, snapshots)
+        for i, snapshot in enumerate(snapshots):
+            if sector_totals[snapshot.sector] > mandate_config.sector_cap:
+                ratio = mandate_config.sector_cap / max(sector_totals[snapshot.sector], 1e-9)
+                w[i] *= ratio
+                
+        deficit = 1.0 - sum(w)
+        if deficit <= 1e-6:
             break
-        projected = redistribute_weight_for_mandate(projected, snapshots, mandate_config, prior, excess_pool)
-    return renormalize([min(mandate_config.max_weight, max(0.0, weight)) for weight in projected])
-
+            
+        sector_totals = compute_sector_totals(w, snapshots)
+        active_priors = []
+        for i, snapshot in enumerate(snapshots):
+            can_take_weight = (w[i] < mandate_config.max_weight - 1e-6) and (sector_totals[snapshot.sector] < mandate_config.sector_cap - 1e-6)
+            active_priors.append(prior[i] if can_take_weight else 0.0)
+            
+        tot_active_prior = sum(active_priors)
+        if tot_active_prior <= 1e-9:
+            break
+            
+        max_alpha = deficit / tot_active_prior
+        
+        for i, snapshot in enumerate(snapshots):
+            if active_priors[i] > 0:
+                alpha_stock = (mandate_config.max_weight - w[i]) / active_priors[i]
+                max_alpha = min(max_alpha, alpha_stock)
+                
+        sector_prior_sums = defaultdict(float)
+        for i, snapshot in enumerate(snapshots):
+            sector_prior_sums[snapshot.sector] += active_priors[i]
+            
+        for sector, prior_sum in sector_prior_sums.items():
+            if prior_sum > 0:
+                alpha_sector = (mandate_config.sector_cap - sector_totals[sector]) / prior_sum
+                max_alpha = min(max_alpha, alpha_sector)
+                
+        for i in range(len(w)):
+            w[i] += max_alpha * active_priors[i]
+            
+    return w
 
 def redistribute_weight_for_mandate(
     weights: list[float],
@@ -1309,20 +1373,8 @@ def redistribute_weight_for_mandate(
     prior: list[float],
     excess_pool: float,
 ) -> list[float]:
-    sector_totals = compute_sector_totals(weights, snapshots)
-    headroom = []
-    for index, snapshot in enumerate(snapshots):
-        asset_headroom = max(0.0, mandate_config.max_weight - weights[index])
-        sector_headroom = max(0.0, mandate_config.sector_cap - sector_totals[snapshot.sector])
-        score = min(asset_headroom, sector_headroom) * (1.0 + max(prior[index], 0.001))
-        headroom.append(score)
-    total_headroom = sum(headroom)
-    if total_headroom <= 1e-9:
-        return weights
-    redistributed = weights[:]
-    for index, score in enumerate(headroom):
-        redistributed[index] += excess_pool * (score / total_headroom)
-    return redistributed
+    # Deprecated by the unified projection above
+    return weights
 
 
 def build_rationale_for_mandate(snapshot: Snapshot, mandate, mandate_config: MandateConfig) -> str:

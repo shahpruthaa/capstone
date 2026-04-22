@@ -103,10 +103,23 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
             "Mandate is infeasible: `max_position_size_pct * preferred_num_positions` must be at least 100."
         )
 
+    included_sectors = {normalize_sector_code(value) for value in mandate.sector_inclusions}
+    excluded_sectors = {normalize_sector_code(value) for value in mandate.sector_exclusions}
+
     horizon = HORIZON_SETTINGS[mandate.investment_horizon_weeks]
     attitude = ATTITUDE_SETTINGS[mandate.risk_attitude]
     max_weight = mandate.max_position_size_pct / 100.0
     sector_cap = max(attitude["sector_cap"], min(0.5, max_weight * 2.0))
+    
+    available_sectors = len(NSE_SECTOR_CODES) - len(excluded_sectors)
+    if included_sectors:
+        available_sectors = len(included_sectors)
+        
+    if available_sectors * sector_cap < 1.0:
+        raise ValueError(
+            f"Mandate is infeasible: Sector constraints (max {sector_cap*100:.1f}% per sector) and {available_sectors} allowed sectors limit maximum portfolio allocation to {available_sectors * sector_cap * 100:.1f}%."
+        )
+
     drawdown_adjusted_vol = max(10.0, min(attitude["max_annual_volatility_pct"], mandate.max_portfolio_drawdown_pct * 1.8))
     drawdown_adjusted_death_risk = max(0.18, min(attitude["max_death_risk"], mandate.max_portfolio_drawdown_pct / 32.0))
     target_positions = mandate.preferred_num_positions
@@ -114,9 +127,6 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     allowed_market_caps = {"Large", "Mid", "Unknown", ""}
     if mandate.allow_small_caps:
         allowed_market_caps.add("Small")
-
-    included_sectors = {normalize_sector_code(value) for value in mandate.sector_inclusions}
-    excluded_sectors = {normalize_sector_code(value) for value in mandate.sector_exclusions}
 
     return MandateConfig(
         lookback_days=horizon["lookback_days"],

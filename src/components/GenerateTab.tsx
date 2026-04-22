@@ -65,8 +65,6 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         allow_small_caps: false,
         risk_attitude: 'balanced',
     });
-    const [sectorIncludeInput, setSectorIncludeInput] = useState('');
-    const [sectorExcludeInput, setSectorExcludeInput] = useState('');
     const [sectorCodes, setSectorCodes] = useState<string[]>([]);
     const [generating, setGenerating] = useState(false);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
@@ -106,8 +104,6 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                 const questionnaire = await getMandateQuestionnaireViaApi();
                 setMandate(questionnaire.defaults);
                 setSectorCodes(questionnaire.sector_codes);
-                setSectorIncludeInput(questionnaire.defaults.sector_inclusions.join(', '));
-                setSectorExcludeInput(questionnaire.defaults.sector_exclusions.join(', '));
             } catch {
                 setSectorCodes([]);
             }
@@ -124,9 +120,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         setGenerationNotice(null);
         try {
             const payload: UserMandate = {
-                ...mandate,
-                sector_inclusions: sectorIncludeInput.split(',').map(item => item.trim()).filter(Boolean),
-                sector_exclusions: sectorExcludeInput.split(',').map(item => item.trim()).filter(Boolean),
+                ...mandate
             };
             const p = await generatePortfolioViaApi(amount, payload, activeModelVariant);
             onPortfolioGenerated(p);
@@ -164,9 +158,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                 try {
                     const payload: UserMandate = {
                         ...mandate,
-                        risk_attitude: newRisk,
-                        sector_inclusions: sectorIncludeInput.split(',').map(item => item.trim()).filter(Boolean),
-                        sector_exclusions: sectorExcludeInput.split(',').map(item => item.trim()).filter(Boolean),
+                        risk_attitude: newRisk
                     };
                     const p = await generatePortfolioViaApi(capital, payload, activeModelVariant);
                     onPortfolioGenerated(p);
@@ -180,7 +172,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         };
         window.addEventListener('AI_ACTION', handleAction);
         return () => window.removeEventListener('AI_ACTION', handleAction);
-    }, [mandate, sectorIncludeInput, sectorExcludeInput, activeModelVariant, amount, onPortfolioGenerated]);
+    }, [mandate, activeModelVariant, amount, onPortfolioGenerated]);
 
     const chartData = useMemo(() =>
         portfolio?.allocations.map(a => ({ name: a.stock.symbol, value: a.amount })) ?? [], [portfolio]);
@@ -307,29 +299,59 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         </div>
 
-                        <div>
-                            <label className="block text-xs font-600 text-slate-500 mb-1.5">Sector Inclusions</label>
-                            <input
-                                value={sectorIncludeInput}
-                                onChange={e => setSectorIncludeInput(e.target.value)}
-                                className="input-field px-4 py-2.5"
-                                placeholder="e.g. Banking, IT, Pharma"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-600 text-slate-500 mb-1.5">Sector Exclusions</label>
-                            <input
-                                value={sectorExcludeInput}
-                                onChange={e => setSectorExcludeInput(e.target.value)}
-                                className="input-field px-4 py-2.5"
-                                placeholder="e.g. Energy, Real Estate"
-                            />
-                            {sectorCodes.length > 0 && (
-                                <p className="text-[10px] text-slate-400 mt-1">
-                                    Available sectors: {sectorCodes.join(', ')}
-                                </p>
+                        <div className="col-span-1 md:col-span-2">
+                            <label className="block text-xs font-600 text-slate-500 mb-2">Sector Constraints</label>
+                            {sectorCodes.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                    {sectorCodes.map(sector => {
+                                        const isIncluded = mandate.sector_inclusions.includes(sector);
+                                        const isExcluded = mandate.sector_exclusions.includes(sector);
+                                        
+                                        let btnClass = "px-3 py-1.5 text-[11px] font-medium rounded-full border transition-all duration-200";
+                                        if (isIncluded) {
+                                            btnClass += " bg-teal-50 text-teal-700 border-teal-200 ring-1 ring-teal-200";
+                                        } else if (isExcluded) {
+                                            btnClass += " bg-rose-50 text-rose-700 border-rose-200 ring-1 ring-rose-200 opacity-60";
+                                        } else {
+                                            btnClass += " bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300";
+                                        }
+                                        
+                                        return (
+                                            <button
+                                                key={sector}
+                                                type="button"
+                                                onClick={() => {
+                                                    let newInc = [...mandate.sector_inclusions];
+                                                    let newExc = [...mandate.sector_exclusions];
+                                                    if (isIncluded) {
+                                                        newInc = newInc.filter(s => s !== sector);
+                                                        newExc.push(sector);
+                                                    } else if (isExcluded) {
+                                                        newExc = newExc.filter(s => s !== sector);
+                                                    } else {
+                                                        newInc.push(sector);
+                                                    }
+                                                    setMandate(prev => ({
+                                                        ...prev,
+                                                        sector_inclusions: newInc,
+                                                        sector_exclusions: newExc
+                                                    }));
+                                                }}
+                                                className={btnClass}
+                                            >
+                                                {sector} {isIncluded && '✓'} {isExcluded && '✕'}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <p className="text-xs text-slate-400">Loading sectors...</p>
                             )}
+                            <p className="text-[10px] text-slate-400 mt-2 flex items-center gap-2">
+                                <span>Click to toggle:</span>
+                                <span className="inline-flex items-center gap-1 text-teal-600"><span className="w-2 h-2 rounded-full bg-teal-400"></span> Include</span>
+                                <span className="inline-flex items-center gap-1 text-rose-600"><span className="w-2 h-2 rounded-full bg-rose-400"></span> Exclude</span>
+                            </p>
                         </div>
 
                         <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
