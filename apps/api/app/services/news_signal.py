@@ -235,23 +235,59 @@ def compute_stock_news_signals(
         sector = normalize_sector_code(getattr(snapshot, "sector", "Unknown"))
         regions = set(SYMBOL_REGION_OVERRIDES.get(symbol, DEFAULT_REGION_EXPOSURE_BY_SECTOR.get(sector, {"India"})))
 
+        sector_keywords = {
+            'Energy': ['oil', 'crude', 'energy', 'refinery', 'omc', 'bpcl', 'reliance'],
+            'IT': ['technology', 'software', 'it sector', 'tcs', 'infosys', 'tech'],
+            'Banking': ['bank', 'rbi', 'interest rate', 'npa', 'credit', 'hdfc'],
+            'Pharma': ['pharma', 'drug', 'fda', 'medicine', 'healthcare'],
+            'FMCG': ['fmcg', 'consumer', 'hul', 'itc', 'staples'],
+            'Auto': ['auto', 'vehicle', 'ev', 'tata motors', 'maruti'],
+        }
+
+        # Collect and score articles for this specific stock
+        relevant_articles = []
+        stock_sector_keys = sector_keywords.get(sector, [sector.lower()])
+        
+        for article in market_news.articles:
+            text = f"{article.headline} {article.summary}".lower()
+            
+            sector_match = sector in {normalize_sector_code(item) for item in article.affected_sectors}
+            region_match = bool(regions.intersection(article.involved_regions))
+            keyword_match = any(k in text for k in stock_sector_keys)
+            
+            if not sector_match and not region_match and not keyword_match and "Index" not in article.affected_sectors:
+                continue
+
+            # Score relevance
+            relevance = 1.0
+            if keyword_match: relevance += 0.5
+            if sector_match: relevance += 0.5
+            if region_match: relevance += 0.3
+            
+            exposure_multiplier = 1.0 + (0.2 if sector_match and region_match else 0.0)
+            mandate_multiplier = 1.15 if sector in mandate_inclusions else 1.0
+            normalized_impact = article.impact_score / 10.0
+            signed_effect = article.sentiment_score * normalized_impact * exposure_multiplier * mandate_multiplier
+            
+            relevant_articles.append({
+                "article": article,
+                "relevance": relevance,
+                "signed_effect": signed_effect
+            })
+
+        # Sort by relevance
+        relevant_articles.sort(key=lambda x: x["relevance"], reverse=True)
+        
         risk_score = 0.0
         opportunity_score = 0.0
         sentiment_values: list[float] = []
         impact_values: list[float] = []
         reasons: list[str] = []
 
-        for article in market_news.articles:
-            sector_match = sector in {normalize_sector_code(item) for item in article.affected_sectors}
-            region_match = bool(regions.intersection(article.involved_regions))
-            if not sector_match and not region_match and "Index" not in article.affected_sectors:
-                continue
-
-            exposure_multiplier = 1.0 + (0.2 if sector_match and region_match else 0.0)
-            mandate_multiplier = 1.15 if sector in mandate_inclusions else 1.0
-            normalized_impact = article.impact_score / 10.0
-            signed_effect = article.sentiment_score * normalized_impact * exposure_multiplier * mandate_multiplier
-
+        for item in relevant_articles:
+            article = item["article"]
+            signed_effect = item["signed_effect"]
+            
             if signed_effect < 0:
                 risk_score += abs(signed_effect)
             else:
@@ -259,14 +295,19 @@ def compute_stock_news_signals(
             sentiment_values.append(article.sentiment_score)
             impact_values.append(article.impact_score)
             if len(reasons) < 2:
-                reasons.append(article.explanation)
+                # Set news_explanation to the relevant headline
+                reasons.append(article.headline)
+
+        explanation = " ".join(reasons) if reasons else "Market stable. No major sector-specific alerts."
+        if not reasons and len(explanation) > 60:
+            explanation = explanation[:57] + "..."
 
         signals[symbol] = StockNewsSignal(
             news_risk_score=round(min(1.0, risk_score), 4),
             news_opportunity_score=round(min(1.0, opportunity_score), 4),
             news_sentiment=round(mean(sentiment_values), 4) if sentiment_values else 0.0,
             news_impact=round(max(impact_values), 4) if impact_values else 0.0,
-            news_explanation=" ".join(reasons) if reasons else "No recent material news mapped to this stock.",
+            news_explanation=explanation,
         )
 
     return signals

@@ -67,6 +67,8 @@ class AllocationModel(BaseModel):
     symbol: str
     sector: str
     weight: float = Field(..., ge=0, le=100)
+    shares: int = 0
+    amount: float = 0.0
     rationale: str
     top_model_drivers: list[str] = Field(default_factory=list)
     ml_pred_21d_return: float | None = None
@@ -107,6 +109,7 @@ class GeneratePortfolioResponse(BaseModel):
     metrics: PortfolioMetricsModel
     holding_period_days_recommended: int = 21
     holding_period_reason: str = "Review the portfolio on the configured prediction horizon."
+    regime_warning: str | None = None
     notes: list[str]
 
 

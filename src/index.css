@@ -2,6 +2,7 @@
 @import "tailwindcss";
 
 :root {
+<<<<<<< HEAD
   --bg: #fff6fb;
   --bg-elev: #ffffff;
   --bg-elev-2: #fff0f7;
@@ -18,6 +19,24 @@
   --warn: #d79326;
   --bad: #d95b7d;
   --shadow: 0 16px 42px rgba(204, 82, 137, 0.16);
+=======
+  --bg: #071018;
+  --bg-elev: #0d1722;
+  --bg-elev-2: #132131;
+  --bg-soft: rgba(148, 163, 184, 0.08);
+  --line: rgba(148, 163, 184, 0.18);
+  --line-strong: rgba(148, 163, 184, 0.3);
+  --text: #ecf4ff;
+  --text-muted: #96a7bc;
+  --text-dim: #61748e;
+  --accent: #D4A843;
+  --accent-2: #EFC45B;
+  --accent-warm: #f6c760;
+  --good: #52C97A;
+  --warn: #fbbf24;
+  --bad: #E05C5C;
+  --shadow: 0 20px 70px rgba(2, 8, 23, 0.45);
+>>>>>>> rescue-portfolio
   --radius: 22px;
   --sidebar-w: 244px;
   --topbar-h: 70px;
@@ -35,9 +54,15 @@
 html {
   min-height: 100%;
   background:
+<<<<<<< HEAD
     radial-gradient(circle at top left, rgba(255, 93, 162, 0.2), transparent 34%),
     radial-gradient(circle at top right, rgba(255, 150, 199, 0.22), transparent 28%),
     linear-gradient(180deg, #fff9fc 0%, #ffeef7 100%);
+=======
+    radial-gradient(circle at top left, rgba(212, 168, 67, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(255, 143, 192, 0.1), transparent 22%),
+    linear-gradient(180deg, #050b12 0%, #071018 100%);
+>>>>>>> rescue-portfolio
   color: var(--text);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
@@ -89,8 +114,13 @@ a {
   inset: 0 auto 0 0;
   width: var(--sidebar-w);
   background:
+<<<<<<< HEAD
     linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 246, 251, 0.96)),
     radial-gradient(circle at top left, rgba(255, 93, 162, 0.12), transparent 42%);
+=======
+    linear-gradient(180deg, rgba(7, 16, 24, 0.98), rgba(11, 20, 31, 0.96)),
+    radial-gradient(circle at top left, rgba(212, 168, 67, 0.08), transparent 35%);
+>>>>>>> rescue-portfolio
   border-right: 1px solid var(--line);
   backdrop-filter: blur(18px);
   display: flex;
@@ -512,7 +542,11 @@ a {
 .bg-blue-100,
 .bg-teal-600,
 .bg-white\/20 {
+<<<<<<< HEAD
   background-color: rgba(255, 93, 162, 0.12) !important;
+=======
+  background-color: rgba(212, 168, 67, 0.14) !important;
+>>>>>>> rescue-portfolio
 }
 
 .border-slate-50,
