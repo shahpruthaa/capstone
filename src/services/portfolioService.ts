@@ -344,7 +344,13 @@ export function generatePortfolio(amount: number, risk: RiskProfile): Portfolio 
   const totalInvested = allocations.reduce((acc, a) => acc + a.amount, 0);
   const metrics = computeMetrics(selectedStocks, weights, risk);
 
-  return { allocations, totalInvested, riskProfile: risk, metrics };
+  return {
+    allocations,
+    totalInvested,
+    riskProfile: risk,
+    metrics,
+    backendNotes: ['Local demo fallback only; metrics are heuristic and not live-market derived.'],
+  };
 }
 
 // ─── Portfolio Analyzer ───────────────────────────────────────────────────────

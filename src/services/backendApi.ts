@@ -1228,7 +1228,7 @@ export async function getBenchmarkComparisonViaApi(): Promise<ComparisonResult> 
       ...fallback,
       notes: [
         ...(fallback.notes ?? []),
-        `Using local comparison fallback because the benchmark API failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
+        `Benchmark comparison fallback is illustrative, not authoritative. Benchmark API failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
       ],
     };
   }

@@ -1,30 +1,12 @@
-import sys
-import os
+import math
 
 from app.db.session import SessionLocal
 from app.schemas.portfolio import GeneratePortfolioRequest, UserMandate
 from app.services.db_quant_engine import generate_portfolio
 
-def run_test():
-    db = SessionLocal()
-    
-    print("--- TEST 1: STANDARD ENSEMBLE MANDATE ---")
-    try:
-        req = GeneratePortfolioRequest(
-            capital_amount=500000.0,
-            mandate=UserMandate(
-                investment_horizon_weeks="4-8",
-                preferred_num_positions=10,
-                allow_small_caps=False,
-                risk_attitude="balanced",
-            )
-        )
-        res = generate_portfolio(db, req)
-        print(f"SUCCESS: Generated {len(res.allocations)} allocations.")
-    except Exception as e:
-        print(f"FAILURE: Unexpected generation error -> {e}")
 
-    print("\n--- TEST 2: SMALL-CAP ENABLED MANDATE ---")
+def test_generate_portfolio_invariants() -> None:
+    db = SessionLocal()
     try:
         req = GeneratePortfolioRequest(
             capital_amount=500000.0,
@@ -33,24 +15,23 @@ def run_test():
                 preferred_num_positions=10,
                 allow_small_caps=True,
                 risk_attitude="balanced",
-            )
+            ),
         )
         res = generate_portfolio(db, req)
-        total_weight = sum(a.weight for a in res.allocations)
-        print(f"Total Allocations: {len(res.allocations)}")
-        print(f"Sum of Weights: {total_weight}%")
-        
-        sector_weights = {}
-        for a in res.allocations:
-            print(f" - {a.symbol} ({a.sector}): {a.weight}%")
-            sector_weights[a.sector] = sector_weights.get(a.sector, 0.0) + a.weight
-            
-        print("\nSector Breakdown:")
-        for s, w in sector_weights.items():
-            print(f" - {s}: {w}%")
-            
-    except Exception as e:
-        print(f"Failed standard mandate: {e}")
 
-if __name__ == "__main__":
-    run_test()
+        total_weight = sum(allocation.weight for allocation in res.allocations)
+        assert abs(total_weight - 100.0) < 1e-6
+
+        sector_weights: dict[str, float] = {}
+        for allocation in res.allocations:
+            sector_weights[allocation.sector] = sector_weights.get(allocation.sector, 0.0) + allocation.weight
+        assert abs(sum(sector_weights.values()) - 100.0) < 1e-6
+
+        total_invested = sum(allocation.recommended_amount for allocation in res.allocations)
+        assert total_invested <= req.capital_amount
+
+        assert res.metrics.estimated_volatility_pct >= 0
+        assert 0 <= res.metrics.diversification_score <= 100
+        assert math.isfinite(res.standard_metrics.sharpe_ratio)
+    finally:
+        db.close()

@@ -76,6 +76,7 @@ ATTITUDE_SETTINGS = {
 
 @dataclass(frozen=True)
 class MandateConfig:
+    risk_mode: str
     decision_lookback_days: int
     holding_period_days: int
     model_feature_lookback_days: int
@@ -127,7 +128,13 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     allowed_market_caps = {"Large", "Mid", "Unknown", ""}
     if mandate.allow_small_caps:
         allowed_market_caps.add("Small")
+    risk_mode = {
+        "capital_preservation": "ULTRA_LOW",
+        "balanced": "MODERATE",
+        "growth": "HIGH",
+    }[mandate.risk_attitude]
     return MandateConfig(
+        risk_mode=risk_mode,
         decision_lookback_days=horizon["decision_lookback_days"],
         holding_period_days=horizon["holding_period_days"],
         model_feature_lookback_days=max(450, int(horizon["decision_lookback_days"]) + 120),
