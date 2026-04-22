@@ -9,6 +9,8 @@ from math import sqrt
 from statistics import median
 from uuid import uuid4
 
+import numpy as np
+import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -682,6 +684,8 @@ def estimate_statutory_cost_and_tax_drag(
         symbol_notional = gross_executed_notional * (weight / total_weight)
         if symbol_notional <= 0:
             continue
+        # Rebalance approximation: split turnover evenly across buy/sell legs.
+        # This can slightly overstate STT for pure-entry flows where buy notional dominates.
         buy_notional = symbol_notional / 2.0
         sell_notional = symbol_notional / 2.0
         buy_costs = calculate_trade_costs(
@@ -1993,7 +1997,7 @@ def build_benchmark_compare(db: Session, payload: BenchmarkCompareRequest) -> Be
         holding_period_days = (
             max(21, runtime.prediction_horizon_days)
             if name == strategy_name
-            else 252
+            else 365
             if "Nifty" in name
             else 63
         )
@@ -3426,8 +3430,6 @@ def compute_momentum_pct(closes: list[tuple[date, float]], window: int) -> float
 def average_pairwise_correlation(snapshots: list[Snapshot]) -> float:
     if len(snapshots) < 2:
         return 0.0
-    import numpy as np
-    import pandas as pd
 
     return_maps = {
         snapshot.symbol: {trade_date: value for trade_date, value in snapshot.returns}

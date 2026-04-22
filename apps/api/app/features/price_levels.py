@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from app.ml.lightgbm_alpha.technical_indicators import atr_normalized
 from app.services.db_quant_engine import Snapshot
@@ -16,8 +17,8 @@ class PriceLevels:
     risk_pct: float
     reward_pct: float
     rr_ratio: float
-    stop_basis: str
-    target_basis: str
+    stop_basis: Literal["atr", "risk_cap"]
+    target_basis: Literal["model", "rr_guardrail"]
 
 
 def calculate_price_levels(snapshot: Snapshot, expected_return: float) -> PriceLevels:

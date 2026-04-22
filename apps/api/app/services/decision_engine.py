@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta
 from math import ceil
+from threading import RLock
 
 from sqlalchemy.orm import Session
 
@@ -18,18 +19,20 @@ from app.services.model_runtime import get_model_runtime_status
 _TRADE_IDEA_CACHE: "OrderedDict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]]" = OrderedDict()
 _TRADE_IDEA_CACHE_TTL = timedelta(minutes=5)
 _TRADE_IDEA_CACHE_MAXSIZE = 64
+_TRADE_IDEA_CACHE_LOCK = RLock()
 
 
 def _prune_trade_idea_cache(now: datetime) -> None:
-    expired_keys = [
-        cache_key
-        for cache_key, (cached_at, _) in list(_TRADE_IDEA_CACHE.items())
-        if now - cached_at > _TRADE_IDEA_CACHE_TTL
-    ]
-    for cache_key in expired_keys:
-        _TRADE_IDEA_CACHE.pop(cache_key, None)
-    while len(_TRADE_IDEA_CACHE) > _TRADE_IDEA_CACHE_MAXSIZE:
-        _TRADE_IDEA_CACHE.popitem(last=False)
+    with _TRADE_IDEA_CACHE_LOCK:
+        expired_keys = [
+            cache_key
+            for cache_key, (cached_at, _) in list(_TRADE_IDEA_CACHE.items())
+            if now - cached_at > _TRADE_IDEA_CACHE_TTL
+        ]
+        for cache_key in expired_keys:
+            _TRADE_IDEA_CACHE.pop(cache_key, None)
+        while len(_TRADE_IDEA_CACHE) > _TRADE_IDEA_CACHE_MAXSIZE:
+            _TRADE_IDEA_CACHE.popitem(last=False)
 
 
 class DecisionEngine:
@@ -51,10 +54,12 @@ class DecisionEngine:
         as_of_date = get_effective_trade_date(self.db)
         cache_key = (str(as_of_date), regime_filter, min_checklist_score, max_ideas)
         now = datetime.utcnow()
-        _prune_trade_idea_cache(now)
-        cached = _TRADE_IDEA_CACHE.get(cache_key)
+        with _TRADE_IDEA_CACHE_LOCK:
+            _prune_trade_idea_cache(now)
+            cached = _TRADE_IDEA_CACHE.get(cache_key)
         if cached is not None and now - cached[0] <= _TRADE_IDEA_CACHE_TTL and not current_holdings and not sector_exposures and cash_available is None:
-            _TRADE_IDEA_CACHE.move_to_end(cache_key)
+            with _TRADE_IDEA_CACHE_LOCK:
+                _TRADE_IDEA_CACHE.move_to_end(cache_key)
             return TradeIdeaListResponse(
                 runtime=build_runtime_descriptor(get_model_runtime_status()),
                 portfolio_fit_summary=None,
@@ -207,9 +212,10 @@ class DecisionEngine:
             idea.realized_hit_rate_by_type_pct = None
 
         final_ideas = ideas[:max_ideas] if max_ideas is not None else ideas
-        _TRADE_IDEA_CACHE[cache_key] = (now, final_ideas)
-        _TRADE_IDEA_CACHE.move_to_end(cache_key)
-        _prune_trade_idea_cache(now)
+        with _TRADE_IDEA_CACHE_LOCK:
+            _TRADE_IDEA_CACHE[cache_key] = (now, final_ideas)
+            _TRADE_IDEA_CACHE.move_to_end(cache_key)
+            _prune_trade_idea_cache(now)
         portfolio_fit_summary: PortfolioFitSummaryModel | None = None
         if holdings:
             portfolio_fit_summary = build_portfolio_fit_summary(
