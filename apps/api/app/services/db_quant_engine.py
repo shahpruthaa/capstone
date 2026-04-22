@@ -193,7 +193,7 @@ class BarRecord:
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
     mandate_config = derive_mandate_config(payload.mandate)
-    ml_min_history = max(84, mandate_config.lookback_days // 2)
+    ml_min_history = 90
     snapshots = load_snapshots(
         db,
         as_of_date=as_of_date,
@@ -308,15 +308,27 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         })
         
     # Redistribute residual
-    temp_allocs.sort(key=lambda x: x["weight"], reverse=True)
-    for alloc in temp_allocs:
-        if cash_left <= 0:
+    max_passes = 20
+    for _ in range(max_passes):
+        # Calculate min price among temp_allocs to check if any more shares can be bought
+        min_price = min(a["price"] for a in temp_allocs) if temp_allocs else float("inf")
+        if cash_left < min_price:
             break
-        extra_shares = int(cash_left // max(alloc["price"], 1.0))
-        if extra_shares > 0:
-            alloc["shares"] += extra_shares
-            alloc["amount"] += extra_shares * alloc["price"]
-            cash_left -= extra_shares * alloc["price"]
+            
+        # Sort by weight to give remaining cash to most favored positions first
+        temp_allocs.sort(key=lambda x: x["weight"], reverse=True)
+        for alloc in temp_allocs:
+            extra = int(cash_left // max(alloc["price"], 1.0))
+            if extra > 0:
+                alloc["shares"] += extra
+                alloc["amount"] += extra * alloc["price"]
+                cash_left -= extra * alloc["price"]
+                # We broke after adding to one, but we continue the outer passes 
+                # to potentially fill other positions if this one is saturated or next passes.
+                # Actually, the user script says 'break' here to re-sort or just move to next pass.
+                break
+        else:
+            break
 
     allocations: list[AllocationModel] = []
     for alloc in temp_allocs:
@@ -376,6 +388,7 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         expected_holding_period_days=mandate_config.holding_period_days,
         allocations=allocations,
         metrics=weighted_stats,
+        regime_warning="Current bear regime signals negative expected returns. Consider waiting for confirmation of trend reversal before deploying full capital." if weighted_stats.estimated_return_pct < 0 or ((weighted_stats.estimated_return_pct - 7) / max(weighted_stats.estimated_volatility_pct, 1)) < 0 else None,
         notes=notes,
     )
 
@@ -1109,7 +1122,10 @@ def select_portfolio_candidates_for_mandate(
     top_weights = [item[1] for item in ordered]
     top_prior = [item[2] for item in ordered]
     
-    final_weights = project_weights_for_mandate(top_weights, top_snapshots, mandate_config, top_prior)
+    regime_dict = detect_market_regime(aligned_snapshots)
+    regime_name = "bear" if regime_dict.get("base_return", 0.1) < 0.09 else ("bull" if regime_dict.get("base_return", 0.1) > 0.11 else "neutral")
+    
+    final_weights = project_weights_for_mandate(top_weights, top_snapshots, mandate_config, top_prior, regime_name)
     
     result = [(s, round(w * 100, 2)) for s, w in zip(top_snapshots, final_weights)]
     
@@ -1159,7 +1175,7 @@ def shortlist_candidates_for_mandate(
     if mandate_config.included_sectors:
         per_sector_limit = mandate_config.target_positions
     else:
-        per_sector_limit = max(1, int(round(mandate_config.target_positions / 3)))
+        per_sector_limit = max(2, int(round(mandate_config.target_positions / 2)))
         
     for snapshot in scored:
         if sector_counts[snapshot.sector] >= per_sector_limit:
@@ -1327,6 +1343,8 @@ def build_prior_weights_for_mandate(
             base += (0.20 * snapshot.factor_scores.get("beta", 0.0))
         base += snapshot.news_opportunity_score * 0.4
         base -= snapshot.news_risk_score * 0.45
+        if "BEES" in snapshot.symbol or snapshot.sector == "Index":
+            base *= 0.1
         raw.append(max(0.05, base))
     total = sum(raw)
     return [value / max(total, 1e-9) for value in raw]
@@ -1337,6 +1355,7 @@ def project_weights_for_mandate(
     snapshots: list[Snapshot],
     mandate_config: MandateConfig,
     prior: list[float],
+    regime_name: str = "neutral",
 ) -> list[float]:
     w = [max(0.0, weight) for weight in weights]
     if sum(w) == 0:
@@ -1357,10 +1376,26 @@ def project_weights_for_mandate(
             if w[i] > mandate_config.max_weight:
                 w[i] = mandate_config.max_weight
                 
+        eff_sector_cap = min(mandate_config.sector_cap, 0.20)
+        
+        # Determine ETF cap based on regime
+        etf_cap = 0.15
+        if regime_name == "bear":
+            etf_cap = 0.20
+        elif regime_name == "bull":
+            etf_cap = 0.10
+            
         sector_totals = compute_sector_totals(w, snapshots)
+        etf_total = sum(w[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
+        
         for i, snapshot in enumerate(snapshots):
-            if sector_totals[snapshot.sector] > mandate_config.sector_cap:
-                ratio = mandate_config.sector_cap / max(sector_totals[snapshot.sector], 1e-9)
+            if sector_totals[snapshot.sector] > eff_sector_cap:
+                ratio = eff_sector_cap / max(sector_totals[snapshot.sector], 1e-9)
+                w[i] *= ratio
+                
+            is_etf = "BEES" in snapshot.symbol or snapshot.sector == "Index"
+            if is_etf and etf_total > etf_cap:
+                ratio = etf_cap / max(etf_total, 1e-9)
                 w[i] *= ratio
                 
         deficit = 1.0 - sum(w)
@@ -1370,7 +1405,14 @@ def project_weights_for_mandate(
         sector_totals = compute_sector_totals(w, snapshots)
         active_priors = []
         for i, snapshot in enumerate(snapshots):
-            can_take_weight = (w[i] < mandate_config.max_weight - 1e-6) and (sector_totals[snapshot.sector] < mandate_config.sector_cap - 1e-6)
+            is_etf = "BEES" in snapshot.symbol or snapshot.sector == "Index"
+            eff_sector_cap = min(mandate_config.sector_cap, 0.20)
+            can_take_weight = (w[i] < mandate_config.max_weight - 1e-6) and (sector_totals[snapshot.sector] < eff_sector_cap - 1e-6)
+            if is_etf:
+                etf_cap = 0.20 if regime_name == "bear" else (0.10 if regime_name == "bull" else 0.15)
+                etf_total = sum(w[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
+                can_take_weight = can_take_weight and (etf_total < etf_cap - 1e-6)
+                
             active_priors.append(prior[i] if can_take_weight else 0.0)
             
         tot_active_prior = sum(active_priors)
@@ -1388,10 +1430,19 @@ def project_weights_for_mandate(
         for i, snapshot in enumerate(snapshots):
             sector_prior_sums[snapshot.sector] += active_priors[i]
             
+        eff_sector_cap = min(mandate_config.sector_cap, 0.20)
         for sector, prior_sum in sector_prior_sums.items():
             if prior_sum > 0:
-                alpha_sector = (mandate_config.sector_cap - sector_totals[sector]) / prior_sum
+                alpha_sector = (eff_sector_cap - sector_totals[sector]) / prior_sum
                 max_alpha = min(max_alpha, alpha_sector)
+                
+        # Also constraint alpha by ETF cap
+        etf_prior_sum = sum(active_priors[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
+        if etf_prior_sum > 0:
+            etf_cap = 0.20 if regime_name == "bear" else (0.10 if regime_name == "bull" else 0.15)
+            etf_total = sum(w[j] for j, s in enumerate(snapshots) if "BEES" in s.symbol or s.sector == "Index")
+            alpha_etf = (etf_cap - etf_total) / etf_prior_sum
+            max_alpha = min(max_alpha, alpha_etf)
                 
         for i in range(len(w)):
             w[i] += max_alpha * active_priors[i]

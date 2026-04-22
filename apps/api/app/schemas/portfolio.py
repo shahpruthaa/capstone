@@ -109,6 +109,7 @@ class GeneratePortfolioResponse(BaseModel):
     metrics: PortfolioMetricsModel
     holding_period_days_recommended: int = 21
     holding_period_reason: str = "Review the portfolio on the configured prediction horizon."
+    regime_warning: str | None = None
     notes: list[str]
 
 

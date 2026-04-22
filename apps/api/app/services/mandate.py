@@ -123,7 +123,7 @@ def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     drawdown_adjusted_vol = max(10.0, min(attitude["max_annual_volatility_pct"], mandate.max_portfolio_drawdown_pct * 1.8))
     drawdown_adjusted_death_risk = max(0.18, min(attitude["max_death_risk"], mandate.max_portfolio_drawdown_pct / 32.0))
     target_positions = mandate.preferred_num_positions
-    candidate_count = max(target_positions + 4, int(round(target_positions * attitude["candidate_multiple"])))
+    candidate_count = max(15, target_positions * 2, int(round(target_positions * attitude["candidate_multiple"])))
     allowed_market_caps = {"Large", "Mid", "Unknown", ""}
     if mandate.allow_small_caps:
         allowed_market_caps.add("Small")

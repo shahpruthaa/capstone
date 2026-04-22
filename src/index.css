@@ -11,12 +11,12 @@
   --text: #ecf4ff;
   --text-muted: #96a7bc;
   --text-dim: #61748e;
-  --accent: #ff5da2;
-  --accent-2: #ff8fc0;
+  --accent: #D4A843;
+  --accent-2: #EFC45B;
   --accent-warm: #f6c760;
-  --good: #4ade80;
+  --good: #52C97A;
   --warn: #fbbf24;
-  --bad: #fb7185;
+  --bad: #E05C5C;
   --shadow: 0 20px 70px rgba(2, 8, 23, 0.45);
   --radius: 22px;
   --sidebar-w: 244px;
@@ -35,7 +35,7 @@
 html {
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(255, 93, 162, 0.12), transparent 28%),
+    radial-gradient(circle at top left, rgba(212, 168, 67, 0.12), transparent 28%),
     radial-gradient(circle at top right, rgba(255, 143, 192, 0.1), transparent 22%),
     linear-gradient(180deg, #050b12 0%, #071018 100%);
   color: var(--text);
@@ -90,7 +90,7 @@ a {
   width: var(--sidebar-w);
   background:
     linear-gradient(180deg, rgba(7, 16, 24, 0.98), rgba(11, 20, 31, 0.96)),
-    radial-gradient(circle at top left, rgba(255, 93, 162, 0.08), transparent 35%);
+    radial-gradient(circle at top left, rgba(212, 168, 67, 0.08), transparent 35%);
   border-right: 1px solid var(--line);
   backdrop-filter: blur(18px);
   display: flex;
@@ -512,7 +512,7 @@ a {
 .bg-blue-100,
 .bg-teal-600,
 .bg-white\/20 {
-  background-color: rgba(255, 93, 162, 0.14) !important;
+  background-color: rgba(212, 168, 67, 0.14) !important;
 }
 
 .border-slate-50,

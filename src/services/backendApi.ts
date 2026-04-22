@@ -470,6 +470,7 @@ export async function generatePortfolioViaApi(
       correlationScore: response.metrics.diversification_score,
       sectorCount,
     },
+    regimeWarning: response.regime_warning || undefined,
   };
 }
 
