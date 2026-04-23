@@ -16,3 +16,4 @@ torch==2.6.0
 torch-geometric==2.6.1
 httpx==0.28.1
 apscheduler>=3.10.0
+yfinance

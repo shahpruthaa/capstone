@@ -24,19 +24,19 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
                 </div>
                 <div className="text-right">
                     <p className="text-xl font-bold text-emerald-600">+{s.annualReturn}%</p>
-                    <p className="text-xs text-slate-400">Annual Return</p>
+                    <p className="text-xs text-slate-600">Annual Return</p>
                 </div>
             </div>
             <p className="text-xs text-slate-500 mb-4 leading-relaxed">{s.description}</p>
             <div className="mb-4 space-y-1">
-                <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider"><span className="font-semibold text-slate-50">Construction:</span> {s.constructionMethod}</p>
-                <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider"><span className="font-semibold text-slate-50">Constituents:</span> {s.constituentMethod}</p>
-                <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider"><span className="font-semibold text-slate-50">Source Window:</span> {s.sourceWindow}</p>
-                <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">
+                <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider"><span className="font-semibold text-slate-50">Construction:</span> {s.constructionMethod}</p>
+                <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider"><span className="font-semibold text-slate-50">Constituents:</span> {s.constituentMethod}</p>
+                <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider"><span className="font-semibold text-slate-50">Source Window:</span> {s.sourceWindow}</p>
+                <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider">
                     <span className="font-semibold text-slate-50">Data Source:</span> {s.sourceProvider || 'local_research'}
                     {s.sourceType === 'THIRD_PARTY' ? ' (3rd-party)' : ' (local proxy)'}
                 </p>
-                <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider">
+                <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider">
                     <span className="font-semibold text-slate-50">Benchmark Beat Rate:</span> {(s.relativeAccuracyScorePct || 0).toFixed(1)}%
                 </p>
             </div>
@@ -58,7 +58,7 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
             {s.limitations.length > 0 && (
                 <div className="mt-4 space-y-1">
                     {s.limitations.slice(0, 2).map((limitation) => (
-                        <p key={limitation} className="text-[10px] text-slate-400 font-mono">- {limitation}</p>
+                        <p key={limitation} className="text-[10px] text-slate-600 font-mono">- {limitation}</p>
                     ))}
                 </div>
             )}
@@ -101,7 +101,7 @@ export function CompareTab() {
     if (!cmp && loading) {
         return (
             <div className="space-y-8 animate-fade-in">
-                <div className="card p-4 text-sm font-mono text-slate-400">
+                <div className="card p-4 text-sm font-mono text-slate-600">
                     Loading benchmark comparison from the local backend research service...
                 </div>
             </div>
@@ -118,7 +118,7 @@ export function CompareTab() {
                         </div>
                         <div>
                             <h2 className="font-mono text-xs uppercase tracking-wider font-bold text-slate-50">Industry Benchmark Comparison</h2>
-                            <p className="text-[10px] text-slate-400 font-mono">Backend benchmark service required</p>
+                            <p className="text-[10px] text-slate-600 font-mono">Backend benchmark service required</p>
                         </div>
                     </div>
                     {compareNotice && (
@@ -153,10 +153,10 @@ export function CompareTab() {
                     </div>
                     <div>
                         <h2 className="font-mono text-xs uppercase tracking-wider font-bold text-slate-50">Industry Benchmark Comparison</h2>
-                        <p className="text-[10px] text-slate-400 font-mono">AI Portfolio vs Standard Indian Market Strategies · Backend Research Results</p>
+                        <p className="text-[10px] text-slate-600 font-mono">AI Portfolio vs Standard Indian Market Strategies · Backend Research Results</p>
                     </div>
                 </div>
-                <p className="mt-3 text-[10px] text-slate-400 font-mono leading-relaxed">
+                <p className="mt-3 text-[10px] text-slate-600 font-mono leading-relaxed">
                     This comparison view measures realized strategy performance against industry-style proxies and shows how often each strategy matched or beat the Nifty 50 proxy on overlapping trading days.
                 </p>
                 {compareNotice && (
@@ -174,7 +174,7 @@ export function CompareTab() {
             </div>
 
             {loading && (
-                <div className="card p-4 text-[10px] font-mono text-slate-400">
+                <div className="card p-4 text-[10px] font-mono text-slate-600">
                     Loading benchmark comparison from the backend research service...
                 </div>
             )}
@@ -277,7 +277,7 @@ export function CompareTab() {
                                     <td><span className={`badge ${TYPE_BADGES[s.type]}`}>{TYPE_LABELS[s.type]}</span></td>
                                     <td className="text-emerald-500 font-mono font-semibold text-right">{s.annualReturn}%</td>
                                     <td className="font-mono text-right">{s.volatility}%</td>
-                                    <td className={`font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-500' : s.sharpe > 1 ? 'text-blue-500' : 'text-slate-400'}`}>{s.sharpe.toFixed(2)}</td>
+                                    <td className={`font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-500' : s.sharpe > 1 ? 'text-blue-500' : 'text-slate-600'}`}>{s.sharpe.toFixed(2)}</td>
                                     <td className="font-mono text-right">{s.sortino.toFixed(2)}</td>
                                     <td className="text-rose-500 font-mono text-right">{s.maxDrawdown}%</td>
                                     <td className="font-mono text-right">{s.cagr5Y}%</td>
@@ -300,9 +300,9 @@ export function CompareTab() {
                                 <p className="font-mono text-xs uppercase tracking-wider font-bold text-slate-50">{strategy.name}</p>
                                 {strategy.isProxy && <span className="badge badge-slate">Proxy</span>}
                             </div>
-                            <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-slate-50">Method:</span> {strategy.constructionMethod}</p>
-                            <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-slate-50">Constituent Policy:</span> {strategy.constituentMethod}</p>
-                            <p className="text-[10px] text-slate-400 font-mono uppercase tracking-wider mb-2"><span className="font-semibold text-slate-50">Source Window:</span> {strategy.sourceWindow}</p>
+                            <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-slate-50">Method:</span> {strategy.constructionMethod}</p>
+                            <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-slate-50">Constituent Policy:</span> {strategy.constituentMethod}</p>
+                            <p className="text-[10px] text-slate-600 font-mono uppercase tracking-wider mb-2"><span className="font-semibold text-slate-50">Source Window:</span> {strategy.sourceWindow}</p>
                             {strategy.limitations.length > 0 && (
                                 <div className="space-y-1">
                                     {strategy.limitations.map((limitation) => (

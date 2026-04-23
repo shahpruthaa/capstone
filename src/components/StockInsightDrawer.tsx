@@ -62,7 +62,7 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
             <button
                 type="button"
                 onClick={onClose}
-                className="absolute inset-0 bg-slate-900/35"
+                className="absolute inset-0 bg-white/35"
                 aria-label="Close stock insight panel"
             />
             <aside className="absolute right-0 top-0 h-full w-full max-w-2xl overflow-y-auto border-l border-slate-200 bg-white shadow-2xl">
@@ -140,27 +140,27 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                         <>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Sector</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Sector</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.sector}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Annual Forecast</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Annual Forecast</p>
                                     <p className="text-sm font-semibold text-slate-900">{formatPct(detail.pred_annual_return)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Death Risk</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Death Risk</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.death_risk.toFixed(2)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Ensemble Score</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Ensemble Score</p>
                                     <p className="text-sm font-semibold text-slate-900">{formatPct(detail.ensemble_score)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Beta</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Beta</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.beta.toFixed(2)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">As Of</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">As Of</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.as_of_date}</p>
                                 </div>
                             </div>

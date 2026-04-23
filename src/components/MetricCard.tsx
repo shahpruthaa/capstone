@@ -21,7 +21,7 @@ export function MetricCard({ label, value, sub, color = 'slate', trend, icon }: 
     };
 
     const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus;
-    const trendColor = trend === 'up' ? 'text-emerald-500' : trend === 'down' ? 'text-rose-500' : 'text-slate-400';
+    const trendColor = trend === 'up' ? 'text-emerald-500' : trend === 'down' ? 'text-rose-500' : 'text-slate-600';
 
     return (
         <div className="metric-card animate-fade-in">
@@ -29,11 +29,11 @@ export function MetricCard({ label, value, sub, color = 'slate', trend, icon }: 
                 <p className="section-title" style={{ marginBottom: 0 }}>{label}</p>
                 <div className="flex items-center gap-1">
                     {trend && <TrendIcon className={`w-4 h-4 ${trendColor}`} />}
-                    {icon && <span className="text-slate-400">{icon}</span>}
+                    {icon && <span className="text-slate-600">{icon}</span>}
                 </div>
             </div>
             <p className={`text-xl font-bold font-mono ${colorMap[color]}`}>{value}</p>
-            {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+            {sub && <p className="text-xs text-slate-600 mt-1">{sub}</p>}
         </div>
     );
 }

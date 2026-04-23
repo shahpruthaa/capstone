@@ -21,7 +21,7 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h2 className="text-xl font-bold text-slate-50">Build or analyze with the same decision engine</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-400">
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
               Step 1: define the mandate. Step 2: review the recommended portfolio. Step 3: compare it against your real holdings using the same research stack.
             </p>
           </div>

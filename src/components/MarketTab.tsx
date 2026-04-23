@@ -203,7 +203,7 @@ export function MarketTab() {
                             <div className="text-xs text-slate-500">
                                 Regions: {article.involved_regions.join(', ')} · Sectors: {article.affected_sectors.join(', ')}
                             </div>
-                            <div className="text-xs text-slate-400 mt-1">{article.explanation}</div>
+                            <div className="text-xs text-slate-600 mt-1">{article.explanation}</div>
                             {article.url && (
                                 <a href={article.url} target="_blank" rel="noreferrer" className="text-xs text-sky-700 mt-2 inline-block">
                                     Open source

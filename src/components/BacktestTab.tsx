@@ -172,7 +172,7 @@ export function BacktestTab({ portfolio }: Props) {
                                 <option value="LIGHTGBM_HYBRID">Ensemble runtime</option>
                             </select>
                             {activeModelVariant === 'LIGHTGBM_HYBRID' && selectedModelVariant === 'LIGHTGBM_HYBRID' && (
-                                <p className="text-[10px] text-slate-400 mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
+                                <p className="text-[10px] text-slate-600 mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
                             )}
                         </div>
 
@@ -207,7 +207,7 @@ export function BacktestTab({ portfolio }: Props) {
                                 </div>
                             ))}
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-2 italic">LTCG exempt up to ₹1.25L pa. Budget 2024 rates.</p>
+                        <p className="text-[10px] text-slate-600 mt-2 italic">LTCG exempt up to ₹1.25L pa. Budget 2024 rates.</p>
 
                         <div className="mt-4 pt-3 border-t border-slate-100">
                             <p className="text-xs font-semibold text-slate-500 mb-2">Transaction Costs</p>
@@ -235,7 +235,7 @@ export function BacktestTab({ portfolio }: Props) {
             {/* Main results area */}
             <div className="lg:col-span-9 space-y-5">
                 {!result ? (
-                    <div className="card flex flex-col items-center justify-center text-slate-400 p-16 border-2 border-dashed" style={{ minHeight: '480px' }}>
+                    <div className="card flex flex-col items-center justify-center text-slate-600 p-16 border-2 border-dashed" style={{ minHeight: '480px' }}>
                         <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
                             <TrendingUp className="w-8 h-8 opacity-30" />
                         </div>

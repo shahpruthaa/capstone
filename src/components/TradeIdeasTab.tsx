@@ -63,19 +63,19 @@ function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbo
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">Entry</div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-600">Entry</div>
                     <div className="font-semibold text-slate-900">Rs {idea.entry_price.toFixed(2)}</div>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">Stop</div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-600">Stop</div>
                     <div className="font-semibold text-slate-900">Rs {idea.stop_loss.toFixed(2)}</div>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">Target</div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-600">Target</div>
                     <div className="font-semibold text-slate-900">Rs {idea.target_price.toFixed(2)}</div>
                 </div>
                 <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-400">Risk / Reward</div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-600">Risk / Reward</div>
                     <div className="font-semibold text-slate-900">{idea.risk_reward_ratio.toFixed(2)}:1</div>
                 </div>
             </div>
@@ -106,7 +106,7 @@ function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbo
                         <div>
                             <div className={`font-medium ${item.check.passed ? 'text-slate-800' : 'text-slate-700'}`}>
                                 {item.name}
-                                <span className="ml-2 text-xs text-slate-400">({Math.round(item.check.score * 100)}%)</span>
+                                <span className="ml-2 text-xs text-slate-600">({Math.round(item.check.score * 100)}%)</span>
                             </div>
                             <div className="text-xs leading-relaxed text-slate-500">{item.check.reason}</div>
                         </div>

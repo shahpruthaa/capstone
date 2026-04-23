@@ -1,5 +1,30 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    /* Crisp white background, sharp dark text */
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    /* Pure white cards with a sharp 1px border. No muddy shadows. */
+    @apply bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden;
+  }
+  
+  .input-field {
+    @apply bg-white border border-slate-300 rounded-lg text-slate-900 focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all;
+  }
+
+  .section-title {
+    @apply text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-4;
+  }
+}
 
 :root {
   --bg: #0f172a;          /* slate-900 */
