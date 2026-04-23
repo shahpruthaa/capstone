@@ -274,7 +274,7 @@ export function CompareTab() {
             </div>
 
             {/* Metrics comparison table */}
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] overflow-hidden">
+            <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                         <thead>
@@ -294,7 +294,10 @@ export function CompareTab() {
                         </thead>
                         <tbody>
                             {cmp.strategies.map(s => (
-                                <tr key={s.name} className={`border-b border-[#2d2d2d] text-sm hover:bg-[#1d1d1f] transition-colors ${s.name === cmp.winner ? 'bg-yellow-500/5' : 'even:bg-[#0a0a0a]/30'}`}>
+                                <tr 
+                                    key={s.name} 
+                                    className={`border-b border-slate-800/60 bg-[#141415] hover:bg-slate-800/40 transition-colors ${s.name === cmp.winner ? 'bg-yellow-500/10' : ''}`}
+                                >
                                     <td className="p-3">
                                         <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#f5f5f7]">
                                             {s.name === cmp.winner && <Award className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
@@ -306,14 +309,14 @@ export function CompareTab() {
                                     <td className={`p-3 font-mono font-semibold text-right ${s.annualReturn >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
                                         {formatReturn(s.annualReturn)}
                                     </td>
-                                    <td className="p-3 font-mono text-right">{s.volatility.toFixed(2)}%</td>
-                                    <td className={`p-3 font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-500' : s.sharpe > 1 ? 'text-yellow-500' : 'text-[#86868b]'}`}>{s.sharpe.toFixed(2)}</td>
-                                    <td className="p-3 font-mono text-right">{s.sortino.toFixed(2)}</td>
+                                    <td className="p-3 font-mono text-right text-slate-300">{s.volatility.toFixed(2)}%</td>
+                                    <td className={`p-3 font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-500' : s.sharpe > 1 ? 'text-yellow-500' : 'text-slate-400'}`}>{s.sharpe.toFixed(2)}</td>
+                                    <td className="p-3 font-mono text-right text-slate-300">{s.sortino.toFixed(2)}</td>
                                     <td className="p-3 text-rose-500 font-mono text-right">{s.maxDrawdown.toFixed(2)}%</td>
-                                    <td className="p-3 font-mono text-right">{s.cagr5Y.toFixed(2)}%</td>
+                                    <td className="p-3 font-mono text-right text-slate-300">{s.cagr5Y.toFixed(2)}%</td>
                                     <td className="p-3 font-mono text-[#86868B] text-right">{s.expenseRatio.toFixed(2)}%</td>
-                                    {cmp.strategies.some(s2 => s2.sourceType) && <td className="p-3 font-mono text-[10px]">{s.sourceType === 'THIRD_PARTY' ? '3P Ref' : 'Local'}</td>}
-                                    {cmp.strategies.some(s2 => s2.relativeAccuracyScorePct) && <td className="p-3 font-mono text-right">{(s.relativeAccuracyScorePct || 0).toFixed(2)}%</td>}
+                                    {cmp.strategies.some(s2 => s2.sourceType) && <td className="p-3 font-mono text-[10px] text-slate-400">{s.sourceType === 'THIRD_PARTY' ? '3P Ref' : 'Local'}</td>}
+                                    {cmp.strategies.some(s2 => s2.relativeAccuracyScorePct) && <td className="p-3 font-mono text-right text-slate-300">{(s.relativeAccuracyScorePct || 0).toFixed(2)}%</td>}
                                 </tr>
                             ))}
                         </tbody>
