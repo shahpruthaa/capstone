@@ -2,79 +2,101 @@
 
 ## Goal
 
-Keep the current product stable as a local-first research app with:
+Operate a stable local-first research stack where:
 
-- ensemble-aware portfolio generation
-- reliable holdings analysis
-- diversified portfolio construction
-- runtime transparency
-- repeatable frontend validation
+- portfolio generation, analysis, and backtests are backend-authoritative
+- frontend surfaces stay aligned with backend contracts
+- runtime/scheduler/ingestion behavior is explicit and observable
+- merged branch logic remains traceable and testable
 
-## Current Status
+## Current State (Post-Merge)
 
-| Workstream | Status | Outcome |
-| ---------- | ------ | ------- |
-| Runtime status reporting | Complete | UI and backend share the same readiness view |
-| Ensemble generation path | Complete | Generation uses the ensemble runtime with sufficient feature history |
-| Mandate horizon separation | Complete | Horizon now controls decision logic, not feature truncation |
-| Portfolio diversification controls | Complete | Name and sector concentration are capped during selection and weighting |
-| Holdings analysis hardening | Complete | Direct symbol entry, longer timeout, backend notes, and local fallback are in place |
-| Product-surface cleanup | Complete | Chatbot, events, rebalance tab, and generated AI analysis were removed |
-| Frontend production build | Complete | `npm run build` passes |
-| Live backend DB verification | Partial | Blocked when PostgreSQL is unavailable |
+| Workstream                                     | Status         | Notes                                                                                                        |
+| ---------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------ |
+| Core ensemble engine preservation              | Complete       | `db_quant_engine`, `decision_engine`, `price_levels`, `ensemble_scorer` preserved from `kairavee-improv`     |
+| Frontend reintroduction from `kairavee-improv` | Complete       | Current `src/*` surface rebuilt from feature branch in a dedicated follow-up commit                          |
+| Route/schema expansion                         | Active in main | Main keeps richer contracts for benchmarks compare, market regime, trade-ideas screening, and model overview |
+| Scheduler lifecycle integration                | Complete       | Startup + shutdown wiring in `app.main` with `APP_SCHEDULER_ENABLED` gate                                    |
+| Market-calendar-aware ingestion                | Complete       | Trading-day checks no longer rely only on weekday logic                                                      |
+| Frontend production build                      | Passing        | `npm run build` currently green                                                                              |
+| Backend test portability                       | Partial        | DB-backed tests still depend on local Postgres availability                                                  |
 
-## Product Flow
+## Current Product Flow
 
-The intended user flow is:
+1. View `Overview` for model/runtime/health signals.
+2. Use `Portfolio` workspace to either build a mandate-driven basket or analyze existing holdings.
+3. Inspect `Trade Ideas` and optional screening path.
+4. Run `Backtest` against historical data.
+5. Use `Compare` for benchmark-relative performance views.
+6. Use `Market` for regime and context dashboards.
 
-1. inspect runtime state
-2. generate a mandate-driven portfolio
-3. review allocations and diversification
-4. analyze current holdings
-5. run backtests
-6. compare strategies
+## Backend Plan (Now)
 
-## Backend Plan
+Primary code paths:
 
-The backend continues to center on:
+- `apps/api/app/services/db_quant_engine.py`
+- `apps/api/app/services/decision_engine.py`
+- `apps/api/app/services/ensemble_scorer.py`
+- `apps/api/app/services/model_overview.py`
 
-- `db_quant_engine.py`
-- `ensemble_scorer.py`
-- `model_runtime.py`
+Design intent:
 
-Current expectations:
+- Keep engine computations and constraints in backend services.
+- Keep route handlers thin and schema-driven.
+- Keep runtime/scheduler behavior explicit and toggleable by config.
 
-- generation should fail clearly when the requested ensemble runtime is unusable
-- holdings analysis should prefer the backend path but degrade gracefully
-- diversification logic should be enforced in the engine rather than assumed in the UI
+## Frontend Plan (Now)
 
-## Frontend Plan
+Primary contract adapter:
 
-The frontend is now intentionally narrower:
+- `src/services/backendApi.ts`
 
-- no chatbot
-- no events tab
-- no rebalance portfolio tab
-- no generate AI analysis panel
+Primary surface:
 
-That keeps the product focused on the workflows that still have strong backend support.
+- `Overview`, `Market`, `Portfolio`, `Trade Ideas`, `Backtest`, `Compare`
+
+Non-goals for the current baseline:
+
+- reintroducing removed chat/events/rebalance surfaces
+- adding parallel API clients per tab (single adapter remains preferred)
+
+## Documentation/Contract Plan
+
+This update aligns docs with the live route/surface set and removes stale references.
+
+Contract-sensitive areas to keep synchronized whenever changed:
+
+- `apps/api/app/schemas/portfolio.py`
+- `apps/api/app/schemas/trade_idea.py`
+- `apps/api/app/api/routes/*.py`
+- `src/services/backendApi.ts`
 
 ## Validation Plan
 
-Primary checks:
+Required on each merge/update:
 
 - `npm run build`
-- backend `py_compile` on edited services and routes
-- targeted repo-wide search for stale removed-feature references
+- `npm run lint`
+- syntax checks for touched backend services/routes (`py_compile`)
+- route-level smoke via `/docs` and selected endpoint calls where DB is available
 
-Environmental dependency:
+Optional but recommended when DB is running:
 
-- live portfolio generation and holdings analysis still require PostgreSQL access
+- `pytest apps/api/test_portfolio_gen.py -q`
 
-## Remaining Work
+## Risks and Mitigations
 
-Still worth improving later:
+- Risk: API/schema drift between backend and frontend.
+  Mitigation: keep changes centralized in `backendApi.ts` and schema modules.
 
-- stronger automated backend integration tests with database fixtures
-- chunk splitting for the large frontend production bundle
-- fresh artifact retraining and validation
+- Risk: Scheduler side effects in dev.
+  Mitigation: `APP_SCHEDULER_ENABLED` toggle and explicit shutdown handler.
+
+- Risk: Data-dependent false negatives in tests.
+  Mitigation: document DB prerequisites and keep deterministic fixture-based tests as follow-up.
+
+## Next Engineering Steps
+
+1. Add DB fixture-backed integration tests for generate/analyze/backtest/trade-ideas flows.
+2. Add API contract snapshot tests for key response models.
+3. Reduce frontend bundle size via route-level/code-level splitting where practical.

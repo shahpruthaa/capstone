@@ -1,49 +1,57 @@
 # NSE Atlas Architecture
 
-## Objective
+## Purpose
 
-NSE Atlas is a local-first research stack for Indian equities. The live architecture currently optimizes for:
+NSE Atlas is a local-first research system for Indian equity workflows. The current architecture favors:
 
-- explicit model-runtime visibility
-- backend-first portfolio generation and holdings analysis
-- local artifact usage for ensemble inference
-- graceful degradation when infrastructure is unavailable
+- backend-authoritative portfolio and backtest logic
+- explicit model/runtime and observability surfaces
+- typed route contracts from FastAPI through the frontend adapter
+- graceful behavior under partial data/artifact availability
 
-## Topology
+## System Topology
 
 ```mermaid
 flowchart LR
-    U["User Browser"] --> WEB["React + Vite UI"]
-    WEB --> API["FastAPI API"]
+    U["User Browser"] --> WEB["React + Vite frontend"]
+    WEB --> API["FastAPI app"]
 
     API --> ROUTER["app/api/router.py"]
-    ROUTER --> PORT["portfolio.py"]
-    ROUTER --> ANALYSIS["analysis.py"]
-    ROUTER --> BACKTESTS["backtests.py"]
-    ROUTER --> BENCH["benchmarks.py"]
-    ROUTER --> MODELS["models.py"]
-    ROUTER --> NEWS["news.py"]
-    ROUTER --> STOCK["stock_detail.py"]
-    ROUTER --> IDEAS["trade_ideas.py"]
+    ROUTER --> PORT["portfolio routes"]
+    ROUTER --> ANALYSIS["analysis routes"]
+    ROUTER --> BACKTESTS["backtests routes"]
+    ROUTER --> BENCH["benchmarks routes"]
+    ROUTER --> MARKET["market_data routes"]
+    ROUTER --> MODELS["models route"]
+    ROUTER --> OBS["observability route"]
+    ROUTER --> NEWS["news route"]
+    ROUTER --> STOCK["stock_detail route"]
+    ROUTER --> IDEAS["trade_ideas routes"]
 
     PORT --> ENGINE["db_quant_engine.py"]
     ANALYSIS --> ENGINE
     BACKTESTS --> ENGINE
+    BENCH --> ENGINE
+    MARKET --> ENGINE
     STOCK --> ENGINE
-    STOCK --> SCORER["ensemble_scorer.py"]
-    MODELS --> RUNTIME["model_runtime.py"]
+    IDEAS --> DECIDE["decision_engine.py"]
+    DECIDE --> ENGINE
+    DECIDE --> ENS["ensemble_scorer.py"]
 
-    ENGINE --> PG["PostgreSQL + TimescaleDB"]
+    MODELS --> OVERVIEW["model_overview.py"]
+    OBS --> OBS_SVC["observability.py"]
+
+    ENGINE --> PG["PostgreSQL / TimescaleDB"]
     ENGINE --> REDIS["Redis"]
-    NEWS --> PG
+    ENS --> ART["artifacts/models/*"]
 
-    RUNTIME --> ART["artifacts/models/*"]
-    SCORER --> ART
+    API --> SCHED["scheduler.py"]
+    SCHED --> MARKET_CAL["market_calendar.py"]
 ```
 
 ## Frontend Surface
 
-The shell in `src/App.tsx` exposes:
+`src/App.tsx` currently exposes:
 
 - `Overview`
 - `Market`
@@ -52,79 +60,50 @@ The shell in `src/App.tsx` exposes:
 - `Backtest`
 - `Compare`
 
-`PortfolioWorkspace.tsx` contains two focused workflows:
+`PortfolioWorkspace.tsx` contains two workflows:
 
 - `Build Portfolio`
 - `Analyze Holdings`
 
-Removed from the active frontend surface:
+No active UI surface currently exists for:
 
-- AI chat widget
+- AI chat
 - events tab
-- rebalance portfolio tab
-- generate AI analysis panel
+- rebalance tab
 
-## Backend Runtime
+## API Contract Shape
 
-`db_quant_engine.py` remains the main orchestration layer for:
+Notable route families currently mounted:
 
-- portfolio generation
-- holdings analysis
-- backtesting
-- allocation constraints
-- ensemble fallback handling
+- `/api/v1/portfolio/*`
+- `/api/v1/analysis/*`
+- `/api/v1/backtests/*`
+- `/api/v1/benchmarks/*` (summary + compare)
+- `/api/v1/market-data/*` (summary + regime + ingestions)
+- `/api/v1/models/current`
+- `/api/v1/observability/kpis`
+- `/api/v1/news/market-context`
+- `/api/v1/stock/{symbol}`
+- `/api/v1/trade-ideas/*` (list + screen + detail)
 
-Recent runtime behavior now makes the separation explicit:
+## Core Runtime Components
 
-- mandate horizon drives portfolio decision logic
-- model history requirements drive feature availability
-- ensemble scoring can request deeper history than the portfolio horizon
+- `db_quant_engine.py`: generation, analysis, backtest, market/benchmark assembly
+- `decision_engine.py`: trade-idea workflow and scoring checklist
+- `ensemble_scorer.py`: component model blending
+- `model_overview.py`: model/runtime summary returned by `/models/current`
+- `scheduler.py`: timed ingestion trigger with startup/shutdown wiring in `app.main`
 
-## Diversification Controls
+The core ensemble path (`price_levels`, `db_quant_engine`, `decision_engine`, `ensemble_scorer`, `artifact_loader`, `gnn graph`) is preserved from `kairavee-improv` in current main.
 
-Portfolio generation now applies diversification at two stages:
+## Data and Artifacts
 
-1. candidate selection prefers a more sector-spread final basket
-2. weight projection caps concentration at both name and sector level
+Primary stores:
 
-This prevents the portfolio generator from simply taking the top-scoring names from one cluster and calling it diversified.
+- PostgreSQL/TimescaleDB for instruments, bars, runs, and analysis state
+- Redis for runtime support where needed
 
-## Runtime Modes
-
-The backend reports one of these states:
-
-- `full_ensemble`
-- `degraded_ensemble`
-- `rules_only`
-
-The UI reads that status before generation or analysis workflows decide how to behave.
-
-## Active Route Surface
-
-`app/api/router.py` registers the current route families:
-
-- model status
-- portfolio generation
-- holdings analysis
-- backtests
-- benchmarks
-- market data
-- news
-- stock detail
-- trade ideas
-
-Removed route family:
-
-- explain/chat
-
-## Data Architecture
-
-Primary persistence:
-
-- PostgreSQL + TimescaleDB for instruments, bars, runs, and related state
-- Redis for runtime support
-
-Artifact storage:
+Model artifact roots:
 
 - `apps/api/artifacts/models/lightgbm_v1/`
 - `apps/api/artifacts/models/lstm_v1/`
@@ -132,16 +111,19 @@ Artifact storage:
 - `apps/api/artifacts/models/death_risk_v1/`
 - `apps/api/artifacts/models/ensemble_v1/`
 
-Model documentation:
+## Operational Notes
 
-- `docs/models/death-risk-v1.md`
+- Startup bootstraps local state and lightgbm model status, then starts scheduler.
+- Shutdown explicitly stops scheduler.
+- Trading-day logic for ingestion is market-calendar aware.
+- API/UI integration relies on typed schema mapping in `src/services/backendApi.ts`.
 
-## Validation Surface
+## Validation Envelope
 
-Current validation focuses on:
+Current fast checks:
 
-- frontend production build
-- backend syntax/import checks
-- local smoke coverage for generate, analyze, backtest, and compare
+- frontend production build (`npm run build`)
+- frontend type check (`npm run lint`)
+- backend syntax checks (`py_compile`) for modified services/routes
 
-Live end-to-end backend flows still depend on PostgreSQL being reachable.
+Database-dependent flows (generation, analysis, backtests, many route calls) still require reachable PostgreSQL.
