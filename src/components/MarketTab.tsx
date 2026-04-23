@@ -1,221 +1,221 @@
-import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Globe2, Newspaper, RefreshCw } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Globe2, Newspaper, RefreshCw, ShieldAlert, TrendingUp } from 'lucide-react';
 
 import {
-  getMarketContextViaApi,
-  getMarketDashboardViaApi,
-  getMarketDataSummaryViaApi,
-  MarketContext,
-  MarketDashboard,
-  MarketDataSummary,
+    getMarketContextViaApi,
+    getMarketDataSummaryViaApi,
+    MarketContext,
+    MarketDataSummary,
 } from '../services/backendApi';
 import { MetricCard } from './MetricCard';
-import { PortfolioFitBanner } from './PortfolioFitBanner';
 
-function formatSigned(value: number, suffix = ''): string {
-  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}${suffix}`;
+function formatSentiment(value: number): string {
+    return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
 }
 
 export function MarketTab() {
-  const [marketData, setMarketData] = useState<MarketDataSummary | null>(null);
-  const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
-  const [dashboard, setDashboard] = useState<MarketDashboard | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+    const [marketData, setMarketData] = useState<MarketDataSummary | null>(null);
+    const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
 
-  const load = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const [summary, context, regimeDashboard] = await Promise.all([
-        getMarketDataSummaryViaApi(),
-        getMarketContextViaApi(),
-        getMarketDashboardViaApi(),
-      ]);
-      setMarketData(summary);
-      setMarketContext(context);
-      setDashboard(regimeDashboard);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load market context.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const load = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const [summary, context] = await Promise.all([
+                getMarketDataSummaryViaApi(),
+                getMarketContextViaApi(),
+            ]);
+            setMarketData(summary);
+            setMarketContext(context);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Unable to load market context.');
+        } finally {
+            setLoading(false);
+        }
+    };
 
-  useEffect(() => {
-    void load();
-  }, []);
+    useEffect(() => {
+        void load();
+    }, []);
 
-  return (
-    <div className="space-y-5">
-      <div className="card p-5" style={{ background: 'linear-gradient(135deg, rgba(20, 83, 45, 0.22), rgba(8, 47, 73, 0.16))' }}>
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <Globe2 className="w-4 h-4 text-sky-700" />
-              <h2 className="font-bold text-slate-900">Market Regime and Leadership</h2>
-            </div>
-            <p className="text-sm text-slate-600 leading-relaxed">
-              The market view now combines trend, breadth, realized volatility, drawdown state, factor weather,
-              cross-asset tone proxies, and sector relative strength, with clear proxy labels where the direct feed is not live yet.
-            </p>
-          </div>
-          <button onClick={() => void load()} disabled={loading} className="btn-primary px-4 py-2 text-sm flex items-center gap-2">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-      </div>
+    const sectorHeatmap = useMemo(() => {
+        if (!marketContext) return [];
+        return (Object.entries(marketContext.sector_sentiment) as Array<[string, number]>)
+            .sort((left, right) => Math.abs(right[1]) - Math.abs(left[1]))
+            .slice(0, 12);
+    }, [marketContext]);
 
-      {error && (
-        <div className="alert-warning text-sm flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 mt-0.5" />
-          <span>{error}</span>
-        </div>
-      )}
+    const usingFallbackNews = useMemo(
+        () => (marketContext?.articles ?? []).length > 0 && (marketContext?.articles ?? []).every((article) => article.source === 'LocalFallback'),
+        [marketContext],
+    );
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <MetricCard label="Index vs 50 DMA" value={dashboard ? (dashboard.trend.above50Dma ? 'Above' : 'Below') : '--'} sub={dashboard ? `${dashboard.trend.indexSymbol} ${dashboard.trend.spot.toFixed(2)}` : 'Loading'} color={dashboard?.trend.above50Dma ? 'green' : 'red'} />
-        <MetricCard label="Index vs 200 DMA" value={dashboard ? (dashboard.trend.above200Dma ? 'Above' : 'Below') : '--'} sub={dashboard ? `${dashboard.trend.dma200.toFixed(2)} DMA` : 'Loading'} color={dashboard?.trend.above200Dma ? 'green' : 'red'} />
-        <MetricCard label="Breadth > 50 DMA" value={dashboard ? `${dashboard.trend.breadthAbove50Pct.toFixed(0)}%` : '--'} sub={dashboard ? `${dashboard.trend.breadthAbove200Pct.toFixed(0)}% above 200 DMA` : 'Loading'} color="blue" />
-        <MetricCard label="Realized Vol" value={dashboard ? `${dashboard.trend.realizedVolatilityPct.toFixed(1)}%` : '--'} sub={dashboard?.trend.drawdownState || 'Loading'} color={dashboard && dashboard.trend.realizedVolatilityPct <= 18 ? 'green' : 'amber'} />
-      </div>
+    const inferredRegime = useMemo(() => {
+        const explicit = marketContext?.regime_name?.trim();
+        if (explicit) return explicit;
+        const score = marketContext?.overall_market_sentiment ?? 0;
+        if (score >= 0.1) return 'Bull';
+        if (score <= -0.1) return 'Bear';
+        return 'Neutral';
+    }, [marketContext]);
 
-      <PortfolioFitBanner title="What This Means For Portfolios Now" summary={dashboard?.whatThisMeansNow} />
+    const regimeTone = inferredRegime === 'Bull'
+        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+        : inferredRegime === 'Bear'
+            ? 'bg-rose-50 border-rose-200 text-rose-800'
+            : 'bg-amber-50 border-amber-200 text-amber-800';
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        <div className="card p-5">
-          <p className="section-title">Price-Based Regime</p>
-          {dashboard ? (
-            <div className="space-y-3 text-sm text-slate-700">
-              <div className="stat-row"><span className="stat-label">Spot</span><span className="stat-value">{dashboard.trend.spot.toFixed(2)}</span></div>
-              <div className="stat-row"><span className="stat-label">50 DMA</span><span className="stat-value">{dashboard.trend.dma50.toFixed(2)}</span></div>
-              <div className="stat-row"><span className="stat-label">200 DMA</span><span className="stat-value">{dashboard.trend.dma200.toFixed(2)}</span></div>
-              <div className="stat-row"><span className="stat-label">Breadth above 50</span><span className="stat-value">{dashboard.trend.breadthAbove50Pct.toFixed(1)}%</span></div>
-              <div className="stat-row"><span className="stat-label">Breadth above 200</span><span className="stat-value">{dashboard.trend.breadthAbove200Pct.toFixed(1)}%</span></div>
-              <div className="stat-row"><span className="stat-label">Drawdown</span><span className="stat-value">{dashboard.trend.drawdownPct.toFixed(1)}%</span></div>
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">Loading market regime...</p>
-          )}
-        </div>
+    const heatmapCells = useMemo(() => {
+        const maxAbs = Math.max(...sectorHeatmap.map(([, score]) => Math.abs(score)), 0.01);
+        return sectorHeatmap.map(([sector, score]) => {
+            const intensity = Math.max(0.18, Math.min(0.95, Math.abs(score) / maxAbs));
+            const background = score >= 0
+                ? `rgba(16, 185, 129, ${0.12 + intensity * 0.28})`
+                : `rgba(239, 68, 68, ${0.12 + intensity * 0.28})`;
+            const border = score >= 0 ? 'rgba(16, 185, 129, 0.38)' : 'rgba(239, 68, 68, 0.38)';
+            const color = score >= 0 ? '#047857' : '#b91c1c';
+            return { sector, score, background, border, color, width: `${Math.max(20, intensity * 100)}%` };
+        });
+    }, [sectorHeatmap]);
 
-        <div className="card p-5">
-          <p className="section-title">Factor Weather</p>
-          <div className="space-y-3">
-            {(dashboard?.factorWeather ?? []).map((item) => (
-              <div key={item.factor} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{item.factor}</p>
-                    <p className="text-[11px] text-slate-500">{item.note}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-slate-900">{formatSigned(item.leadershipScore)}</p>
-                    <p className="text-[11px] text-slate-500">{item.leader}</p>
-                  </div>
-                </div>
-                <div className="mt-2 text-[11px] text-slate-400 uppercase tracking-wide">{item.dataQuality}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="card p-5">
-          <p className="section-title">Cross-Asset Tone</p>
-          <div className="space-y-3">
-            {(dashboard?.crossAssetTone ?? []).map((item) => (
-              <div key={item.asset} className="rounded-2xl border border-slate-200 bg-white p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">{item.asset}</p>
-                    <p className="text-[11px] text-slate-500">{item.note}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-slate-900">{item.tone}</p>
-                    <div className="flex items-center justify-end gap-1.5">
-                      <p className="text-[11px] text-slate-500">{formatSigned(item.movePct, '%')}</p>
-                      {item.dataQuality === 'proxy' && (
-                        <span className="badge badge-neutral text-[10px] px-1.5 py-0.5">proxy</span>
-                      )}
+    return (
+        <div className="space-y-5">
+            <div className="card p-5" style={{ background: 'linear-gradient(135deg, rgba(20, 83, 45, 0.25), rgba(8, 47, 73, 0.18))', borderColor: 'rgba(125, 211, 252, 0.18)' }}>
+                <div className="flex items-start justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 mb-1">
+                            <Globe2 className="w-4 h-4 text-sky-700" />
+                            <h2 className="font-bold text-slate-900">Market Pulse</h2>
+                        </div>
+                        <p className="text-sm text-slate-600 leading-relaxed">
+                            The Market tab now blends local ingestion coverage with scored news semantics so you can see what is moving sectors before it feeds into recommendations.
+                        </p>
                     </div>
-                  </div>
+                    <button onClick={load} disabled={loading} className="btn-primary px-4 py-2 text-sm flex items-center gap-2">
+                        <RefreshCw className={`w-4 h-4 ${loading ? 'spin' : ''}`} />
+                        Refresh
+                    </button>
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+            </div>
 
-      <div className="card p-5">
-        <p className="section-title">Sector Relative Strength</p>
-        <div className="overflow-x-auto">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Sector</th>
-                <th>1M</th>
-                <th>3M</th>
-                <th>6M</th>
-                <th>Earnings Revision Trend</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(dashboard?.sectorRelativeStrength ?? []).map((item) => (
-                <tr key={item.sector}>
-                  <td className="font-semibold text-slate-900">{item.sector}</td>
-                  <td className="font-mono">{item.return1mPct.toFixed(2)}%</td>
-                  <td className="font-mono">{item.return3mPct.toFixed(2)}%</td>
-                  <td className="font-mono">{item.return6mPct.toFixed(2)}%</td>
-                  <td>{item.earningsRevisionTrend}</td>
-                  <td className="text-xs text-slate-500">{item.note}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <div className="card p-5">
-          <p className="section-title">Market Data Coverage</p>
-          <div className="space-y-2 text-sm text-slate-600">
-            <div className="stat-row"><span className="stat-label">Daily Bars</span><span className="stat-value">{marketData?.dailyBarCount ?? 0}</span></div>
-            <div className="stat-row"><span className="stat-label">Instruments</span><span className="stat-value">{marketData?.instrumentCount ?? 0}</span></div>
-            {(marketData?.notes ?? []).map((note, index) => (
-              <p key={index} className="text-xs text-slate-500">{note}</p>
-            ))}
-            {(dashboard?.notes ?? []).map((note, index) => (
-              <p key={`dash-${index}`} className="text-xs text-slate-500">{note}</p>
-            ))}
-          </div>
-        </div>
-
-        <div className="card p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <Newspaper className="w-4 h-4 text-slate-700" />
-            <h3 className="font-bold text-slate-900">News Pulse</h3>
-          </div>
-          <div className="space-y-3">
-            {(marketContext?.articles ?? []).slice(0, 6).map((article, index) => (
-              <div key={`${article.headline}-${index}`} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                <div className="flex flex-wrap items-center gap-2 mb-2">
-                  <span className="text-sm font-semibold text-slate-900">{article.headline}</span>
-                  <span className="badge badge-neutral">{article.source}</span>
-                  <span className={`badge ${article.sentiment_score >= 0 ? 'badge-green' : 'badge-red'}`}>
-                    Sentiment {formatSigned(article.sentiment_score)}
-                  </span>
+            {error && (
+                <div className="alert-warning text-sm flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5" />
+                    <span>{error}</span>
                 </div>
-                <p className="text-sm text-slate-600 leading-relaxed">{article.summary}</p>
-                <div className="text-xs text-slate-500 mt-2">
-                  Regions: {article.involved_regions.join(', ')} | Sectors: {article.affected_sectors.join(', ')}
+            )}
+
+            {usingFallbackNews && (
+                <div className="alert-warning text-sm flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5" />
+                    <span>Live market headlines could not be reached, so this view is temporarily using the deterministic local fallback feed.</span>
                 </div>
-              </div>
-            ))}
-          </div>
+            )}
+
+            <div className={`card p-4 border ${regimeTone}`}>
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <p className="text-xs uppercase tracking-[0.12em] font-semibold">Market Regime</p>
+                        <p className="text-lg font-bold">{inferredRegime}</p>
+                    </div>
+                    <div className="text-right text-xs">
+                        <div>Generated: {marketContext?.generated_at ?? '--'}</div>
+                        <div>Source: `/api/v1/news/market-context`</div>
+                    </div>
+                </div>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <MetricCard label="Market Sentiment" value={marketContext ? formatSentiment(marketContext.overall_market_sentiment) : '--'} sub="News-derived composite" color={marketContext && marketContext.overall_market_sentiment >= 0 ? 'green' : 'amber'} trend={marketContext && marketContext.overall_market_sentiment >= 0 ? 'up' : 'down'} />
+                <MetricCard label="Articles" value={String(marketContext?.articles.length ?? 0)} sub="Recent scored events" color="blue" />
+                <MetricCard label="Instruments" value={String(marketData?.instrumentCount ?? 0)} sub={marketData?.available ? `Through ${marketData.maxTradeDate}` : 'Local DB not loaded'} color="slate" />
+                <MetricCard label="Daily Bars" value={String(marketData?.dailyBarCount ?? 0)} sub={marketData?.minTradeDate ? `${marketData.minTradeDate} onwards` : 'No bars'} color="blue" />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+                <div className="lg:col-span-5 card p-5">
+                    <div className="flex items-center gap-2 mb-3">
+                        <TrendingUp className="w-4 h-4 text-emerald-600" />
+                        <h3 className="font-bold text-slate-900">Sector Heatmap</h3>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {heatmapCells.map((cell) => (
+                            <div
+                                key={cell.sector}
+                                className="rounded-2xl border px-3 py-3"
+                                style={{ background: cell.background, borderColor: cell.border }}
+                            >
+                                <div className="flex items-center justify-between gap-3 mb-2">
+                                    <span className="text-sm font-semibold text-slate-800">{cell.sector}</span>
+                                    <span className="text-sm font-semibold" style={{ color: cell.color }}>
+                                        {formatSentiment(cell.score)}
+                                    </span>
+                                </div>
+                                <div className="h-2 rounded-full bg-white/60 overflow-hidden">
+                                    <div
+                                        className="h-full rounded-full"
+                                        style={{ width: cell.width, background: cell.color }}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                        {!loading && heatmapCells.length === 0 && (
+                            <div className="text-sm text-slate-500">No sector sentiment is available yet.</div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="lg:col-span-7 card p-5">
+                    <div className="flex items-center gap-2 mb-3">
+                        <ShieldAlert className="w-4 h-4 text-amber-600" />
+                        <h3 className="font-bold text-slate-900">Top Event</h3>
+                    </div>
+                    <p className="text-sm text-slate-700 leading-relaxed mb-4">
+                        {marketContext?.top_event_summary ?? 'Loading the top event summary...'}
+                    </p>
+                    <div className="space-y-2 text-xs text-slate-500">
+                        {(marketData?.notes ?? []).map((note, index) => (
+                            <div key={index}>{note}</div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            <div className="card p-5">
+                <div className="flex items-center gap-2 mb-4">
+                    <Newspaper className="w-4 h-4 text-slate-700" />
+                    <h3 className="font-bold text-slate-900">All News</h3>
+                </div>
+                <div className="space-y-3">
+                    {(marketContext?.articles ?? []).map((article, index) => (
+                        <div key={`${article.headline}-${index}`} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                                <span className="text-sm font-semibold text-slate-900">{article.headline}</span>
+                                <span className="badge badge-neutral">{article.source}</span>
+                                <span className={`badge ${article.sentiment_score >= 0 ? 'badge-green' : 'badge-red'}`}>
+                                    Sentiment {formatSentiment(article.sentiment_score)}
+                                </span>
+                                <span className="badge badge-neutral">Impact {article.impact_score.toFixed(1)}/10</span>
+                            </div>
+                            <p className="text-sm text-slate-600 leading-relaxed mb-2">{article.summary}</p>
+                            <div className="text-xs text-slate-500">
+                                Regions: {article.involved_regions.join(', ')} · Sectors: {article.affected_sectors.join(', ')}
+                            </div>
+                            <div className="text-xs text-slate-400 mt-1">{article.explanation}</div>
+                            {article.url && (
+                                <a href={article.url} target="_blank" rel="noreferrer" className="text-xs text-sky-700 mt-2 inline-block">
+                                    Open source
+                                </a>
+                            )}
+                        </div>
+                    ))}
+                    {!loading && (marketContext?.articles.length ?? 0) === 0 && (
+                        <div className="text-sm text-slate-500">No recent articles were available.</div>
+                    )}
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 }

@@ -44,52 +44,6 @@ export interface Portfolio {
   lookbackWindowDays?: number;
   expectedHoldingPeriodDays?: number;
   regimeWarning?: string;
-  runtime?: {
-    variant: 'RULES' | 'LIGHTGBM_HYBRID';
-    modelSource: 'RULES' | 'ENSEMBLE';
-    activeMode: string;
-    modelVersion: string;
-    artifactClassification: string;
-    predictionHorizonDays: number;
-  };
-  standardMetrics?: {
-    returnPct: number;
-    volatilityPct: number;
-    sharpeRatio: number;
-    diversificationScore?: number;
-    correlation?: number;
-    beta?: number;
-  };
-  factorExposures?: { [key: string]: number };
-  positionRiskContributions?: Array<{ name: string; weightPct: number; contributionPct: number; detail: string }>;
-  sectorRiskContributions?: Array<{ name: string; weightPct: number; contributionPct: number; detail: string }>;
-  constraints?: {
-    maxPositionCapPct: number;
-    maxSectorCapPct: number;
-    largestPositionPct: number;
-    largestPositionName: string;
-    largestSectorWeightPct: number;
-    largestSectorName: string;
-    nearPositionCap: boolean;
-    nearSectorCap: boolean;
-  };
-  turnoverEstimatePct?: number;
-  deploymentEfficiencyPct?: number;
-  scenarioTests?: Array<{ name: string; pnlPct: number; commentary: string }>;
-  benchmarkRelative?: {
-    benchmarkName: string;
-    activeSharePct: number;
-    trackingErrorPct: number;
-    exAnteAlphaPct: number;
-    informationRatio: number;
-  };
-  portfolioFitSummary?: {
-    summary: string;
-    riskLevel: string;
-    diversification: string;
-    concentration: string;
-    nextAction: string;
-  };
 }
 
 export interface PortfolioMetrics {
@@ -111,44 +65,6 @@ export interface AnalysisResult {
   factorExposures?: { [key: string]: number };
   correlationWarnings: string[];
   totalValue: number;
-  totalHoldings?: number;
-  avgPairwiseCorrelation?: number;
-  largestSector?: string;
-  largestSectorWeight?: number;
-  healthLabel?: 'GOOD' | 'OKAY' | 'CAUTION';
-  healthSummary?: string;
-  riskAssessment?: string;
-  diversificationAssessment?: string;
-  concentrationAssessment?: string;
-  factorAssessment?: string;
-  correlationAssessment?: string;
-  benchmarkAssessment?: string;
-  idiosyncraticRiskAssessment?: string;
-  rebalanceSummary?: string;
-  portfolioFitSummary?: {
-    summary: string;
-    riskLevel: string;
-    diversification: string;
-    concentration: string;
-    nextAction: string;
-  };
-  standardMetrics?: {
-    returnPct: number;
-    volatilityPct: number;
-    sharpeRatio: number;
-    diversificationScore?: number;
-    correlation?: number;
-    beta?: number;
-  };
-  runtime?: {
-    variant: 'RULES' | 'LIGHTGBM_HYBRID';
-    modelSource: 'RULES' | 'ENSEMBLE';
-    activeMode: string;
-    modelVersion: string;
-    artifactClassification: string;
-    predictionHorizonDays: number;
-  };
-  recommendedActions?: string[];
   backendNotes?: string[];
   modelVariantApplied?: 'RULES' | 'LIGHTGBM_HYBRID';
   modelSource?: 'RULES' | 'ENSEMBLE';
@@ -346,13 +262,7 @@ export function generatePortfolio(amount: number, risk: RiskProfile): Portfolio 
   const totalInvested = allocations.reduce((acc, a) => acc + a.amount, 0);
   const metrics = computeMetrics(selectedStocks, weights, risk);
 
-  return {
-    allocations,
-    totalInvested,
-    riskProfile: risk,
-    metrics,
-    backendNotes: ['Local demo fallback only; metrics are heuristic and not live-market derived.'],
-  };
+  return { allocations, totalInvested, riskProfile: risk, metrics };
 }
 
 // ─── Portfolio Analyzer ───────────────────────────────────────────────────────

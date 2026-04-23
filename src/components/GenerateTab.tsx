@@ -14,7 +14,7 @@ import {
     UserMandate,
 } from '../services/backendApi';
 import { MetricCard, SectorChip } from './MetricCard';
-import { PortfolioFitBanner } from './PortfolioFitBanner';
+import { StockInsightDrawer } from './StockInsightDrawer';
 
 const COLORS = ['#D4A843', '#5B9CF6', '#52C97A', '#E05C5C', '#F59E0B', '#A78BFA'];
 
@@ -30,7 +30,13 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     });
     const [generating, setGenerating] = useState(false);
     const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
+    const [activeModelVersion, setActiveModelVersion] = useState<string>('');
+    const [activeTrainingMode, setActiveTrainingMode] = useState<string>('');
+    const [artifactClassification, setArtifactClassification] = useState<'bootstrap' | 'standard' | ''>('');
+    const [modelStatusReason, setModelStatusReason] = useState<string>('');
     const [generationNotice, setGenerationNotice] = useState<{ tone: 'info' | 'warning'; text: string } | null>(null);
+    const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+    const [drawerOpen, setDrawerOpen] = useState(false);
     const runtimeLoaded = useRef(false);
 
     useEffect(() => {
@@ -40,12 +46,22 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                 runtimeLoaded.current = true;
                 if (status.available) {
                     setActiveModelVariant('LIGHTGBM_HYBRID');
+                    setModelStatusReason('');
+                    if (typeof status.modelVersion === 'string') setActiveModelVersion(status.modelVersion);
+                    if (typeof status.trainingMode === 'string') setActiveTrainingMode(status.trainingMode);
+                    if (status.artifactClassification) setArtifactClassification(status.artifactClassification);
                 } else {
                     setActiveModelVariant('RULES');
+                    setActiveTrainingMode('');
+                    setArtifactClassification('');
+                    setModelStatusReason(status.reason || 'missing_or_invalid_artifact');
                 }
             } catch {
                 runtimeLoaded.current = true;
                 setActiveModelVariant('RULES');
+                setActiveTrainingMode('');
+                setArtifactClassification('');
+                setModelStatusReason('api_unreachable');
             }
         };
         void loadModelStatus();
@@ -64,11 +80,16 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     };
 
     const handleGenerate = async (capitalOverride?: number, riskOverride?: RiskAttitude) => {
+        if (activeModelVariant !== 'LIGHTGBM_HYBRID') {
+            setGenerationNotice({
+                tone: 'warning',
+                text: `Ensemble runtime is not ready${modelStatusReason ? ` (${modelStatusReason})` : ''}. Portfolio generation is blocked instead of falling back to rules.`,
+            });
+            return;
+        }
+
         const capitalAmount = capitalOverride ?? amount;
-        const requestMandate = {
-            ...(riskOverride ? { ...mandate, risk_attitude: riskOverride } : mandate),
-            preferred_num_positions: Math.min(50, Math.max(1, Math.floor(mandate.preferred_num_positions))),
-        };
+        const requestMandate = riskOverride ? { ...mandate, risk_attitude: riskOverride } : mandate;
 
         setGenerating(true);
         setGenerationNotice(null);
@@ -84,7 +105,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
             onPortfolioGenerated(generated);
             setGenerationNotice({
                 tone: 'info',
-                text: `Portfolio generated for a ${requestMandate.risk_attitude.replace('_', ' ')} mandate with a ${requestMandate.investment_horizon_weeks}-week horizon.`,
+                text:
+                    generated.modelSource === 'ENSEMBLE'
+                        ? `Using ensemble runtime${generated.modelVersion ? ` ${generated.modelVersion}` : ''}${generated.predictionHorizonDays ? ` over ${generated.predictionHorizonDays} trading days` : ''}, with a ${generated.lookbackWindowDays ?? '--'}-day lookback and ${generated.expectedHoldingPeriodDays ?? '--'}-day holding target.`
+                        : 'Portfolio generation completed without ensemble output.',
             });
         } catch (error) {
             setGenerationNotice({
@@ -121,12 +145,17 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
         { id: 'growth', label: 'Growth', icon: <Zap className="w-5 h-5" />, desc: 'Higher upside bias' },
     ];
 
+    const openStockDrawer = (symbol: string) => {
+        setSelectedSymbol(symbol);
+        setDrawerOpen(true);
+    };
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
             <div className="lg:col-span-4 space-y-5">
-                <div className="card p-6">
-                    <h2 className="font-bold text-base flex items-center gap-2 mb-5">
-                        <Calculator className="w-4 h-4 text-teal-600" /> Investment Parameters
+                <div className="card p-4">
+                    <h2 className="font-mono text-[10px] uppercase tracking-wider font-bold flex items-center gap-2 mb-4">
+                        <Calculator className="w-4 h-4 text-blue-500" /> Investment Parameters
                     </h2>
 
                     <div className="space-y-5">
@@ -136,14 +165,26 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         )}
 
-                        {runtimeLoaded.current && activeModelVariant !== 'LIGHTGBM_HYBRID' ? (
+                        <div className="alert-info text-xs">
+                            Active generation engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `Ensemble runtime${activeModelVersion ? ` ${activeModelVersion}` : ''}` : 'Unavailable'}
+                            {activeModelVariant !== 'LIGHTGBM_HYBRID' && modelStatusReason ? ` (${modelStatusReason})` : ''}
+                        </div>
+
+                        {activeModelVariant === 'LIGHTGBM_HYBRID' ? (
+                            <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
+                                Ensemble training mode: {activeTrainingMode || 'unknown'}.
+                                {artifactClassification === 'bootstrap'
+                                    ? ' This is still a bootstrap artifact and should be treated as a development/demo model.'
+                                    : ' This artifact passed the standard local validation flow.'}
+                            </div>
+                        ) : runtimeLoaded.current ? (
                             <div className="alert-warning text-xs">
-                                Portfolio construction is using the fallback path because the primary research service is not available right now.
+                                Ensemble runtime is unavailable, so generation stays blocked instead of silently switching to rules.
                             </div>
                         ) : null}
 
                         <div>
-                            <label className="block text-xs font-600 text-slate-500 mb-1.5">Investment Amount (Rs)</label>
+                            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Investment Amount (Rs)</label>
                             <input
                                 type="number"
                                 value={amount}
@@ -156,7 +197,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Horizon (weeks)</label>
+                                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Horizon (weeks)</label>
                                 <select
                                     value={mandate.investment_horizon_weeks}
                                     onChange={e => updateMandate('investment_horizon_weeks', e.target.value as UserMandate['investment_horizon_weeks'])}
@@ -168,20 +209,18 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs font-600 text-slate-500 mb-1.5">Target Positions</label>
+                                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Target Positions</label>
                                 <input
                                     type="number"
-                                    min={1}
-                                    max={50}
                                     value={mandate.preferred_num_positions}
-                                    onChange={e => updateMandate('preferred_num_positions', Math.min(50, Math.max(1, Number(e.target.value))))}
+                                    onChange={e => updateMandate('preferred_num_positions', Number(e.target.value))}
                                     className="input-field px-4 py-2.5"
                                 />
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-xs font-600 text-slate-500 mb-2">Risk Attitude</label>
+                            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-2">Risk Attitude</label>
                             <div className="grid grid-cols-3 gap-2">
                                 {riskOpts.map(risk => (
                                     <button
@@ -197,7 +236,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         </div>
 
-                        <label className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                        <label className="flex items-center justify-between rounded-sm border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-slate-300 font-mono text-[11px] uppercase tracking-wide">
                             <span>Allow small caps</span>
                             <input
                                 type="checkbox"
@@ -208,18 +247,38 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                         <button
                             onClick={() => void handleGenerate()}
-                            disabled={generating}
+                            disabled={generating || activeModelVariant !== 'LIGHTGBM_HYBRID'}
                             className="btn btn-primary btn-lg w-full flex items-center justify-center gap-2"
                         >
-                            {generating ? 'Generating...' : 'Generate Portfolio'} <ArrowRight className="w-4 h-4" />
+                            {generating ? 'Generating...' : 'Generate AI Portfolio'} <ArrowRight className="w-4 h-4" />
                         </button>
                     </div>
                 </div>
 
                 {portfolio && (
                     <>
-                        <div className="card p-5">
-                            <h3 className="font-bold text-sm flex items-center gap-2 mb-4">
+                        <div className="card p-4">
+                            <div className="flex items-center justify-between">
+                                <div className="text-[10px] text-slate-400 font-mono tracking-wider uppercase font-medium">MODEL GENERATION SUMMARY</div>
+                                {portfolio.modelSource === 'ENSEMBLE'
+                                    ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">AI Ensemble Active</span>
+                                    : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Rules-Based Mode</span>}
+                            </div>
+                        </div>
+
+                        {portfolio.backendNotes && portfolio.backendNotes.length > 0 && (
+                            <div className="card p-4">
+                                <h3 className="font-mono text-xs uppercase tracking-wider font-bold mb-3 text-slate-50">Backend Model Notes</h3>
+                                <div className="space-y-2">
+                                    {portfolio.backendNotes.map((note, index) => (
+                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="card p-4">
+                            <h3 className="font-mono text-[10px] uppercase tracking-wider font-bold flex items-center gap-2 mb-4">
                                 <Info className="w-4 h-4 text-blue-500" /> Transaction Costs
                             </h3>
                             <div className="space-y-1">
@@ -238,8 +297,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     </div>
                                 ))}
                                 <div className="stat-row" style={{ fontWeight: 700 }}>
-                                    <span className="stat-label text-xs font-bold">Total Charges</span>
-                                    <span className="text-rose-600 font-bold text-xs">Rs {costs!.total.toFixed(2)}</span>
+                                    <span className="stat-label text-xs font-bold text-slate-50">Total Charges</span>
+                                    <span className="text-rose-500 font-mono font-bold text-sm">Rs {costs!.total.toFixed(2)}</span>
                                 </div>
                             </div>
                             <p className="text-[10px] text-slate-400 mt-3 italic">Stop-loss: 15% trailing, STCG: 20%, LTCG: 12.5%</p>
@@ -250,12 +309,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
             <div className="lg:col-span-8 space-y-5">
                 {!portfolio ? (
-                        <div className="card flex flex-col items-center justify-center text-slate-400 p-16 border-2 border-dashed" style={{ minHeight: '400px' }}>
-                        <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
-                            <TrendingUp className="w-8 h-8 opacity-30" />
+                    <div className="card flex flex-col items-center justify-center text-slate-400 p-8 border border-dashed border-slate-600" style={{ minHeight: '400px' }}>
+                        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4">
+                            <TrendingUp className="w-8 h-8 opacity-30 text-blue-500" />
                         </div>
-                        <p className="text-base font-semibold mb-1">Set the mandate and generate</p>
-                        <p className="text-sm">The portfolio builder uses your horizon, risk attitude, position count, and market context.</p>
+                        <p className="font-mono text-[11px] uppercase tracking-wider font-semibold mb-1 text-slate-300">Set the mandate and generate</p>
+                        <p className="text-[10px] font-mono tracking-wide text-slate-500">The ensemble allocator uses horizon, risk attitude, position count, and news context.</p>
                     </div>
                 ) : (
                     <>
@@ -276,7 +335,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         </div>
 
                         {portfolio.mandate && (
-                            <div className="card p-5">
+                            <div className="card p-4">
                                 <p className="section-title">Mandate In Effect</p>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                                     <div className="stat-row">
@@ -299,10 +358,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         )}
 
-                        <PortfolioFitBanner summary={portfolio.portfolioFitSummary} />
-
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                            <div className="card p-5">
+                            <div className="card p-4">
                                 <p className="section-title">Stock Allocation</p>
                                 <div className="h-56">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -317,7 +374,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 </div>
                             </div>
 
-                            <div className="card p-5">
+                            <div className="card p-4">
                                 <p className="section-title">Sector Diversification</p>
                                 <div className="h-56">
                                     <ResponsiveContainer width="100%" height="100%">
@@ -333,123 +390,38 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                             </div>
                         </div>
 
-                        {Object.keys(portfolio.factorExposures || {}).length > 0 && (
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-                                <div className="card p-5">
-                                    <p className="section-title">Portfolio Factor Exposures</p>
-                                    <div className="space-y-3">
-                                        {Object.entries(portfolio.factorExposures || {})
-                                            .sort((left, right) => Math.abs(right[1]) - Math.abs(left[1]))
-                                            .slice(0, 6)
-                                            .map(([name, value]) => (
-                                                <div key={name}>
-                                                    <div className="flex items-center justify-between text-xs mb-1">
-                                                        <span className="font-semibold text-slate-600 uppercase tracking-wide">{name.replace('_', ' ')}</span>
-                                                        <span className={`font-mono ${value >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{value >= 0 ? '+' : ''}{value.toFixed(2)}</span>
-                                                    </div>
-                                                    <div className="progress-bar-track">
-                                                        <div
-                                                            className="progress-bar-fill"
-                                                            style={{
-                                                                width: `${Math.min(100, Math.abs(value) * 35)}%`,
-                                                                background: value >= 0 ? '#14b8a6' : '#ef4444',
-                                                            }}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            ))}
-                                    </div>
-                                </div>
-
-                                <div className="card p-5">
-                                    <p className="section-title">Risk Contribution</p>
-                                    <div className="space-y-3">
-                                        {(portfolio.positionRiskContributions || []).slice(0, 6).map((item) => (
-                                            <div key={item.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div>
-                                                        <p className="font-semibold text-slate-900">{item.name}</p>
-                                                        <p className="text-[11px] text-slate-500">{item.detail}</p>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="text-sm font-semibold text-slate-900">{item.contributionPct.toFixed(1)}%</p>
-                                                        <p className="text-[11px] text-slate-500">weight {item.weightPct.toFixed(1)}%</p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-                            <div className="card p-5">
-                                <p className="section-title">Book Constraints</p>
-                                <div className="space-y-2 text-sm text-slate-600">
-                                    <div className="stat-row"><span className="stat-label">Max position cap</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.maxPositionCapPct.toFixed(1)}%` : '--'}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Largest position</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.largestPositionName} ${portfolio.constraints.largestPositionPct.toFixed(1)}%` : '--'}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Sector cap</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.maxSectorCapPct.toFixed(1)}%` : '--'}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Largest sector</span><span className="stat-value">{portfolio.constraints ? `${portfolio.constraints.largestSectorName} ${portfolio.constraints.largestSectorWeightPct.toFixed(1)}%` : '--'}</span></div>
-                                    <p className="text-xs text-slate-500 mt-2">
-                                        {portfolio.constraints?.nearPositionCap || portfolio.constraints?.nearSectorCap ? 'The final book is close to at least one cap.' : 'The final book still has room under the current caps.'}
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="card p-5">
-                                <p className="section-title">Holding Period and Deployment</p>
-                                <div className="space-y-2 text-sm text-slate-600">
-                                    <div className="stat-row"><span className="stat-label">Expected holding period</span><span className="stat-value">{portfolio.expectedHoldingPeriodDays ?? '--'}D</span></div>
-                                    <div className="stat-row"><span className="stat-label">Turnover estimate</span><span className="stat-value">{portfolio.turnoverEstimatePct?.toFixed(1) ?? '--'}%</span></div>
-                                    <div className="stat-row"><span className="stat-label">Residual cash</span><span className="stat-value">Rs {(portfolio.cashRemaining ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Deployment efficiency</span><span className="stat-value">{portfolio.deploymentEfficiencyPct?.toFixed(1) ?? portfolio.investmentUtilizationPct?.toFixed(1) ?? '--'}%</span></div>
-                                </div>
-                            </div>
-
-                            <div className="card p-5">
-                                <p className="section-title">Benchmark Relative</p>
-                                <div className="space-y-2 text-sm text-slate-600">
-                                    <div className="stat-row"><span className="stat-label">Benchmark</span><span className="stat-value">{portfolio.benchmarkRelative?.benchmarkName || '--'}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Active share</span><span className="stat-value">{portfolio.benchmarkRelative ? `${portfolio.benchmarkRelative.activeSharePct.toFixed(1)}%` : '--'}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Tracking error</span><span className="stat-value">{portfolio.benchmarkRelative ? `${portfolio.benchmarkRelative.trackingErrorPct.toFixed(2)}%` : '--'}</span></div>
-                                    <div className="stat-row"><span className="stat-label">Ex-ante alpha</span><span className="stat-value">{portfolio.benchmarkRelative ? `${portfolio.benchmarkRelative.exAnteAlphaPct.toFixed(2)}%` : '--'}</span></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {(portfolio.scenarioTests?.length ?? 0) > 0 && (
-                            <div className="card p-5">
-                                <p className="section-title">Scenario Stress Tests</p>
-                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                                    {portfolio.scenarioTests?.map((scenario) => (
-                                        <div key={scenario.name} className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                                            <p className="text-sm font-semibold text-slate-900">{scenario.name}</p>
-                                            <p className={`text-lg font-bold mt-1 ${scenario.pnlPct >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>{scenario.pnlPct.toFixed(2)}%</p>
-                                            <p className="text-[11px] text-slate-500 mt-2">{scenario.commentary}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
                         <div className="card overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="data-table">
                                     <thead>
-                                        <tr>
-                                            <th>Stock</th><th>Sector</th><th>Wt%</th><th>News</th><th>Shares</th><th className="text-right">Amount</th>
+                                        <tr className="bg-slate-800/50">
+                                            <th>Stock</th><th>Sector</th><th>Wt%</th><th>News</th><th className="text-right">Shares</th><th className="text-right">Amount</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {portfolio.allocations.map((allocation, index) => (
-                                            <tr key={index}>
+                                            <tr
+                                                key={index}
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={() => openStockDrawer(allocation.stock.symbol)}
+                                                onKeyDown={(event) => {
+                                                    if (event.key === 'Enter' || event.key === ' ') {
+                                                        event.preventDefault();
+                                                        openStockDrawer(allocation.stock.symbol);
+                                                    }
+                                                }}
+                                                className="cursor-pointer hover:bg-slate-800/50 even:bg-slate-800/30 border-b border-slate-700/50 last:border-0"
+                                                aria-label={`Open AI stock insights for ${allocation.stock.symbol}`}
+                                            >
                                                 <td>
-                                                    <div className="font-semibold text-slate-900">{allocation.stock.symbol}</div>
-                                                    <div className="text-xs text-slate-400">{allocation.stock.name}</div>
+                                                    <div className="font-semibold font-mono text-sm text-slate-50">
+                                                        {allocation.stock.symbol}
+                                                    </div>
+                                                    <div className="text-[10px] font-mono tracking-wide text-slate-400">{allocation.stock.name}</div>
                                                     {allocation.drivers && allocation.drivers.length > 0 && (
                                                         <div className="text-[10px] text-slate-500 mt-1">
-                                                            Drivers: {allocation.drivers.slice(0, 2).join(', ')}
+                                                            ML drivers: {allocation.drivers.slice(0, 2).join(', ')}
                                                         </div>
                                                     )}
                                                 </td>
@@ -468,7 +440,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                                         <div className="text-[10px] text-slate-400 max-w-52">{allocation.news_explanation ?? 'No mapped news.'}</div>
                                                     </div>
                                                 </td>
-                                                <td className="font-mono text-sm">{allocation.shares}</td>
+                                                <td className="font-mono text-right">{allocation.shares}</td>
                                                 <td className="text-right font-semibold font-mono">Rs {allocation.amount.toLocaleString()}</td>
                                             </tr>
                                         ))}
@@ -479,6 +451,11 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                     </>
                 )}
             </div>
+            <StockInsightDrawer
+                symbol={selectedSymbol}
+                open={drawerOpen}
+                onClose={() => setDrawerOpen(false)}
+            />
         </div>
     );
 }
