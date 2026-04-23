@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
+import re
 from statistics import mean
 from typing import Iterable
 from xml.etree import ElementTree as ET
@@ -323,6 +324,7 @@ def parse_rss_datetime(value: str | None) -> datetime:
 
 def clean_news_text(value: str) -> str:
     text = unescape(value or "").replace("<![CDATA[", "").replace("]]>", "")
+    text = re.sub(r"<[^>]+>", " ", text)
     return " ".join(text.split())
 
 

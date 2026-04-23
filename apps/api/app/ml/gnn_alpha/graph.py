@@ -2,10 +2,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.models.instrument import Instrument
-from app.services.instrument_master import INSTRUMENT_MASTER
+from app.services.instrument_master import INSTRUMENT_MASTER, UNKNOWN_SECTOR, normalize_macro_sector
 
 logger = logging.getLogger(__name__)
 
@@ -14,17 +14,21 @@ def build_sector_graph(db: Session, symbols: list[str]) -> dict[str, Any]:
     Build a sector correlation graph using the instrument master.
     Nodes = stocks, edges = same sector (fully connected within sector).
     """
+    upper_symbols = [sym.upper() for sym in symbols]
+    db_rows = db.execute(
+        select(func.upper(Instrument.symbol), Instrument.sector).where(func.upper(Instrument.symbol).in_(upper_symbols))
+    ).all()
+    db_symbol_to_sector = {row[0]: row[1] for row in db_rows}
+
     symbol_to_sector: dict[str, str] = {}
     for sym in symbols:
-        entry = INSTRUMENT_MASTER.get(sym.upper())
+        sym_upper = sym.upper()
+        entry = INSTRUMENT_MASTER.get(sym_upper)
         if entry and entry.sector:
-            symbol_to_sector[sym] = entry.sector
+            raw_sector = entry.sector
         else:
-            # fallback to DB sector
-            row = db.execute(
-                select(Instrument.sector).where(Instrument.symbol == sym)
-            ).first()
-            symbol_to_sector[sym] = (row[0] if row and row[0] else "Unknown")
+            raw_sector = db_symbol_to_sector.get(sym_upper)
+        symbol_to_sector[sym] = normalize_macro_sector(raw_sector) or UNKNOWN_SECTOR
 
     sectors = sorted(set(symbol_to_sector.values()))
     sector_to_idx = {s: i for i, s in enumerate(sectors)}
@@ -41,19 +45,47 @@ def build_sector_graph(db: Session, symbols: list[str]) -> dict[str, Any]:
     edges_dst: list[int] = []
     sector_groups: dict[str, list[int]] = {}
     for idx, sym in enumerate(node_symbols):
-        sec = symbol_to_sector.get(sym, "Unknown")
+        sec = symbol_to_sector.get(sym, UNKNOWN_SECTOR)
         sector_groups.setdefault(sec, []).append(idx)
 
     for sec, idxs in sector_groups.items():
+        if sec == UNKNOWN_SECTOR:
+            # Strict topology: unknown sectors are isolated from message passing.
+            continue
         for i in idxs:
             for j in idxs:
                 if i != j:
                     edges_src.append(i)
                     edges_dst.append(j)
 
-    sector_counts = {s: len(idxs) for s, idxs in sector_groups.items()}
-    logger.info(f"Graph: {len(node_symbols)} nodes, {len(edges_src)} edges, {len(sectors)} sectors")
-    logger.info(f"Sector breakdown: {sector_counts}")
+    sector_counts = {s: len(idxs) for s, idxs in sector_groups.items() if s != UNKNOWN_SECTOR}
+    unknown_symbols = [sym for sym, sec in symbol_to_sector.items() if sec == UNKNOWN_SECTOR]
+
+    logger.info(
+        "Graph topology: %d nodes, %d edges, %d resolved sectors, %d unknown-sector nodes",
+        len(node_symbols),
+        len(edges_src),
+        len(sector_counts),
+        len(unknown_symbols),
+    )
+    logger.info("Resolved sector breakdown: %s", sector_counts)
+
+    for sec, idxs in sector_groups.items():
+        if sec == UNKNOWN_SECTOR:
+            continue
+        expected = len(idxs) * (len(idxs) - 1)
+        logger.info(
+            "Sector subgraph '%s': nodes=%d directed_edges=%d complete=%s",
+            sec,
+            len(idxs),
+            expected,
+            "yes",
+        )
+
+    if unknown_symbols:
+        preview = ", ".join(sorted(unknown_symbols)[:25])
+        suffix = "..." if len(unknown_symbols) > 25 else ""
+        logger.warning("Unknown-sector nodes isolated (no edges): %s%s", preview, suffix)
 
     return {
         "node_symbols": node_symbols,

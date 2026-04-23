@@ -279,6 +279,7 @@ class CostBreakdownModel(BaseModel):
     total_gst: float
     total_slippage: float
     total_costs: float
+    total_frictional_drag_pct: float = 0.0
 
 
 class CurvePointModel(BaseModel):
@@ -292,6 +293,8 @@ class BacktestResultResponse(BaseModel):
     model_source: Literal["RULES", "ENSEMBLE"]
     model_version: str
     prediction_horizon_days: int
+    active_mode: str = "rules_only"
+    artifact_classification: str = "missing"
     top_model_drivers_by_symbol: dict[str, list[str]] = Field(default_factory=dict)
     validation_as_of_date: date | None = None
     validation_horizon_days: int = 21

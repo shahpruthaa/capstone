@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
+import math
 from math import sqrt
 from statistics import median
 from uuid import uuid4
 
 import numpy as np
-import pandas as pd
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -27,28 +26,12 @@ from app.schemas.portfolio import (
     BacktestResultResponse,
     BenchmarkGrowthPointModel,
     BenchmarkMetricModel,
-    BenchmarkCompareRequest,
-    BenchmarkCompareResponse,
-    BenchmarkCompareStatsModel,
     BenchmarkSummaryResponse,
-    BenchmarkRelativeStatsModel,
-    BenchmarkSeriesPointModel,
-    CrossAssetToneItemModel,
     CostBreakdownModel,
     CurvePointModel,
     GeneratePortfolioRequest,
     GeneratePortfolioResponse,
-    MarketDashboardResponse,
-    MarketFactorWeatherItemModel,
-    MarketTrendBlockModel,
     PortfolioMetricsModel,
-    PortfolioConstraintStatusModel,
-    PortfolioFitSummaryModel,
-    RiskContributionModel,
-    RuntimeDescriptorModel,
-    ScenarioShockModel,
-    SectorRelativeStrengthModel,
-    StandardMetricDefinitionModel,
     RebalanceActionModel,
     ModelVariant,
     TaxBreakdownModel,
@@ -70,13 +53,14 @@ from app.services.news_signal import compute_stock_news_signals
 from app.ml.ensemble_alpha.predict import get_ensemble_alpha_predictor
 from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 
-logger = logging.getLogger(__name__)
-
 RISK_FREE_RATE = 0.07
+DEFENSIVE_CASH_BUFFER_RETURN = 0.065
 DEFAULT_BACKTEST_INVESTMENT = 1_000_000.0
 DEFAULT_MODEL_FEATURE_LOOKBACK_DAYS = 450
 DEFAULT_MODEL_MIN_TRADING_HISTORY = 253
 DEFAULT_RULES_MIN_HISTORY = 90
+BENCHMARK_DAILY_RETURN_CLAMP = 0.20
+BENCHMARK_MAX_CONSTITUENT_ANNUAL_RETURN_PCT = 45.0
 
 RISK_MODE_UNIVERSES = {
     "ULTRA_LOW": ["LIQUIDBEES", "GOLDBEES", "NIFTYBEES", "HDFCBANK", "ITC", "SUNPHARMA", "POWERGRID", "BHARTIARTL", "NTPC"],
@@ -164,637 +148,6 @@ RISK_MODEL_CONFIG = {
 
 FACTOR_KEYS = ["momentum", "quality", "low_vol", "liquidity", "sector_strength", "size", "beta"]
 
-RISK_PROFILE_GUIDANCE = {
-    "ULTRA_LOW": {
-        "label": "capital preservation",
-        "target_beta": 0.8,
-        "min_holdings": 6,
-        "max_holdings": 10,
-        "sector_cap_pct": 42.0,
-    },
-    "MODERATE": {
-        "label": "moderate",
-        "target_beta": 1.0,
-        "min_holdings": 5,
-        "max_holdings": 10,
-        "sector_cap_pct": 28.0,
-    },
-    "HIGH": {
-        "label": "growth",
-        "target_beta": 1.2,
-        "min_holdings": 8,
-        "max_holdings": 14,
-        "sector_cap_pct": 24.0,
-    },
-}
-
-
-def _display_factor_name(name: str) -> str:
-    return name.replace("_", " ")
-
-
-def _factor_tilt_label(value: float) -> str:
-    magnitude = abs(value)
-    if magnitude < 0.15:
-        return "near-neutral"
-    if magnitude < 0.35:
-        return "small tilt"
-    return "strong tilt"
-
-
-def _diversification_label(score: float) -> str:
-    if score >= 75:
-        return "strong"
-    if score >= 55:
-        return "moderate"
-    return "weak"
-
-
-def _join_list(items: list[str]) -> str:
-    if not items:
-        return ""
-    if len(items) == 1:
-        return items[0]
-    if len(items) == 2:
-        return f"{items[0]} and {items[1]}"
-    return f"{', '.join(items[:-1])}, and {items[-1]}"
-
-
-def summarize_factor_profile(factor_exposures: dict[str, float]) -> str:
-    ranked = sorted(factor_exposures.items(), key=lambda item: abs(item[1]), reverse=True)
-    material = [(name, value) for name, value in ranked if abs(value) >= 0.1][:2]
-    if not material:
-        return "Factor profile is roughly market-like; all measured tilts are near-neutral."
-
-    descriptions = []
-    for name, value in material:
-        direction = "positive" if value > 0 else "negative"
-        descriptions.append(f"{_factor_tilt_label(value)} {direction} {_display_factor_name(name)}")
-    return f"Factor profile is mostly market-like with {_join_list(descriptions)}."
-
-
-def build_analysis_summary(
-    *,
-    total_holdings: int,
-    target_risk_mode: str,
-    current_beta: float,
-    diversification_score: float,
-    avg_corr: float,
-    sector_weights: dict[str, float],
-    factor_exposures: dict[str, float],
-    current_weights: dict[str, float],
-    actions: list[RebalanceActionModel],
-) -> dict[str, object]:
-    guidance = RISK_PROFILE_GUIDANCE[target_risk_mode]
-    target_beta = float(guidance["target_beta"])
-    sector_cap_pct = float(guidance["sector_cap_pct"])
-    min_holdings = int(guidance["min_holdings"])
-    max_holdings = int(guidance["max_holdings"])
-    profile_label = str(guidance["label"])
-
-    top_sector, top_sector_weight = ("", 0.0)
-    if sector_weights:
-        top_sector, top_sector_weight = max(sector_weights.items(), key=lambda item: item[1])
-
-    max_name_weight = max(current_weights.values(), default=0.0)
-    sector_count = len(sector_weights)
-    diversification_label = _diversification_label(diversification_score)
-
-    risk_messages: list[str] = []
-    if current_beta >= target_beta + 0.2:
-        risk_messages.append(
-            f"Weighted beta {current_beta:.2f} is above the {profile_label} target of about {target_beta:.2f}, so the portfolio should be more volatile than the market."
-        )
-    elif current_beta <= target_beta - 0.15:
-        risk_messages.append(
-            f"Weighted beta {current_beta:.2f} is below the {profile_label} target of about {target_beta:.2f}, so the portfolio should be less volatile than the market."
-        )
-    else:
-        risk_messages.append(
-            f"Weighted beta {current_beta:.2f} is broadly in line with the {profile_label} target of about {target_beta:.2f}."
-        )
-    if total_holdings <= 4:
-        risk_messages.append(f"That risk sits on only {total_holdings} stocks, which makes each position matter more.")
-    risk_assessment = " ".join(risk_messages)
-
-    diversification_assessment = (
-        f"Diversification score {diversification_score:.0f}% is {diversification_label}. "
-        f"In this model it combines sector breadth and average correlation, so {diversification_score:.0f}% means cross-sector diversification is helping, "
-        f"but only {total_holdings} holdings across {sector_count} sectors still leaves the portfolio less diversified than a fuller {profile_label} basket."
-    )
-
-    if top_sector and top_sector_weight > sector_cap_pct:
-        concentration_assessment = (
-            f"{top_sector} is {top_sector_weight:.1f}% of the portfolio, well above the {profile_label} sector cap of about {sector_cap_pct:.0f}%. "
-            f"A sector shock there could hit most of the portfolio at once."
-        )
-    elif top_sector and top_sector_weight >= sector_cap_pct - 5:
-        concentration_assessment = (
-            f"{top_sector} is the largest sector at {top_sector_weight:.1f}%, close to the {profile_label} cap of about {sector_cap_pct:.0f}%, so concentration is elevated."
-        )
-    else:
-        concentration_assessment = (
-            f"No sector is breaching the {profile_label} cap of about {sector_cap_pct:.0f}%; the largest sector is {top_sector or 'n/a'} at {top_sector_weight:.1f}%."
-        )
-
-    factor_assessment = summarize_factor_profile(factor_exposures)
-
-    if avg_corr < 0.3:
-        correlation_assessment = (
-            f"Average pairwise correlation is {avg_corr:.2f}, which is low. Low correlations partially offset concentration because the holdings do not usually move together."
-        )
-    elif avg_corr < 0.6:
-        correlation_assessment = (
-            f"Average pairwise correlation is {avg_corr:.2f}, which is moderate. Diversification is helping, but the names still share a meaningful market/sector rhythm."
-        )
-    else:
-        correlation_assessment = (
-            f"Average pairwise correlation is {avg_corr:.2f}, which is high. The holdings are likely to move together in stress periods, so diversification is weak."
-        )
-
-    benchmark_flags: list[str] = []
-    if current_beta > target_beta + 0.1:
-        benchmark_flags.append("risk is above target")
-    elif current_beta < target_beta - 0.1:
-        benchmark_flags.append("risk is below target")
-    else:
-        benchmark_flags.append("beta is on target")
-    if total_holdings < min_holdings:
-        benchmark_flags.append(f"breadth is below the usual {min_holdings}-{max_holdings} holding range")
-    elif total_holdings > max_holdings:
-        benchmark_flags.append(f"breadth is above the usual {min_holdings}-{max_holdings} holding range")
-    else:
-        benchmark_flags.append("holding count is in range")
-    if top_sector_weight > sector_cap_pct:
-        benchmark_flags.append("sector concentration is above the normal cap")
-    else:
-        benchmark_flags.append("sector concentration is within cap")
-    benchmark_assessment = (
-        f"Against the {profile_label} benchmark used for this review (beta about {target_beta:.2f}, "
-        f"{min_holdings}-{max_holdings} holdings, sector cap about {sector_cap_pct:.0f}%), {_join_list(benchmark_flags)}."
-    )
-
-    if total_holdings <= 4 or max_name_weight >= 35:
-        idiosyncratic_risk_assessment = (
-            f"Idiosyncratic risk is high because the portfolio holds only {total_holdings} names and the largest single position is {max_name_weight:.1f}%. "
-            "A company-specific disappointment can materially move the whole portfolio."
-        )
-    else:
-        idiosyncratic_risk_assessment = (
-            f"Stock-specific risk is more contained: the portfolio has {total_holdings} names and the largest single position is {max_name_weight:.1f}%."
-        )
-
-    recommended_actions: list[str] = []
-    if top_sector and top_sector_weight > sector_cap_pct:
-        recommended_actions.append(
-            f"Trim {top_sector} exposure by about {top_sector_weight - sector_cap_pct:.1f} percentage points to move back toward the {profile_label} sector cap."
-        )
-
-    missing_target_sectors = [
-        sector for sector in RISK_MODE_TARGET_SECTORS[target_risk_mode].keys()
-        if sector not in sector_weights
-    ]
-    if total_holdings < min_holdings or sector_count < 4:
-        additional_names = max(1, min_holdings - total_holdings)
-        add_sectors = missing_target_sectors[:2]
-        if add_sectors:
-            recommended_actions.append(
-                f"Add at least {additional_names} more holdings across {', '.join(add_sectors)} to reduce stock-specific risk and broaden sector balance."
-            )
-        else:
-            recommended_actions.append(
-                f"Add at least {additional_names} more holdings outside the existing leaders to reduce stock-specific risk."
-            )
-
-    if current_beta > target_beta + 0.15:
-        recommended_actions.append(
-            f"Lower portfolio beta toward about {target_beta:.2f} by adding steadier sectors such as FMCG, Pharma, Telecom, Gold, or Liquid assets."
-        )
-
-    action_summaries = []
-    for action in actions[:2]:
-        drift = abs(action.target_weight - action.current_weight)
-        verb = "Increase" if action.action == "BUY" else "Reduce"
-        action_summaries.append(
-            f"{verb} {action.symbol} by about {drift:.1f} percentage points toward a target weight of {action.target_weight:.1f}%."
-        )
-    recommended_actions.extend(action_summaries)
-
-    deduped_actions: list[str] = []
-    seen_actions: set[str] = set()
-    for action_text in recommended_actions:
-        if action_text in seen_actions:
-            continue
-        seen_actions.add(action_text)
-        deduped_actions.append(action_text)
-
-    if deduped_actions:
-        rebalance_summary = (
-            f"Rebalance is warranted: {len(actions)} holdings are outside the current {profile_label} drift bands."
-            if actions
-            else "Structural rebalance is warranted even though name-level drift bands have not been breached."
-        )
-    else:
-        deduped_actions = ["Portfolio is within the current drift bands; no rebalance is required right now."]
-        rebalance_summary = "Portfolio is within the current drift bands; no rebalance is required right now."
-
-    concern_count = 0
-    if current_beta > target_beta + 0.15:
-        concern_count += 1
-    if total_holdings < min_holdings or diversification_score < 55:
-        concern_count += 1
-    if top_sector_weight > sector_cap_pct:
-        concern_count += 1
-    if total_holdings <= 4 or max_name_weight >= 35:
-        concern_count += 1
-
-    if concern_count >= 3:
-        health_label = "CAUTION"
-        health_summary = (
-            f"Portfolio health is under pressure: concentration and stock-specific risk are high for a {profile_label} portfolio, even though correlation relief is helping somewhat."
-        )
-    elif concern_count >= 1:
-        health_label = "OKAY"
-        health_summary = (
-            f"Portfolio health is mixed: some risk controls are working, but breadth or concentration still needs attention for a {profile_label} profile."
-        )
-    else:
-        health_label = "GOOD"
-        health_summary = (
-            f"Portfolio health looks solid for a {profile_label} profile: beta, diversification, and concentration are broadly aligned with the target guardrails."
-        )
-
-    return {
-        "largest_sector": top_sector,
-        "largest_sector_weight": round(top_sector_weight, 2),
-        "health_label": health_label,
-        "health_summary": health_summary,
-        "risk_assessment": risk_assessment,
-        "diversification_assessment": diversification_assessment,
-        "concentration_assessment": concentration_assessment,
-        "factor_assessment": factor_assessment,
-        "correlation_assessment": correlation_assessment,
-        "benchmark_assessment": benchmark_assessment,
-        "idiosyncratic_risk_assessment": idiosyncratic_risk_assessment,
-        "rebalance_summary": rebalance_summary,
-        "recommended_actions": deduped_actions[:4],
-    }
-
-
-def build_runtime_descriptor(runtime_status: dict[str, object] | None = None) -> RuntimeDescriptorModel:
-    runtime = runtime_status or get_model_runtime_status()
-    return RuntimeDescriptorModel(
-        variant=str(runtime.get("variant", "RULES")),  # type: ignore[arg-type]
-        model_source=str(runtime.get("model_source", "RULES")),  # type: ignore[arg-type]
-        active_mode=str(runtime.get("active_mode", "rules_only")),
-        model_version=str(runtime.get("model_version", "rules")),
-        artifact_classification=str(runtime.get("artifact_classification", "missing")),
-        prediction_horizon_days=int(runtime.get("prediction_horizon_days", 21)),
-    )
-
-
-def build_standard_metrics(
-    *,
-    return_pct: float,
-    volatility_pct: float,
-    sharpe_ratio: float,
-    diversification_score: float | None = None,
-    correlation: float | None = None,
-    beta: float | None = None,
-) -> StandardMetricDefinitionModel:
-    return StandardMetricDefinitionModel(
-        return_pct=round(return_pct, 2),
-        volatility_pct=round(volatility_pct, 2),
-        sharpe_ratio=round(sharpe_ratio, 2),
-        diversification_score=round(diversification_score, 2) if diversification_score is not None else None,
-        correlation=round(correlation, 2) if correlation is not None else None,
-        beta=round(beta, 2) if beta is not None else None,
-    )
-
-
-def build_portfolio_fit_summary(
-    *,
-    risk_level: str,
-    diversification: str,
-    concentration: str,
-    next_action: str,
-) -> PortfolioFitSummaryModel:
-    return PortfolioFitSummaryModel(
-        summary=f"Risk level: {risk_level}. Diversification: {diversification}. Concentration: {concentration}. Next action: {next_action}.",
-        risk_level=risk_level,
-        diversification=diversification,
-        concentration=concentration,
-        next_action=next_action,
-    )
-
-
-def estimate_turnover_pct(weights_pct: list[float], holding_period_days: int) -> float:
-    if not weights_pct:
-        return 0.0
-    annual_rebalances = 252 / max(holding_period_days, 21)
-    turnover = (sum(abs(weight - (100.0 / len(weights_pct))) for weight in weights_pct) / 2.0) * (annual_rebalances / 12.0)
-    return round(min(250.0, max(8.0, turnover)), 1)
-
-
-def compute_portfolio_risk_contributions(selected: list[tuple["Snapshot", float]]) -> tuple[list[RiskContributionModel], list[RiskContributionModel]]:
-    if not selected:
-        return [], []
-
-    raw_position_scores = []
-    sector_scores: dict[str, float] = defaultdict(float)
-    for snapshot, weight in selected:
-        raw_score = max(weight, 0.0) * max(snapshot.annual_volatility_pct, 1.0) * max(abs(snapshot.beta_proxy), 0.5)
-        raw_position_scores.append((snapshot, weight, raw_score))
-        sector_scores[snapshot.sector] += raw_score
-
-    total_score = sum(score for _, _, score in raw_position_scores) or 1.0
-    position_items = [
-        RiskContributionModel(
-            name=snapshot.symbol,
-            weight_pct=round(weight, 2),
-            contribution_pct=round((score / total_score) * 100.0, 2),
-            detail=f"{snapshot.sector} · beta {snapshot.beta_proxy:.2f} · vol {snapshot.annual_volatility_pct:.1f}%",
-        )
-        for snapshot, weight, score in sorted(raw_position_scores, key=lambda item: item[2], reverse=True)
-    ]
-
-    sector_total = sum(sector_scores.values()) or 1.0
-    sector_items = [
-        RiskContributionModel(
-            name=sector,
-            weight_pct=round(sum(weight for snapshot, weight, _ in raw_position_scores if snapshot.sector == sector), 2),
-            contribution_pct=round((score / sector_total) * 100.0, 2),
-            detail="Aggregated from weighted volatility and beta contribution.",
-        )
-        for sector, score in sorted(sector_scores.items(), key=lambda item: item[1], reverse=True)
-    ]
-    return position_items, sector_items
-
-
-def build_constraint_status(
-    selected: list[tuple["Snapshot", float]],
-    *,
-    max_position_cap_pct: float,
-    max_sector_cap_pct: float,
-) -> PortfolioConstraintStatusModel:
-    sector_weights: dict[str, float] = defaultdict(float)
-    largest_name = ""
-    largest_weight = 0.0
-    for snapshot, weight in selected:
-        sector_weights[snapshot.sector] += weight
-        if weight > largest_weight:
-            largest_name = snapshot.symbol
-            largest_weight = weight
-    largest_sector_name, largest_sector_weight = ("", 0.0)
-    if sector_weights:
-        largest_sector_name, largest_sector_weight = max(sector_weights.items(), key=lambda item: item[1])
-
-    return PortfolioConstraintStatusModel(
-        max_position_cap_pct=round(max_position_cap_pct, 2),
-        max_sector_cap_pct=round(max_sector_cap_pct, 2),
-        largest_position_pct=round(largest_weight, 2),
-        largest_position_name=largest_name,
-        largest_sector_weight_pct=round(largest_sector_weight, 2),
-        largest_sector_name=largest_sector_name,
-        near_position_cap=largest_weight >= max_position_cap_pct * 0.9,
-        near_sector_cap=largest_sector_weight >= max_sector_cap_pct * 0.9,
-    )
-
-
-def infer_benchmark_name_for_mandate(mandate, holding_count: int) -> str:
-    if mandate is None:
-        return "Nifty 500 Proxy" if holding_count >= 12 else "Nifty 50 Proxy"
-    if mandate.risk_attitude == "capital_preservation":
-        return "Quality Factor"
-    if mandate.risk_attitude == "growth":
-        return "Momentum Factor"
-    return "AMC Multi Factor" if holding_count >= 10 else "Nifty 500 Proxy"
-
-
-def compute_active_share(weights: dict[str, float], benchmark_weights: dict[str, float]) -> float:
-    symbols = set(weights) | set(benchmark_weights)
-    return 50.0 * sum(abs((weights.get(symbol, 0.0) * 100.0) - (benchmark_weights.get(symbol, 0.0) * 100.0)) for symbol in symbols)
-
-
-def compute_tracking_error_and_ir(strategy_returns: dict[date, float], benchmark_returns: dict[date, float]) -> tuple[float, float]:
-    overlap_dates = [trade_date for trade_date in strategy_returns if trade_date in benchmark_returns]
-    if len(overlap_dates) < 2:
-        return 0.0, 0.0
-    active_returns = [strategy_returns[trade_date] - benchmark_returns[trade_date] for trade_date in overlap_dates]
-    mean_active = sum(active_returns) / len(active_returns)
-    std_active = sqrt(sum((value - mean_active) ** 2 for value in active_returns) / max(len(active_returns) - 1, 1))
-    tracking_error_pct = std_active * sqrt(252) * 100
-    information_ratio = ((mean_active * 252) / max(std_active * sqrt(252), 1e-9)) if std_active > 0 else 0.0
-    return round(tracking_error_pct, 2), round(information_ratio, 2)
-
-
-def compute_capture_ratios(strategy_returns: dict[date, float], benchmark_returns: dict[date, float]) -> tuple[float, float]:
-    upside_strategy: list[float] = []
-    upside_benchmark: list[float] = []
-    downside_strategy: list[float] = []
-    downside_benchmark: list[float] = []
-    for trade_date, benchmark_value in benchmark_returns.items():
-        strategy_value = strategy_returns.get(trade_date)
-        if strategy_value is None:
-            continue
-        if benchmark_value >= 0:
-            upside_strategy.append(strategy_value)
-            upside_benchmark.append(benchmark_value)
-        else:
-            downside_strategy.append(strategy_value)
-            downside_benchmark.append(benchmark_value)
-
-    def capture(numerator: list[float], denominator: list[float]) -> float:
-        if not numerator or not denominator:
-            return 0.0
-        base = sum(denominator) / len(denominator)
-        if abs(base) <= 1e-9:
-            return 0.0
-        return ((sum(numerator) / len(numerator)) / base) * 100.0
-
-    downside_capture = capture(downside_strategy, downside_benchmark)
-    upside_capture = capture(upside_strategy, upside_benchmark)
-    return round(downside_capture, 2), round(upside_capture, 2)
-
-
-def compute_drawdown_timing(return_series: dict[date, float]) -> tuple[int, int]:
-    if not return_series:
-        return 0, 0
-    equity = 1.0
-    peak = 1.0
-    current_duration = 0
-    longest_duration = 0
-    recovery_days = 0
-    max_recovery = 0
-    in_drawdown = False
-    for trade_date in sorted(return_series):
-        equity *= 1.0 + return_series[trade_date]
-        if equity >= peak:
-            peak = equity
-            if in_drawdown:
-                max_recovery = max(max_recovery, recovery_days)
-            in_drawdown = False
-            recovery_days = 0
-            current_duration = 0
-        else:
-            in_drawdown = True
-            current_duration += 1
-            recovery_days += 1
-            longest_duration = max(longest_duration, current_duration)
-    max_recovery = max(max_recovery, recovery_days)
-    return longest_duration, max_recovery
-
-
-def rolling_window_stats(return_series: dict[date, float], benchmark_returns: dict[date, float], window: int = 63) -> tuple[dict[date, float], dict[date, float]]:
-    ordered_dates = [trade_date for trade_date in sorted(return_series) if trade_date in benchmark_returns]
-    rolling_excess: dict[date, float] = {}
-    rolling_sharpe: dict[date, float] = {}
-    for index in range(window - 1, len(ordered_dates)):
-        window_dates = ordered_dates[index - window + 1:index + 1]
-        strat_window = [return_series[trade_date] for trade_date in window_dates]
-        bench_window = [benchmark_returns[trade_date] for trade_date in window_dates]
-        active_window = [left - right for left, right in zip(strat_window, bench_window)]
-        rolling_excess[ordered_dates[index]] = round(sum(active_window) * 100.0, 2)
-        avg = sum(strat_window) / len(strat_window)
-        std = sqrt(sum((value - avg) ** 2 for value in strat_window) / max(len(strat_window) - 1, 1))
-        rolling_sharpe[ordered_dates[index]] = round((((avg - (RISK_FREE_RATE / 252)) / max(std, 1e-9)) * sqrt(252)) if std > 0 else 0.0, 2)
-    return rolling_excess, rolling_sharpe
-
-
-def estimate_statutory_cost_and_tax_drag(
-    annual_return_pct: float,
-    *,
-    weights: dict[str, float],
-    snapshot_map: dict[str, "Snapshot"],
-    turnover_pct: float,
-    holding_period_days: int,
-    trade_date: date,
-    initial_investment: float = DEFAULT_BACKTEST_INVESTMENT,
-) -> tuple[float, float]:
-    normalized_weights = {
-        symbol: float(weight)
-        for symbol, weight in weights.items()
-        if weight > 0 and symbol in snapshot_map
-    }
-    total_weight = sum(normalized_weights.values()) or 1.0
-    gross_executed_notional = initial_investment * max(turnover_pct, 0.0) / 100.0
-    cost_total = 0.0
-    for symbol, weight in normalized_weights.items():
-        snapshot = snapshot_map[symbol]
-        symbol_notional = gross_executed_notional * (weight / total_weight)
-        if symbol_notional <= 0:
-            continue
-        # Rebalance approximation: split turnover evenly across buy/sell legs.
-        # This can slightly overstate STT for pure-entry flows where buy notional dominates.
-        buy_notional = symbol_notional / 2.0
-        sell_notional = symbol_notional / 2.0
-        buy_costs = calculate_trade_costs(
-            amount=buy_notional,
-            trade_date=trade_date,
-            is_buy=True,
-            avg_traded_value=snapshot.avg_traded_value,
-            annual_volatility_pct=snapshot.annual_volatility_pct,
-        )
-        sell_costs = calculate_trade_costs(
-            amount=sell_notional,
-            trade_date=trade_date,
-            is_buy=False,
-            avg_traded_value=snapshot.avg_traded_value,
-            annual_volatility_pct=snapshot.annual_volatility_pct,
-        )
-        cost_total += buy_costs["total_costs"] + sell_costs["total_costs"]
-
-    cost_drag_pct = (cost_total / max(initial_investment, 1.0)) * 100.0
-    realized_gain_amount = initial_investment * max(annual_return_pct, 0.0) / 100.0
-    realized_gain_amount *= min(1.0, max(turnover_pct, 0.0) / 100.0)
-
-    tax_schedule = resolve_capital_gains_tax_schedule(trade_date)
-    if holding_period_days >= 365:
-        taxable_gain = max(0.0, realized_gain_amount - tax_schedule.ltcg_exemption)
-        base_tax = taxable_gain * tax_schedule.ltcg_rate
-    else:
-        taxable_gain = max(0.0, realized_gain_amount)
-        base_tax = taxable_gain * tax_schedule.stcg_rate
-    tax_total = base_tax + (base_tax * tax_schedule.cess_rate)
-    tax_drag_pct = (tax_total / max(initial_investment, 1.0)) * 100.0
-
-    return (
-        round(annual_return_pct - cost_drag_pct, 2),
-        round(annual_return_pct - cost_drag_pct - tax_drag_pct, 2),
-    )
-
-
-def build_generate_scenario_tests(selected: list[tuple["Snapshot", float]], weighted_beta: float) -> list[ScenarioShockModel]:
-    sector_weights: dict[str, float] = defaultdict(float)
-    for snapshot, weight in selected:
-        sector_weights[snapshot.sector] += weight
-
-    crude_sensitivity = (sector_weights.get("Energy", 0.0) + 0.5 * sector_weights.get("Auto", 0.0)) / 100.0
-    rates_sensitivity = (sector_weights.get("Banking", 0.0) + sector_weights.get("Finance", 0.0) + 0.4 * sector_weights.get("Real Estate", 0.0)) / 100.0
-    banking_sensitivity = (sector_weights.get("Banking", 0.0) + sector_weights.get("Finance", 0.0)) / 100.0
-
-    return [
-        ScenarioShockModel(
-            name="Market -10%",
-            pnl_pct=round(-10.0 * max(weighted_beta, 0.6), 2),
-            commentary="Broad market selloff scaled by weighted beta.",
-        ),
-        ScenarioShockModel(
-            name="Rate shock",
-            pnl_pct=round(-(2.0 + 6.0 * rates_sensitivity), 2),
-            commentary="Higher rates typically pressure financials and duration-sensitive sectors.",
-        ),
-        ScenarioShockModel(
-            name="Crude shock",
-            pnl_pct=round(-1.5 - (7.0 * crude_sensitivity), 2),
-            commentary="Crude-sensitive sectors and INR pass-through names take the first hit.",
-        ),
-        ScenarioShockModel(
-            name="Banking shock",
-            pnl_pct=round(-2.0 - (8.0 * banking_sensitivity), 2),
-            commentary="Concentrated financial exposure increases downside if credit spreads widen.",
-        ),
-    ]
-
-
-def build_generate_portfolio_fit_summary(
-    *,
-    metrics: PortfolioMetricsModel,
-    constraints: PortfolioConstraintStatusModel,
-    residual_cash: float,
-) -> PortfolioFitSummaryModel:
-    risk_level = (
-        "high"
-        if metrics.beta >= 1.15 or metrics.estimated_volatility_pct >= 20
-        else "balanced"
-        if metrics.beta >= 0.9
-        else "defensive"
-    )
-    diversification = (
-        "strong"
-        if metrics.diversification_score >= 75
-        else "moderate"
-        if metrics.diversification_score >= 55
-        else "narrow"
-    )
-    concentration = (
-        f"largest position {constraints.largest_position_name} at {constraints.largest_position_pct:.1f}% and {constraints.largest_sector_name} at {constraints.largest_sector_weight_pct:.1f}%"
-        if constraints.largest_position_name
-        else "no material concentration flags"
-    )
-    if residual_cash > 0:
-        next_action = f"Keep residual cash of Rs {residual_cash:,.0f} ready for staggered deployment or a better entry."
-    elif constraints.near_position_cap or constraints.near_sector_cap:
-        next_action = "Monitor cap usage because the book is already leaning into its concentration guardrails."
-    else:
-        next_action = "Book is deployable now; review only if factor leadership or breadth deteriorates."
-    return build_portfolio_fit_summary(
-        risk_level=risk_level,
-        diversification=diversification,
-        concentration=concentration,
-        next_action=next_action,
-    )
-
 
 @dataclass
 class Snapshot:
@@ -847,6 +200,20 @@ class BarRecord:
     total_traded_value: float
 
 
+def is_defensive_cash_equivalent(snapshot: Snapshot) -> bool:
+    symbol = (snapshot.symbol or "").upper()
+    return ("LIQUID" in symbol) or ("CASH" in symbol) or ("MONEY" in symbol)
+
+
+def apply_defensive_cash_return(snapshot: Snapshot) -> None:
+    snapshot.expected_return_source = "RULES_CASH_BUFFER"
+    snapshot.model_version = "rules_cash_buffer"
+    snapshot.ml_pred_21d_return = 0.0
+    snapshot.ml_pred_annual_return = float(DEFENSIVE_CASH_BUFFER_RETURN)
+    snapshot.top_model_drivers = [f"defensive_cash_buffer_rf={DEFENSIVE_CASH_BUFFER_RETURN:.3f}"]
+    snapshot.prediction_horizon_days = 21
+
+
 def predict_ensemble_for_snapshots(
     db: Session,
     snapshots: list[Snapshot],
@@ -854,9 +221,13 @@ def predict_ensemble_for_snapshots(
 ) -> tuple[dict[str, object], dict[str, object]]:
     predictor = get_ensemble_alpha_predictor()
 
-    equity_snapshots = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    equity_snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.instrument_type == "EQUITY" and not is_defensive_cash_equivalent(snapshot)
+    ]
     if not equity_snapshots:
-        return {}, {"available": False, "reason": "no_equity_snapshots"}
+        return {}, {"available": False, "reason": "no_ml_eligible_equity_snapshots"}
 
     reloaded_symbols = sorted(
         snapshot.symbol
@@ -892,8 +263,16 @@ def predict_ensemble_for_snapshots(
             "insufficient_history_symbols": reloaded_symbols,
         }
 
+    regime_info = detect_market_regime(inference_snapshots)
+    regime_name = str(regime_info.get("regime_name", "Neutral"))
+    for snapshot in inference_snapshots:
+        setattr(snapshot, "regime_name", regime_name)
+        setattr(snapshot, "as_of_date", as_of_date)
+
     predictions_by_symbol, model_info = predictor.predict(db, inference_snapshots, as_of_date)
     enriched_model_info = dict(model_info)
+    enriched_model_info["regime_name"] = regime_name
+    enriched_model_info["regime"] = str(regime_info.get("regime", regime_name.lower()))
     if reloaded_symbols:
         enriched_model_info["history_refreshed_symbols"] = reloaded_symbols
     missing_after_refresh = sorted(
@@ -928,52 +307,75 @@ def allocate_whole_shares_for_capital(
     capital_amount: float,
 ) -> tuple[dict[str, dict[str, float | int]], float]:
     plan: dict[str, dict[str, float | int]] = {}
-    total_allocated = 0.0
+    selected_snapshots = [snapshot for snapshot, _ in selected]
+    raw_weights = [max(0.0, weight / 100.0) for _, weight in selected]
+    total_weight = sum(raw_weights)
+    if total_weight > 0:
+        optimized_weights = [weight / total_weight for weight in raw_weights]
+    elif raw_weights:
+        optimized_weights = [1.0 / len(raw_weights) for _ in raw_weights]
+    else:
+        return plan, round(max(0.0, capital_amount), 2)
 
-    for snapshot, weight in selected:
-        target_amount = max(0.0, capital_amount * (weight / 100.0))
-        latest_price = max(float(snapshot.latest_price), 0.01)
-        shares = int(target_amount // latest_price)
-        allocated_amount = round(shares * latest_price, 2)
-        plan[snapshot.symbol] = {
-            "target_amount": round(target_amount, 2),
-            "shares": shares,
-            "amount": allocated_amount,
-            "latest_price": round(latest_price, 2),
-        }
-        total_allocated += allocated_amount
+    total_spent = 0.0
+    temp_allocs: list[dict[str, Snapshot | float | int]] = []
 
-    remaining_cash = round(max(0.0, capital_amount - total_allocated), 2)
+    for snapshot, weight_pct in zip(selected_snapshots, optimized_weights):
+        target_amt = capital_amount * weight_pct
+        price = max(float(snapshot.latest_price or 1.0), 0.01)
 
-    while remaining_cash > 0:
-        candidates: list[tuple[float, float, float, int, str]] = []
-        for selection_rank, (snapshot, _) in enumerate(selected):
-            latest_price = max(float(snapshot.latest_price), 0.01)
-            if latest_price > remaining_cash + 1e-9:
-                continue
-            entry = plan[snapshot.symbol]
-            current_amount = float(entry["amount"])
-            target_amount = float(entry["target_amount"])
-            target_gap = target_amount - current_amount
-            expected_return = float(snapshot.ml_pred_annual_return or 0.0)
-            candidates.append((target_gap, expected_return, -latest_price, -selection_rank, snapshot.symbol))
+        shares = math.floor(target_amt / price)
+        amount = shares * price
 
-        if not candidates:
+        temp_allocs.append(
+            {
+                "snapshot": snapshot,
+                "weight_pct": weight_pct,
+                "shares": shares,
+                "amount": amount,
+                "price": price,
+                "target_amount": target_amt,
+            }
+        )
+        total_spent += amount
+
+    cash_left = capital_amount - total_spent
+    max_passes = max(1, len(temp_allocs))
+
+    # Residual distribution pass. The total-spend firewall prevents rupee drift from
+    # converting leftover cash into an allocation above the mandate capital.
+    for _ in range(max_passes):
+        temp_allocs.sort(key=lambda x: float(x["weight_pct"]), reverse=True)
+        shares_added_this_pass = False
+
+        for alloc in temp_allocs:
+            price = float(alloc["price"])
+            if (total_spent + price) <= capital_amount + 1e-9 and cash_left >= price - 1e-9:
+                alloc["shares"] = int(alloc["shares"]) + 1
+                alloc["amount"] = float(alloc["amount"]) + price
+                total_spent += price
+                cash_left -= price
+                shares_added_this_pass = True
+
+        if not shares_added_this_pass:
             break
 
-        _, _, _, _, chosen_symbol = max(candidates)
-        chosen_entry = plan[chosen_symbol]
-        chosen_price = float(chosen_entry["latest_price"])
-        chosen_entry["shares"] = int(chosen_entry["shares"]) + 1
-        chosen_entry["amount"] = round(float(chosen_entry["amount"]) + chosen_price, 2)
-        remaining_cash = round(max(0.0, remaining_cash - chosen_price), 2)
+    for alloc in temp_allocs:
+        snapshot = alloc["snapshot"]
+        assert isinstance(snapshot, Snapshot)
+        plan[snapshot.symbol] = {
+            "target_amount": round(float(alloc["target_amount"]), 2),
+            "shares": int(alloc["shares"]),
+            "amount": round(float(alloc["amount"]), 2),
+            "latest_price": round(float(alloc["price"]), 2),
+        }
 
+    remaining_cash = round(max(0.0, capital_amount - total_spent), 2)
     return plan, remaining_cash
 
 
 def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> GeneratePortfolioResponse:
     as_of_date = payload.as_of_date or get_effective_trade_date(db)
-    runtime_status = get_model_runtime_status()
     mandate_config = derive_mandate_config(payload.mandate)
     history_lookback_days, min_history = resolve_mandate_history_requirements(mandate_config, payload.model_variant)
     snapshots = load_snapshots(
@@ -997,14 +399,6 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
 
     weighted_stats = build_weighted_statistics(selected)
     factor_exposures = compute_factor_exposures([(snapshot, weight / 100.0) for snapshot, weight in selected])
-    position_risk_contributions, sector_risk_contributions = compute_portfolio_risk_contributions(selected)
-    constraint_status = build_constraint_status(
-        selected,
-        max_position_cap_pct=RISK_MODEL_CONFIG[mandate_config.risk_mode]["max_weight"] * 100.0,
-        max_sector_cap_pct=RISK_MODEL_CONFIG[mandate_config.risk_mode]["sector_cap"] * 100.0,
-    )
-    turnover_estimate_pct = estimate_turnover_pct([weight for _, weight in selected], mandate_config.holding_period_days)
-    scenario_tests = build_generate_scenario_tests(selected, weighted_stats.beta)
     adjusted_names = sum(1 for snapshot, _ in selected if snapshot.corporate_action_count > 0)
     average_news_risk = sum(snapshot.news_risk_score * (weight / 100.0) for snapshot, weight in selected)
     average_news_opportunity = sum(snapshot.news_opportunity_score * (weight / 100.0) for snapshot, weight in selected)
@@ -1061,7 +455,6 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     db.flush()
 
     whole_share_plan, residual_cash = allocate_whole_shares_for_capital(selected, payload.capital_amount)
-    deployment_efficiency_pct = round(((payload.capital_amount - residual_cash) / payload.capital_amount) * 100.0, 2) if payload.capital_amount else 0.0
     if residual_cash > 0:
         notes.append(
             f"Whole-share sizing deployed Rs {payload.capital_amount - residual_cash:,.2f} with Rs {residual_cash:,.2f} left as residual cash."
@@ -1116,43 +509,6 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
             )
         )
 
-    weights_map = {snapshot.symbol: weight / 100.0 for snapshot, weight in selected}
-    benchmark_name = infer_benchmark_name_for_mandate(payload.mandate, len(selected))
-    if benchmark_name == "Momentum Factor":
-        benchmark_weights = build_factor_portfolio(snapshots, factor_key="momentum", count=max(8, len(selected)), sector_cap=0.24)
-    elif benchmark_name == "Quality Factor":
-        benchmark_weights = build_factor_portfolio(snapshots, factor_key="quality", count=max(8, len(selected)), sector_cap=0.24)
-    elif benchmark_name == "AMC Multi Factor":
-        benchmark_weights = build_multifactor_portfolio(snapshots, count=max(10, len(selected)), sector_cap=0.22)
-    elif benchmark_name == "Nifty 500 Proxy":
-        benchmark_weights = build_nifty500_proxy_portfolio(snapshots)
-    else:
-        benchmark_weights = build_nifty50_proxy_portfolio(snapshots)
-    strategy_returns = aggregate_portfolio_returns({snapshot.symbol: snapshot for snapshot, _ in selected}, weights_map)
-    benchmark_returns = aggregate_portfolio_returns({snapshot.symbol: snapshot for snapshot in snapshots}, benchmark_weights)
-    tracking_error_pct, information_ratio = compute_tracking_error_and_ir(strategy_returns, benchmark_returns)
-    benchmark_metrics = summarize_return_series(benchmark_returns)
-    benchmark_relative = BenchmarkRelativeStatsModel(
-        benchmark_name=benchmark_name,
-        active_share_pct=round(compute_active_share(weights_map, benchmark_weights), 2),
-        tracking_error_pct=tracking_error_pct,
-        ex_ante_alpha_pct=round(weighted_stats.estimated_return_pct - benchmark_metrics["annual_return_pct"], 2),
-        information_ratio=information_ratio,
-    )
-    standard_metrics = build_standard_metrics(
-        return_pct=weighted_stats.estimated_return_pct,
-        volatility_pct=weighted_stats.estimated_volatility_pct,
-        sharpe_ratio=(weighted_stats.estimated_return_pct - (RISK_FREE_RATE * 100.0)) / max(weighted_stats.estimated_volatility_pct, 1.0),
-        diversification_score=weighted_stats.diversification_score,
-        correlation=average_pairwise_correlation([snapshot for snapshot, _ in selected]),
-        beta=weighted_stats.beta,
-    )
-    portfolio_fit_summary = build_generate_portfolio_fit_summary(
-        metrics=weighted_stats,
-        constraints=constraint_status,
-        residual_cash=residual_cash,
-    )
-
     db.commit()
     return GeneratePortfolioResponse(
         model_variant=payload.model_variant,
@@ -1165,24 +521,16 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
         expected_holding_period_days=mandate_config.holding_period_days,
         allocations=allocations,
         metrics=weighted_stats,
-        standard_metrics=standard_metrics,
-        factor_exposures={key: round(value, 2) for key, value in factor_exposures.items()},
-        position_risk_contributions=position_risk_contributions[:8],
-        sector_risk_contributions=sector_risk_contributions,
-        constraints=constraint_status,
-        turnover_estimate_pct=turnover_estimate_pct,
-        deployment_efficiency_pct=deployment_efficiency_pct,
-        residual_cash=round(residual_cash, 2),
-        scenario_tests=scenario_tests,
-        benchmark_relative=benchmark_relative,
-        portfolio_fit_summary=portfolio_fit_summary,
-        runtime=build_runtime_descriptor(runtime_status),
         regime_warning="Current bear regime signals negative expected returns. Consider waiting for confirmation of trend reversal before deploying full capital." if weighted_stats.estimated_return_pct < 0 or ((weighted_stats.estimated_return_pct - 7) / max(weighted_stats.estimated_volatility_pct, 1)) < 0 else None,
         notes=notes,
     )
 
 
 def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzePortfolioResponse:
+    requested_symbols = sorted({holding.symbol.strip().upper() for holding in payload.holdings if holding.symbol.strip()})
+    if not requested_symbols:
+        raise ValueError("Submit at least one holding symbol to analyze.")
+
     ml_status = get_lightgbm_model_status()
     runtime_status = get_model_runtime_status()
     if payload.model_variant is None:
@@ -1193,7 +541,8 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             model_variant_applied = "RULES"
 
     ml_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 63
-    snapshots = load_snapshots(db, symbols=[holding.symbol for holding in payload.holdings], min_history=ml_min_history)
+    as_of_date = get_effective_trade_date(db)
+    snapshots = load_snapshots(db, as_of_date=as_of_date, symbols=requested_symbols, min_history=ml_min_history)
     snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
 
     total_value = 0.0
@@ -1203,9 +552,10 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     missing_symbols = []
 
     for holding in payload.holdings:
-        snapshot = snapshot_map.get(holding.symbol)
+        requested_symbol = holding.symbol.strip().upper()
+        snapshot = snapshot_map.get(requested_symbol)
         if snapshot is None:
-            missing_symbols.append(holding.symbol)
+            missing_symbols.append(requested_symbol)
             continue
         value = snapshot.latest_price * holding.quantity
         total_value += value
@@ -1228,30 +578,9 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         correlation_risk = "MODERATE"
 
     factor_exposures = compute_factor_exposures([(snapshot, value / total_value) for _, snapshot, value in priced_holdings])
-    current_weights = {snapshot.symbol: (value / total_value) * 100 for _, snapshot, value in priced_holdings}
-    as_of_date = get_effective_trade_date(db)
-    target_min_history = 252 if model_variant_applied == "LIGHTGBM_HYBRID" else 126
-    target_snapshots = load_snapshots(
-        db,
-        as_of_date=as_of_date,
-        symbols=RISK_MODE_UNIVERSES[payload.target_risk_mode],
-        min_history=target_min_history,
-    )
-    if len(target_snapshots) < 4:
-        target_snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=90)
+    target_snapshots = [snapshot for _, snapshot, _ in priced_holdings]
     target_portfolio = select_portfolio_candidates(db, as_of_date, payload.target_risk_mode, target_snapshots, model_variant=model_variant_applied)
     actions = build_rebalance_actions(priced_holdings, total_value, target_portfolio, payload.target_risk_mode)
-    analysis_summary = build_analysis_summary(
-        total_holdings=len(payload.holdings),
-        target_risk_mode=payload.target_risk_mode,
-        current_beta=current_beta,
-        diversification_score=diversification_score,
-        avg_corr=avg_corr,
-        sector_weights=sector_weights,
-        factor_exposures=factor_exposures,
-        current_weights=current_weights,
-        actions=actions,
-    )
     rebalance_days = {"ULTRA_LOW": "quarterly", "MODERATE": "monthly review / quarterly hard rebalance", "HIGH": "monthly with tighter drift checks"}[payload.target_risk_mode]
     notes = [
         f"Analysis used latest close prices for {len(priced_holdings)} holdings from PostgreSQL.",
@@ -1261,23 +590,10 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             f"low_vol {factor_exposures['low_vol']:+.2f}, liquidity {factor_exposures['liquidity']:+.2f}."
         ),
         (
-            f"Rebalance actions compare the live holdings against the current {payload.target_risk_mode.lower()} target portfolio "
+            f"Rebalance actions compare only the submitted holdings against the current {payload.target_risk_mode.lower()} target model "
             f"with a drift threshold of {RISK_MODEL_CONFIG[payload.target_risk_mode]['drift_threshold'] * 100:.1f}% and {rebalance_days} reviews."
         ),
     ]
-    notes.extend(
-        [
-            str(analysis_summary["health_summary"]),
-            str(analysis_summary["risk_assessment"]),
-            str(analysis_summary["diversification_assessment"]),
-            str(analysis_summary["concentration_assessment"]),
-            str(analysis_summary["factor_assessment"]),
-            str(analysis_summary["correlation_assessment"]),
-            str(analysis_summary["benchmark_assessment"]),
-            str(analysis_summary["idiosyncratic_risk_assessment"]),
-            str(analysis_summary["rebalance_summary"]),
-        ]
-    )
     if missing_symbols:
         notes.append(f"No market data found yet for: {', '.join(sorted(set(missing_symbols)))}.")
 
@@ -1294,13 +610,17 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
 
     ml_predictions: dict[str, float] = {}
     top_model_drivers_by_symbol: dict[str, list[str]] = {}
-    holdings_inference_note: str | None = None
     if model_variant_applied == "LIGHTGBM_HYBRID" and snapshots:
         try:
             pred_map, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
             for sym, pred in pred_map.items():
                 ml_predictions[sym] = pred.pred_annual_return
             for snapshot in snapshots:
+                if is_defensive_cash_equivalent(snapshot):
+                    apply_defensive_cash_return(snapshot)
+                    ml_predictions[snapshot.symbol] = float(DEFENSIVE_CASH_BUFFER_RETURN)
+                    top_model_drivers_by_symbol[snapshot.symbol] = list(snapshot.top_model_drivers)
+                    continue
                 if snapshot.symbol in pred_map and snapshot.instrument_type == "EQUITY":
                     snapshot.expected_return_source = "ENSEMBLE"
                     snapshot.top_model_drivers = list(pred_map[snapshot.symbol].top_drivers)
@@ -1310,56 +630,24 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
                     snapshot.prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
                     top_model_drivers_by_symbol[snapshot.symbol] = list(snapshot.top_model_drivers)
         except Exception:
-            logger.exception("Analyze portfolio holdings inference failed; falling back to rules-only overlays.")
-            holdings_inference_note = "Holding-level ensemble inference failed during analysis, so holdings overlays fell back to rules."
-
-    if holdings_inference_note:
-        notes.append(holdings_inference_note)
+            # If prediction fails for the holdings, keep defaults (rules).
+            pass
 
     return AnalyzePortfolioResponse(
         total_holdings=len(payload.holdings),
         portfolio_value=round(total_value, 2),
         current_beta=current_beta,
         diversification_score=diversification_score,
-        avg_pairwise_correlation=round(avg_corr, 2),
         sector_weights=sector_weights,
-        largest_sector=str(analysis_summary["largest_sector"]),
-        largest_sector_weight=float(analysis_summary["largest_sector_weight"]),
         factor_exposures={key: round(value, 2) for key, value in factor_exposures.items()},
         correlation_risk=correlation_risk,
         actions=actions,
-        health_label=str(analysis_summary["health_label"]),
-        health_summary=str(analysis_summary["health_summary"]),
-        risk_assessment=str(analysis_summary["risk_assessment"]),
-        diversification_assessment=str(analysis_summary["diversification_assessment"]),
-        concentration_assessment=str(analysis_summary["concentration_assessment"]),
-        factor_assessment=str(analysis_summary["factor_assessment"]),
-        correlation_assessment=str(analysis_summary["correlation_assessment"]),
-        benchmark_assessment=str(analysis_summary["benchmark_assessment"]),
-        idiosyncratic_risk_assessment=str(analysis_summary["idiosyncratic_risk_assessment"]),
-        rebalance_summary=str(analysis_summary["rebalance_summary"]),
-        portfolio_fit_summary=build_portfolio_fit_summary(
-            risk_level=str(analysis_summary["risk_assessment"]),
-            diversification=str(analysis_summary["diversification_assessment"]),
-            concentration=str(analysis_summary["concentration_assessment"]),
-            next_action=(analysis_summary["recommended_actions"][0] if analysis_summary["recommended_actions"] else str(analysis_summary["rebalance_summary"])),
-        ),
-        standard_metrics=build_standard_metrics(
-            return_pct=0.0,
-            volatility_pct=0.0,
-            sharpe_ratio=0.0,
-            diversification_score=diversification_score,
-            correlation=avg_corr,
-            beta=current_beta,
-        ),
-        recommended_actions=[str(item) for item in analysis_summary["recommended_actions"]],
         model_variant_applied=model_variant_applied,
         model_source="ENSEMBLE" if ml_predictions else "RULES",
         active_mode=str(runtime_status.get("active_mode", "rules_only")),
         model_version=str(runtime_status.get("model_version", "rules")),
         artifact_classification=str(runtime_status.get("artifact_classification", "missing")),
         prediction_horizon_days=int(runtime_status.get("prediction_horizon_days", 21)),
-        runtime=build_runtime_descriptor(runtime_status),
         ml_predictions=ml_predictions,
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         holding_period_days_recommended=int(runtime_status.get("prediction_horizon_days", 21)),
@@ -1442,6 +730,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         "total_gst": 0.0,
         "total_slippage": 0.0,
         "total_costs": 0.0,
+        "total_frictional_drag": 0.0,
+        "total_frictional_drag_pct": 0.0,
     }
     taxes = {
         "stcg_gain": 0.0,
@@ -1450,9 +740,6 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         "ltcg_tax": 0.0,
         "cess_tax": 0.0,
         "total_tax": 0.0,
-    }
-    turnover_state = {
-        "gross_executed_notional": 0.0,
     }
     tax_buckets: dict[str, dict] = {
         "stcg": defaultdict(float),
@@ -1501,7 +788,6 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                 state["cash_pool"][0] += proceeds - trade_costs["total_costs"]
                 realize_tax_lots(state, sold_shares, exit_fill, trade_date, taxes, tax_buckets)
                 state["shares"] = 0
-                turnover_state["gross_executed_notional"] += proceeds
                 state["peak_price"] = 0.0
                 state["cooldown_until"] = trade_date + timedelta(days=RISK_MODEL_CONFIG[runtime_risk_mode]["cooldown_days"])
                 total_trades += 1
@@ -1509,7 +795,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0 and index % rebalance_interval == 0 and payload.rebalance_frequency != "NONE":
-            total_trades += rebalance_positions(
+            rebalance_trade_count = rebalance_positions(
                 position_state,
                 bar_matrix,
                 weights,
@@ -1519,8 +805,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
                 taxes,
                 tax_buckets,
                 runtime_risk_mode,
-                turnover_state,
             )
+            total_trades += rebalance_trade_count
             portfolio_value = current_portfolio_value(position_state, bar_matrix, trade_date)
 
         if index > 0:
@@ -1542,15 +828,9 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         )
 
     finalize_tax_buckets(taxes, tax_buckets)
+    costs["total_frictional_drag_pct"] = (costs["total_frictional_drag"] / max(initial_investment, 1.0)) * 100.0
 
-    metrics = build_backtest_metrics(
-        equity_curve,
-        portfolio_returns,
-        costs,
-        taxes,
-        total_trades,
-        turnover_state["gross_executed_notional"],
-    )
+    metrics = build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades)
     run_id = f"bt-{uuid4()}"
     fee_schedule = resolve_equity_fee_schedule(payload.end_date)
     tax_schedule = resolve_capital_gains_tax_schedule(payload.end_date)
@@ -1563,13 +843,13 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
             f"{payload.rebalance_frequency.lower()} review cycle for {runtime_risk_mode.lower()} mode."
         ),
         f"Equity fees used the {fee_schedule.effective_from.isoformat()} rule set: {fee_schedule.notes}",
+        f"Explicit rebalance friction overlay was applied at 10 bps of traded notional; total frictional drag was {costs['total_frictional_drag_pct']:.2f}%.",
         f"Capital gains used the {tax_schedule.effective_from.isoformat()} rule set with FY-wise LTCG exemption handling: {tax_schedule.notes}",
         (
             f"Corporate actions were applied to {adjusted_names} portfolio instruments, including split/bonus price adjustment and dividend cash credits."
             if adjusted_names
             else "No corporate actions were loaded for the portfolio instruments in this backtest window."
         ),
-        "Turnover now reflects executed gross trade notional relative to starting capital instead of a trades-based heuristic.",
     ]
     if payload.mandate is not None:
         notes.insert(
@@ -1590,6 +870,7 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         )
 
     used_ml_count = sum(1 for snapshot, _ in model_portfolio if snapshot.expected_return_source == "ENSEMBLE")
+    runtime_status = get_model_runtime_status()
     top_model_drivers_by_symbol = {
         snapshot.symbol: list(snapshot.top_model_drivers) for snapshot, _ in model_portfolio if snapshot.top_model_drivers
     }
@@ -1636,6 +917,8 @@ def run_backtest(db: Session, payload: BacktestRequest) -> BacktestResultRespons
         model_source=model_source,  # type: ignore[arg-type]
         model_version=model_version,
         prediction_horizon_days=prediction_horizon_days,
+        active_mode=str(runtime_status.get("active_mode", "rules_only")),
+        artifact_classification=str(runtime_status.get("artifact_classification", "missing")),
         top_model_drivers_by_symbol=top_model_drivers_by_symbol,
         run_id=run_id,
         status="completed",
@@ -1676,7 +959,6 @@ def get_backtest_result(db: Session, run_id: str) -> BacktestResultResponse:
 
 def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
     as_of_date = get_effective_trade_date(db)
-    runtime_status = get_model_runtime_status()
     snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=126)
     if not snapshots:
         raise ValueError("No benchmark data is available yet. Ingest bhavcopy data first.")
@@ -1694,11 +976,19 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         "Quality Factor": build_factor_portfolio(snapshots, factor_key="quality", count=12, sector_cap=0.25),
         "AMC Multi Factor": build_multifactor_portfolio(snapshots, count=15, sector_cap=0.22),
     }
-    benchmark_reference_returns = aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get("Nifty 50 Proxy", {}))
+    benchmark_reference_returns = aggregate_portfolio_returns(
+        snapshot_map,
+        benchmark_portfolios.get("Nifty 50 Proxy", {}),
+        clamp_daily_returns=True,
+    )
 
     strategies = []
     for name, category, description in BENCHMARK_UNIVERSES:
-        strategy_returns = aggregate_portfolio_returns(snapshot_map, benchmark_portfolios.get(name, {}))
+        strategy_returns = aggregate_portfolio_returns(
+            snapshot_map,
+            benchmark_portfolios.get(name, {}),
+            clamp_daily_returns=True,
+        )
         metrics = summarize_return_series(strategy_returns)
         expense_ratio = 0.08 if category == "AI" else 0.06 if category == "INDEX" else 0.34
         benchmark_metadata = BENCHMARK_METADATA.get(name, {})
@@ -1739,341 +1029,12 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
         f"Benchmark metrics were computed from ingested market data through {as_of_date.isoformat()}.",
         "Index benchmarks are proxy constructions over the ingested NSE universe because official constituent files are not yet part of the local pipeline.",
         "Factor benchmarks use the same factor model as the allocator: momentum, quality proxy, low-volatility, liquidity, and sector balancing.",
+        f"Benchmark daily returns are computed from adjusted close total-return series and clipped to +/-{BENCHMARK_DAILY_RETURN_CLAMP * 100:.0f}% before annualization to neutralize missing corporate-action outliers.",
+        f"Factor benchmark constituents exclude instruments with circuit-limit return days or clipped annualized returns above {BENCHMARK_MAX_CONSTITUENT_ANNUAL_RETURN_PCT:.0f}% to avoid selecting data-error winners.",
         "Benchmark series are still static point-in-time proxy portfolios rather than fully materialized historical reconstitution jobs.",
         "Benchmark beat rate is the share of overlapping trading days each strategy matched or outperformed the Nifty 50 proxy return.",
     ]
-    return BenchmarkSummaryResponse(
-        strategies=strategies,
-        projected_growth=projected_growth,
-        runtime=build_runtime_descriptor(runtime_status),
-        notes=notes,
-    )
-
-
-def build_market_dashboard(db: Session) -> MarketDashboardResponse:
-    as_of_date = get_effective_trade_date(db)
-    runtime_status = get_model_runtime_status()
-    snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=126)
-    if not snapshots:
-        raise ValueError("No market data is available yet. Ingest bhavcopy data first.")
-
-    benchmark = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
-    reference = benchmark or max(snapshots, key=lambda snapshot: snapshot.avg_traded_value)
-    closes = [price for _, price in reference.adjusted_closes]
-    dma50 = sum(closes[-50:]) / max(min(len(closes), 50), 1)
-    dma200 = sum(closes[-200:]) / max(min(len(closes), 200), 1)
-    breadth_50_count = 0
-    breadth_50_total = 0
-    breadth_200_count = 0
-    breadth_200_total = 0
-    for snapshot in snapshots:
-        series = [price for _, price in snapshot.adjusted_closes]
-        if len(series) >= 50:
-            breadth_50_total += 1
-            breadth_50_count += int(series[-1] > (sum(series[-50:]) / 50))
-        if len(series) >= 200:
-            breadth_200_total += 1
-            breadth_200_count += int(series[-1] > (sum(series[-200:]) / 200))
-    drawdown_pct = compute_max_drawdown(closes) * 100.0
-    drawdown_state = "Deep drawdown" if drawdown_pct >= 20 else "Pullback" if drawdown_pct >= 10 else "Trend intact"
-
-    factor_weather = [
-        MarketFactorWeatherItemModel(
-            factor="momentum",
-            leadership_score=round(sum(snapshot.factor_scores.get("momentum", 0.0) for snapshot in snapshots) / len(snapshots), 2),
-            leader=max(snapshots, key=lambda snapshot: snapshot.factor_scores.get("momentum", 0.0)).symbol,
-            note="Cross-sectional momentum leadership from local price history.",
-            data_quality="live",
-        ),
-        MarketFactorWeatherItemModel(
-            factor="quality",
-            leadership_score=round(sum(snapshot.factor_scores.get("quality", 0.0) for snapshot in snapshots) / len(snapshots), 2),
-            leader=max(snapshots, key=lambda snapshot: snapshot.factor_scores.get("quality", 0.0)).symbol,
-            note="Quality proxy combines drawdown control, downside volatility, and stability.",
-            data_quality="proxy",
-        ),
-        MarketFactorWeatherItemModel(
-            factor="low-vol",
-            leadership_score=round(sum(snapshot.factor_scores.get("low_vol", 0.0) for snapshot in snapshots) / len(snapshots), 2),
-            leader=max(snapshots, key=lambda snapshot: snapshot.factor_scores.get("low_vol", 0.0)).symbol,
-            note="Low-vol leadership from realized volatility ranking.",
-            data_quality="live",
-        ),
-        MarketFactorWeatherItemModel(
-            factor="value/size",
-            leadership_score=round(sum(snapshot.factor_scores.get("size", 0.0) for snapshot in snapshots) / len(snapshots), 2),
-            leader=max(snapshots, key=lambda snapshot: snapshot.factor_scores.get("size", 0.0)).symbol,
-            note="Market-cap bucket proxy used until explicit value and earnings datasets are wired in.",
-            data_quality="proxy",
-        ),
-    ]
-
-    snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
-    gold_proxy = snapshot_map.get("GOLDBEES")
-    liquid_proxy = snapshot_map.get("LIQUIDBEES")
-    energy_sector = [snapshot for snapshot in snapshots if snapshot.sector == "Energy"]
-    it_sector = [snapshot for snapshot in snapshots if snapshot.sector == "IT"]
-    finance_sector = [snapshot for snapshot in snapshots if snapshot.sector in {"Banking", "Finance"}]
-    cross_asset_tone = [
-        CrossAssetToneItemModel(
-            asset="Rates",
-            tone="risk-off" if liquid_proxy and liquid_proxy.momentum_1m_pct > 0.8 else "neutral",
-            move_pct=round(liquid_proxy.momentum_1m_pct if liquid_proxy else 0.0, 2),
-            note="Liquid ETF trend used as a local rates/liquidity proxy.",
-            data_quality="proxy",
-        ),
-        CrossAssetToneItemModel(
-            asset="INR",
-            tone="exporter tailwind" if (sum(snapshot.momentum_1m_pct for snapshot in it_sector) / max(len(it_sector), 1)) > 0 else "importer relief",
-            move_pct=round((sum(snapshot.momentum_1m_pct for snapshot in it_sector) / max(len(it_sector), 1)) - (sum(snapshot.momentum_1m_pct for snapshot in energy_sector) / max(len(energy_sector), 1)), 2),
-            note="Exporter vs importer sector spread is being used until direct INR data is added.",
-            data_quality="proxy",
-        ),
-        CrossAssetToneItemModel(
-            asset="Crude",
-            tone="inflationary" if energy_sector and (sum(snapshot.momentum_1m_pct for snapshot in energy_sector) / len(energy_sector)) > 0 else "benign",
-            move_pct=round(sum(snapshot.momentum_1m_pct for snapshot in energy_sector) / max(len(energy_sector), 1), 2),
-            note="Energy-sector trend used as a crude sensitivity proxy.",
-            data_quality="proxy",
-        ),
-        CrossAssetToneItemModel(
-            asset="Gold",
-            tone="defensive demand" if gold_proxy and gold_proxy.momentum_1m_pct > 0 else "risk-on",
-            move_pct=round(gold_proxy.momentum_1m_pct if gold_proxy else 0.0, 2),
-            note="Gold ETF returns are live where available.",
-            data_quality="live" if gold_proxy else "proxy",
-        ),
-        CrossAssetToneItemModel(
-            asset="Credit/Liquidity",
-            tone="tightening" if finance_sector and (sum(snapshot.max_drawdown_pct for snapshot in finance_sector) / len(finance_sector)) > 20 else "stable",
-            move_pct=round(-(sum(snapshot.max_drawdown_pct for snapshot in finance_sector) / max(len(finance_sector), 1)), 2),
-            note="Financial-sector drawdown and liquid ETF trend are standing in for direct credit-spread feeds.",
-            data_quality="proxy",
-        ),
-    ]
-
-    sector_groups: dict[str, list[Snapshot]] = defaultdict(list)
-    for snapshot in snapshots:
-        if snapshot.instrument_type == "EQUITY":
-            sector_groups[snapshot.sector].append(snapshot)
-    sector_relative_strength = [
-        SectorRelativeStrengthModel(
-            sector=sector,
-            return_1m_pct=round(sum(snapshot.momentum_1m_pct for snapshot in members) / len(members), 2),
-            return_3m_pct=round(sum(snapshot.momentum_3m_pct for snapshot in members) / len(members), 2),
-            return_6m_pct=round(sum(snapshot.momentum_6m_pct for snapshot in members) / len(members), 2),
-            earnings_revision_trend=(
-                "Positive proxy"
-                if (sum(snapshot.factor_scores.get("quality", 0.0) for snapshot in members) / len(members)) > 0.2
-                else "Negative proxy"
-                if (sum(snapshot.factor_scores.get("quality", 0.0) for snapshot in members) / len(members)) < -0.2
-                else "Neutral proxy"
-            ),
-            note="Earnings revision feed is not live yet; current label is a quality/stability proxy.",
-        )
-        for sector, members in sector_groups.items()
-        if members
-    ]
-    sector_relative_strength.sort(key=lambda item: (item.return_3m_pct, item.return_1m_pct), reverse=True)
-
-    breadth_50_pct = (breadth_50_count / breadth_50_total) * 100.0 if breadth_50_total else 0.0
-    breadth_200_pct = (breadth_200_count / breadth_200_total) * 100.0 if breadth_200_total else 0.0
-    risk_level = (
-        "favorable"
-        if reference.latest_price > dma200 and breadth_50_pct >= 55 and reference.annual_volatility_pct <= 18
-        else "mixed"
-        if reference.latest_price > dma200 or breadth_50_pct >= 50
-        else "fragile"
-    )
-    next_action = (
-        "Lean into leadership but keep an eye on cap usage."
-        if risk_level == "favorable"
-        else "Prefer balanced books and stagger new risk."
-        if risk_level == "mixed"
-        else "Stay selective, keep dry powder, and favor defensives."
-    )
-
-    return MarketDashboardResponse(
-        runtime=build_runtime_descriptor(runtime_status),
-        trend=MarketTrendBlockModel(
-            index_symbol=reference.symbol,
-            spot=round(reference.latest_price, 2),
-            dma50=round(dma50, 2),
-            dma200=round(dma200, 2),
-            above_50_dma=reference.latest_price > dma50,
-            above_200_dma=reference.latest_price > dma200,
-            breadth_above_50_pct=round(breadth_50_pct, 2),
-            breadth_above_200_pct=round(breadth_200_pct, 2),
-            realized_volatility_pct=round(reference.annual_volatility_pct, 2),
-            drawdown_pct=round(drawdown_pct, 2),
-            drawdown_state=drawdown_state,
-        ),
-        factor_weather=factor_weather,
-        cross_asset_tone=cross_asset_tone,
-        sector_relative_strength=sector_relative_strength[:10],
-        what_this_means_now=build_portfolio_fit_summary(
-            risk_level=risk_level,
-            diversification=f"breadth {breadth_50_pct:.0f}% above 50 DMA and {breadth_200_pct:.0f}% above 200 DMA",
-            concentration=f"sector leaders are {_join_list([item.sector for item in sector_relative_strength[:3]])}" if sector_relative_strength else "sector leadership is broad but unconfirmed",
-            next_action=next_action,
-        ),
-        notes=[
-            f"Market dashboard uses local prices through {as_of_date.isoformat()}.",
-            "Cross-asset and earnings-revision blocks are clearly labeled as proxies until dedicated feeds are wired in.",
-        ],
-    )
-
-
-def build_benchmark_compare(db: Session, payload: BenchmarkCompareRequest) -> BenchmarkCompareResponse:
-    as_of_date = get_effective_trade_date(db)
-    runtime_status = get_model_runtime_status()
-    runtime = build_runtime_descriptor(runtime_status)
-    snapshots = load_snapshots(db, as_of_date=as_of_date, min_history=126)
-    if not snapshots:
-        raise ValueError("No benchmark data is available yet. Ingest bhavcopy data first.")
-    snapshot_map = {snapshot.symbol: snapshot for snapshot in snapshots}
-
-    strategy_weights: dict[str, float]
-    strategy_name = "Generated Mandate"
-    strategy_match_basis = "live portfolio weights"
-    if payload.allocations:
-        total_weight = sum(item.weight_pct for item in payload.allocations) or 1.0
-        strategy_weights = {
-            item.symbol: max(item.weight_pct, 0.0) / total_weight
-            for item in payload.allocations
-            if item.symbol in snapshot_map
-        }
-    elif payload.mandate is not None:
-        mandate_config = derive_mandate_config(payload.mandate)
-        model_variant = payload.model_variant or runtime.variant
-        selected = select_portfolio_candidates_for_mandate(
-            db,
-            as_of_date,
-            payload.mandate,
-            snapshots,
-            mandate_config,
-            model_variant=model_variant,
-        )
-        strategy_weights = {snapshot.symbol: weight / 100.0 for snapshot, weight in selected}
-        strategy_name = "Mandate Target Book"
-        strategy_match_basis = f"{payload.mandate.risk_attitude.replace('_', ' ')} mandate with {payload.mandate.preferred_num_positions} positions"
-    else:
-        selected = select_portfolio_candidates(db, as_of_date, "MODERATE", snapshots, model_variant=runtime.variant)
-        strategy_weights = {snapshot.symbol: weight / 100.0 for snapshot, weight in selected}
-        strategy_name = "House Moderate Book"
-        strategy_match_basis = "fallback moderate profile"
-
-    if not strategy_weights:
-        raise ValueError("No eligible securities were available for the compare view.")
-
-    holding_count = len(strategy_weights)
-    matched_benchmark = payload.benchmark_name or infer_benchmark_name_for_mandate(payload.mandate, holding_count)
-    benchmark_portfolios = {
-        "Nifty 50 Proxy": build_nifty50_proxy_portfolio(snapshots),
-        "Nifty 500 Proxy": build_nifty500_proxy_portfolio(snapshots),
-        "Momentum Factor": build_factor_portfolio(snapshots, factor_key="momentum", count=max(12, holding_count), sector_cap=0.24),
-        "Quality Factor": build_factor_portfolio(snapshots, factor_key="quality", count=max(12, holding_count), sector_cap=0.24),
-        "AMC Multi Factor": build_multifactor_portfolio(snapshots, count=max(15, holding_count), sector_cap=0.22),
-    }
-    base_benchmark_weights = benchmark_portfolios.get(matched_benchmark) or benchmark_portfolios["Nifty 500 Proxy"]
-    comparison_sets = {
-        strategy_name: strategy_weights,
-        matched_benchmark: base_benchmark_weights,
-        ("Nifty 500 Proxy" if matched_benchmark != "Nifty 500 Proxy" else "Nifty 50 Proxy"): benchmark_portfolios["Nifty 500 Proxy" if matched_benchmark != "Nifty 500 Proxy" else "Nifty 50 Proxy"],
-    }
-    benchmark_returns = aggregate_portfolio_returns(snapshot_map, base_benchmark_weights)
-
-    series_by_name = {name: aggregate_portfolio_returns(snapshot_map, weights) for name, weights in comparison_sets.items()}
-    base_metrics = summarize_return_series(series_by_name[strategy_name])
-    strategy_turnover = estimate_turnover_pct([weight * 100.0 for weight in strategy_weights.values()], runtime.prediction_horizon_days)
-
-    strategy_rows: list[BenchmarkCompareStatsModel] = []
-    for name, weights in comparison_sets.items():
-        return_series = series_by_name[name]
-        metrics = summarize_return_series(return_series)
-        tracking_error_pct, information_ratio = compute_tracking_error_and_ir(return_series, benchmark_returns)
-        downside_capture_pct, upside_capture_pct = compute_capture_ratios(return_series, benchmark_returns)
-        drawdown_duration_days, recovery_days = compute_drawdown_timing(return_series)
-        holding_period_days = (
-            max(21, runtime.prediction_horizon_days)
-            if name == strategy_name
-            else 365
-            if "Nifty" in name
-            else 63
-        )
-        turnover_pct = (
-            strategy_turnover
-            if name == strategy_name
-            else estimate_turnover_pct([weight * 100.0 for weight in weights.values()], holding_period_days)
-        )
-        net_of_cost_return_pct, net_of_tax_return_pct = estimate_statutory_cost_and_tax_drag(
-            metrics["annual_return_pct"],
-            weights=weights,
-            snapshot_map=snapshot_map,
-            turnover_pct=turnover_pct,
-            holding_period_days=holding_period_days,
-            trade_date=as_of_date,
-        )
-        strategy_rows.append(
-            BenchmarkCompareStatsModel(
-                strategy_name=name,
-                annual_return_pct=metrics["annual_return_pct"],
-                volatility_pct=metrics["volatility_pct"],
-                sharpe_ratio=metrics["sharpe_ratio"],
-                max_drawdown_pct=metrics["max_drawdown_pct"],
-                tracking_error_pct=0.0 if name == matched_benchmark else tracking_error_pct,
-                information_ratio=0.0 if name == matched_benchmark else information_ratio,
-                downside_capture_pct=100.0 if name == matched_benchmark else downside_capture_pct,
-                upside_capture_pct=100.0 if name == matched_benchmark else upside_capture_pct,
-                drawdown_duration_days=drawdown_duration_days,
-                recovery_days=recovery_days,
-                active_share_pct=0.0 if name == matched_benchmark else round(compute_active_share(weights, base_benchmark_weights), 2),
-                net_of_cost_return_pct=net_of_cost_return_pct,
-                net_of_tax_return_pct=round(net_of_tax_return_pct, 2),
-                ex_ante_alpha_pct=round(metrics["annual_return_pct"] - summarize_return_series(benchmark_returns)["annual_return_pct"], 2),
-                benchmark_name=matched_benchmark,
-                matched_on=f"risk target and breadth around {holding_count} holdings",
-            )
-        )
-
-    rolling_payload: list[BenchmarkSeriesPointModel] = []
-    combined_dates = sorted({trade_date for series in series_by_name.values() for trade_date in series})
-    rolling_cache = {name: rolling_window_stats(series, benchmark_returns) for name, series in series_by_name.items()}
-    for idx, trade_date in enumerate(combined_dates):
-        if idx % 5 != 0 and idx != len(combined_dates) - 1:
-            continue
-        rolling_payload.append(
-            BenchmarkSeriesPointModel(
-                date=trade_date,
-                strategy_returns={name: round(series.get(trade_date, 0.0) * 100.0, 2) for name, series in series_by_name.items()},
-                rolling_excess_return={name: values[0].get(trade_date, 0.0) for name, values in rolling_cache.items()},
-                rolling_sharpe={name: values[1].get(trade_date, 0.0) for name, values in rolling_cache.items()},
-            )
-        )
-
-    strategy_rows.sort(key=lambda item: (item.strategy_name != strategy_name, -item.sharpe_ratio))
-    portfolio_fit_summary = build_portfolio_fit_summary(
-        risk_level=f"{base_metrics['volatility_pct']:.1f}% vol vs {matched_benchmark}",
-        diversification=f"active share {compute_active_share(strategy_weights, base_benchmark_weights):.1f}% against the matched benchmark",
-        concentration=f"{holding_count} holdings matched against {matched_benchmark}",
-        next_action=(
-            "Keep the current mandate if active share remains high with positive information ratio."
-            if strategy_rows[0].information_ratio > 0
-            else "Tighten breadth or reduce active bets if tracking error is not paying off."
-        ),
-    )
-
-    return BenchmarkCompareResponse(
-        runtime=runtime,
-        portfolio_fit_summary=portfolio_fit_summary,
-        benchmark_match_summary=f"Compared {strategy_name} against {matched_benchmark} because it best matches the portfolio's risk target and breadth ({strategy_match_basis}).",
-        strategies=strategy_rows,
-        series=rolling_payload,
-        notes=[
-            f"Compare view uses prices through {as_of_date.isoformat()}.",
-            "Net-of-cost and net-of-tax numbers use the same local equity fee schedule and capital-gains rule set as the backtest, with turnover-based realization assumptions.",
-        ],
-    )
+    return BenchmarkSummaryResponse(strategies=strategies, projected_growth=projected_growth, notes=notes)
 
 
 def load_snapshots(
@@ -2145,11 +1106,12 @@ def load_snapshots(
         adjusted_opens = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["opens"]]
         adjusted_highs = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["highs"]]
         adjusted_lows = [(trade_date, price * factor_lookup.get(trade_date, 1.0)) for trade_date, price in bucket["lows"]]
-        returns = build_total_return_series(adjusted_closes, dividend_by_date)
+        returns = clamp_daily_return_series(build_total_return_series(adjusted_closes, dividend_by_date))
         if len(returns) < max(5, min_history - 1):
             continue
 
         adjusted_prices = [price for _, price in adjusted_closes]
+        clipped_equity_curve = equity_curve_from_returns(returns)
         snapshots.append(
             Snapshot(
                 symbol=symbol,
@@ -2165,13 +1127,13 @@ def load_snapshots(
                 adjusted_highs=adjusted_highs,
                 adjusted_lows=adjusted_lows,
                 returns=returns,
-                annual_return_pct=annualize_return(adjusted_closes),
+                annual_return_pct=annualize_return_from_returns(returns),
                 annual_volatility_pct=annualize_volatility([item[1] for item in returns]),
-                momentum_1m_pct=compute_momentum_pct(adjusted_closes, window=21),
-                momentum_3m_pct=compute_momentum_pct(adjusted_closes, window=63),
-                momentum_6m_pct=compute_momentum_pct(adjusted_closes, window=126),
+                momentum_1m_pct=compute_momentum_pct_from_returns(returns, window=21),
+                momentum_3m_pct=compute_momentum_pct_from_returns(returns, window=63),
+                momentum_6m_pct=compute_momentum_pct_from_returns(returns, window=126),
                 downside_volatility_pct=annualize_volatility([item[1] for item in returns if item[1] < 0]),
-                max_drawdown_pct=compute_max_drawdown(adjusted_prices) * 100,
+                max_drawdown_pct=compute_max_drawdown(clipped_equity_curve or adjusted_prices) * 100,
                 avg_traded_value=sum(bucket["turnover"][-20:]) / max(len(bucket["turnover"][-20:]), 1),
                 corporate_action_count=len(action_map.get(symbol, [])),
             )
@@ -2351,8 +1313,6 @@ def select_portfolio_candidates_for_mandate(
     
     regime_dict = detect_market_regime(aligned_snapshots)
     regime_name = str(regime_dict.get("regime", "neutral"))
-    if regime_name == "sideways":
-        regime_name = "neutral"
     
     final_weights = project_weights_for_mandate(top_weights, top_snapshots, mandate_config, top_prior, regime_name)
     
@@ -2436,20 +1396,31 @@ def apply_ensemble_predictions_to_snapshots(
     required: bool,
 ) -> dict[str, object]:
     for snapshot in snapshots:
-        snapshot.expected_return_source = "RULES"
-        snapshot.model_version = "rules"
-        snapshot.ml_pred_21d_return = None
-        snapshot.ml_pred_annual_return = None
-        snapshot.top_model_drivers = []
-        snapshot.prediction_horizon_days = 21
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+        else:
+            snapshot.expected_return_source = "RULES"
+            snapshot.model_version = "rules"
+            snapshot.ml_pred_21d_return = None
+            snapshot.ml_pred_annual_return = None
+            snapshot.top_model_drivers = []
+            snapshot.prediction_horizon_days = 21
 
     if not snapshots:
         if required:
             raise ValueError("Ensemble runtime was requested, but there were no snapshots to score.")
         return {"available": False, "reason": "no_snapshots"}
 
+    ml_eligible_snapshots = [
+        snapshot
+        for snapshot in snapshots
+        if snapshot.instrument_type == "EQUITY" and not is_defensive_cash_equivalent(snapshot)
+    ]
+    if not ml_eligible_snapshots:
+        return {"available": False, "reason": "no_ml_eligible_equities"}
+
     try:
-        predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
+        predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, ml_eligible_snapshots, as_of_date)
     except Exception as exc:
         if required:
             raise ValueError(f"Ensemble runtime failed during inference: {exc}") from exc
@@ -2476,7 +1447,7 @@ def apply_ensemble_predictions_to_snapshots(
     prediction_horizon_days = int(model_info.get("prediction_horizon_days", 21))
     for snapshot in snapshots:
         pred = predictions_by_symbol.get(snapshot.symbol)
-        if snapshot.instrument_type != "EQUITY" or pred is None:
+        if snapshot.instrument_type != "EQUITY" or pred is None or is_defensive_cash_equivalent(snapshot):
             continue
         snapshot.ml_pred_21d_return = float(pred.pred_21d_return)
         snapshot.ml_pred_annual_return = float(pred.pred_annual_return)
@@ -2485,7 +1456,10 @@ def apply_ensemble_predictions_to_snapshots(
         snapshot.model_version = model_version
         snapshot.prediction_horizon_days = prediction_horizon_days
 
-    if required and not any(snapshot.expected_return_source == "ENSEMBLE" for snapshot in snapshots):
+    if required and any(
+        snapshot.instrument_type == "EQUITY" and not is_defensive_cash_equivalent(snapshot)
+        for snapshot in snapshots
+    ) and not any(snapshot.expected_return_source == "ENSEMBLE" for snapshot in snapshots):
         raise ValueError("Ensemble runtime was requested, but no equity snapshots received usable predictions.")
 
     return model_info
@@ -2504,6 +1478,10 @@ def estimate_expected_returns_for_mandate(
     holding_scale = mandate_holding_period_scale(mandate_config)
     rule_expected_returns: list[float] = []
     for index, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            rule_expected_returns.append(float(DEFENSIVE_CASH_BUFFER_RETURN))
+            continue
         series = return_matrix[index]
         daily_mean = sum(series) / max(len(series), 1)
         annual_mean = daily_mean * 252
@@ -2534,12 +1512,15 @@ def estimate_expected_returns_for_mandate(
 
     if model_variant != "LIGHTGBM_HYBRID":
         for snapshot in snapshots:
-            snapshot.expected_return_source = "RULES"
-            snapshot.model_version = "rules"
-            snapshot.ml_pred_21d_return = None
-            snapshot.ml_pred_annual_return = None
-            snapshot.top_model_drivers = []
-            snapshot.prediction_horizon_days = 21
+            if is_defensive_cash_equivalent(snapshot):
+                apply_defensive_cash_return(snapshot)
+            else:
+                snapshot.expected_return_source = "RULES"
+                snapshot.model_version = "rules"
+                snapshot.ml_pred_21d_return = None
+                snapshot.ml_pred_annual_return = None
+                snapshot.top_model_drivers = []
+                snapshot.prediction_horizon_days = 21
         return rule_expected_returns
 
     predictions_by_symbol = {
@@ -2557,15 +1538,25 @@ def estimate_expected_returns_for_mandate(
 
     expected_returns = rule_expected_returns[:]
     for index, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            expected_returns[index] = float(DEFENSIVE_CASH_BUFFER_RETURN)
+            continue
         pred_snapshot = predictions_by_symbol.get(snapshot.symbol)
         if snapshot.instrument_type != "EQUITY" or pred_snapshot is None or pred_snapshot.ml_pred_annual_return is None:
             continue
-        ml_expected = float(pred_snapshot.ml_pred_annual_return)
+        # Fiduciary guardrail: shrink and clamp model-implied annual return before blending.
+        raw_ml_expected = float(pred_snapshot.ml_pred_annual_return)
+        ml_expected = max(-0.15, min(0.20, raw_ml_expected))
         news_tilt = (
             snapshot.news_opportunity_score * 0.01 * mandate_config.news_boost_multiplier
             - snapshot.news_risk_score * 0.015 * mandate_config.news_penalty_multiplier
         )
-        expected_returns[index] = max(-0.15, min(0.35, (ml_expected * holding_scale) + news_tilt))
+        blended_expected = (0.65 * (ml_expected * holding_scale)) + (0.35 * rule_expected_returns[index]) + news_tilt
+        expected_returns[index] = max(-0.15, min(0.22, blended_expected))
+        if snapshot.top_model_drivers is None:
+            snapshot.top_model_drivers = []
+        snapshot.top_model_drivers.append(f"ml_annual_shrunk={ml_expected:+.3f}")
 
     return expected_returns
 
@@ -2684,32 +1675,39 @@ def project_weights_for_mandate(
     prior: list[float],
     regime_name: str = "neutral",
 ) -> list[float]:
+    # Fiduciary constraints:
+    # - hard single-name cap at 15%
+    # - sector tracking cap at min(20%, mandate cap)
+    max_weight_per_equity = min(0.15, mandate_config.max_position_weight)
+    sector_cap_weight = min(0.20, mandate_config.sector_cap_weight)
+    active_priors = [max(0.0, p) for p in prior]
+
     w = [max(0.0, weight) for weight in weights]
     if sum(w) == 0:
-        w = prior[:]
+        w = active_priors[:]
 
     for i in range(len(w)):
         if w[i] < 0.02:
             w[i] = 0.0
 
-    w = renormalize([min(mandate_config.max_position_weight, weight) for weight in w])
+    w = renormalize([min(max_weight_per_equity, weight) for weight in w])
 
-    for _ in range(12):
+    for _ in range(24):
         w = renormalize(w)
-        w = [0.82 * weight + 0.18 * base for weight, base in zip(w, prior)]
-        w = renormalize([min(mandate_config.max_position_weight, max(0.0, weight)) for weight in w])
+        w = [0.82 * weight + 0.18 * base for weight, base in zip(w, active_priors)]
+        w = renormalize([min(max_weight_per_equity, max(0.0, weight)) for weight in w])
 
         excess_pool = 0.0
         for index in range(len(w)):
-            capped = min(mandate_config.max_position_weight, w[index])
+            capped = min(max_weight_per_equity, w[index])
             excess_pool += max(0.0, w[index] - capped)
             w[index] = capped
 
         sector_totals = compute_sector_totals(w, snapshots)
         for sector, total in sector_totals.items():
-            if total <= mandate_config.sector_cap_weight:
+            if total <= sector_cap_weight:
                 continue
-            scale = mandate_config.sector_cap_weight / max(total, 1e-9)
+            scale = sector_cap_weight / max(total, 1e-9)
             for index, snapshot in enumerate(snapshots):
                 if snapshot.sector != sector:
                     continue
@@ -2733,9 +1731,104 @@ def project_weights_for_mandate(
                     excess_pool += reduced
 
         if excess_pool > 1e-9:
-            w = redistribute_weight_for_mandate(w, snapshots, mandate_config, prior, excess_pool)
+            w = redistribute_weight_for_mandate(
+                w,
+                snapshots,
+                mandate_config,
+                active_priors,
+                excess_pool,
+                max_position_weight=max_weight_per_equity,
+                sector_cap_weight=sector_cap_weight,
+            )
 
-    return renormalize([min(mandate_config.max_position_weight, max(0.0, weight)) for weight in w])
+    # Final hard pass to guarantee strict caps even after numerical drift.
+    for _ in range(8):
+        w = renormalize([max(0.0, weight) for weight in w])
+        excess_pool = 0.0
+        for i in range(len(w)):
+            capped = min(max_weight_per_equity, w[i])
+            excess_pool += max(0.0, w[i] - capped)
+            w[i] = capped
+        sector_totals = compute_sector_totals(w, snapshots)
+        for sector, total in sector_totals.items():
+            if total <= sector_cap_weight:
+                continue
+            scale = sector_cap_weight / max(total, 1e-9)
+            for i, snapshot in enumerate(snapshots):
+                if snapshot.sector == sector:
+                    reduced = w[i] * (1 - scale)
+                    w[i] *= scale
+                    excess_pool += reduced
+        if excess_pool <= 1e-9:
+            break
+        w = redistribute_weight_for_mandate(
+            w,
+            snapshots,
+            mandate_config,
+            active_priors,
+            excess_pool,
+            max_position_weight=max_weight_per_equity,
+            sector_cap_weight=sector_cap_weight,
+        )
+
+    final_weights = project_to_capped_simplex(
+        [max(0.0, weight) for weight in w],
+        max_position_weight=max_weight_per_equity,
+    )
+    shortfall = max(0.0, 1.0 - sum(final_weights))
+    if shortfall > 1e-9:
+        final_weights = redistribute_weight_for_mandate(
+            final_weights,
+            snapshots,
+            mandate_config,
+            active_priors,
+            shortfall,
+            max_position_weight=max_weight_per_equity,
+            sector_cap_weight=sector_cap_weight,
+        )
+
+    return project_to_capped_simplex(final_weights, max_position_weight=max_weight_per_equity)
+
+
+def project_to_capped_simplex(weights: list[float], *, max_position_weight: float) -> list[float]:
+    if not weights:
+        return []
+
+    cap = max(0.0, max_position_weight)
+    if cap <= 0:
+        return [0.0 for _ in weights]
+
+    if len(weights) * cap < 1.0 - 1e-9:
+        # Infeasible to be fully invested under the cap with this few names. Preserve
+        # the hard cap and leave the remainder for whole-share cash handling.
+        return [cap for _ in weights]
+
+    projected = [min(cap, max(0.0, weight)) for weight in weights]
+    if sum(projected) <= 1e-12:
+        projected = [min(cap, 1.0 / len(weights)) for _ in weights]
+
+    for _ in range(64):
+        total = sum(projected)
+        diff = 1.0 - total
+        if abs(diff) <= 1e-10:
+            break
+
+        if diff > 0:
+            eligible = [index for index, weight in enumerate(projected) if weight < cap - 1e-12]
+            if not eligible:
+                break
+            addition = diff / len(eligible)
+            for index in eligible:
+                projected[index] = min(cap, projected[index] + addition)
+        else:
+            eligible = [index for index, weight in enumerate(projected) if weight > 1e-12]
+            if not eligible:
+                break
+            reduction = (-diff) / len(eligible)
+            for index in eligible:
+                projected[index] = max(0.0, projected[index] - reduction)
+
+    return [min(cap, max(0.0, weight)) for weight in projected]
 
 def redistribute_weight_for_mandate(
     weights: list[float],
@@ -2743,22 +1836,48 @@ def redistribute_weight_for_mandate(
     mandate_config: MandateConfig,
     prior: list[float],
     excess_pool: float,
+    *,
+    max_position_weight: float | None = None,
+    sector_cap_weight: float | None = None,
 ) -> list[float]:
-    sector_totals = compute_sector_totals(weights, snapshots)
-    headroom: list[float] = []
-    for index, snapshot in enumerate(snapshots):
-        asset_headroom = max(0.0, mandate_config.max_position_weight - weights[index])
-        sector_headroom = max(0.0, mandate_config.sector_cap_weight - sector_totals[snapshot.sector])
-        score = min(asset_headroom, sector_headroom) * (1.0 + max(prior[index], 0.001))
-        headroom.append(score)
-
-    total_headroom = sum(headroom)
-    if total_headroom <= 1e-9:
-        return weights
-
     redistributed = weights[:]
-    for index, score in enumerate(headroom):
-        redistributed[index] += excess_pool * (score / total_headroom)
+    target_asset_cap = max_position_weight if max_position_weight is not None else mandate_config.max_position_weight
+    target_sector_cap = sector_cap_weight if sector_cap_weight is not None else mandate_config.sector_cap_weight
+
+    # Recursive redistribution using active priors, while respecting asset + sector caps.
+    remaining = max(0.0, excess_pool)
+    for _ in range(16):
+        if remaining <= 1e-9:
+            break
+        sector_totals = compute_sector_totals(redistributed, snapshots)
+        candidates: list[tuple[int, float, float]] = []
+        for index, snapshot in enumerate(snapshots):
+            asset_headroom = max(0.0, target_asset_cap - redistributed[index])
+            sector_headroom = max(0.0, target_sector_cap - sector_totals[snapshot.sector])
+            headroom = min(asset_headroom, sector_headroom)
+            if headroom <= 1e-9:
+                continue
+            score = max(0.001, prior[index])
+            candidates.append((index, headroom, score))
+
+        if not candidates:
+            break
+
+        # Higher-prior names absorb residual first, proportional within the active set.
+        candidates.sort(key=lambda item: item[2], reverse=True)
+        total_score = sum(item[2] for item in candidates)
+        allocated = 0.0
+        for index, headroom, score in candidates:
+            slice_weight = remaining * (score / max(total_score, 1e-9))
+            addition = min(headroom, slice_weight)
+            if addition <= 1e-12:
+                continue
+            redistributed[index] += addition
+            allocated += addition
+        if allocated <= 1e-12:
+            break
+        remaining -= allocated
+
     return redistributed
 
 
@@ -2945,8 +2064,9 @@ def initialize_positions(*, bar_matrix, weights, first_date, initial_investment,
     return positions, trades
 
 
-def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, risk_mode: str, turnover_state) -> int:
+def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfolio_value, costs, taxes, tax_buckets, risk_mode: str) -> int:
     trades = 0
+    rebalance_traded_notional = 0.0
     if not position_state:
         return 0
     config = RISK_MODEL_CONFIG[risk_mode]
@@ -2966,6 +2086,7 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             if shares_to_sell <= 0:
                 continue
             proceeds = shares_to_sell * bar.close_price
+            rebalance_traded_notional += proceeds
             trade_costs = calculate_trade_costs(
                 amount=proceeds,
                 trade_date=trade_date,
@@ -2977,7 +2098,6 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             cash_pool[0] += proceeds - trade_costs["total_costs"]
             realize_tax_lots(state, shares_to_sell, bar.close_price, trade_date, taxes, tax_buckets)
             state["shares"] = sum(lot["shares"] for lot in state["lots"])
-            turnover_state["gross_executed_notional"] += proceeds
             trades += 1
         elif drift_value > 0:
             if state["cooldown_until"] is not None and trade_date < state["cooldown_until"]:
@@ -2987,6 +2107,7 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             if shares_to_buy <= 0:
                 continue
             trade_value = shares_to_buy * bar.close_price
+            rebalance_traded_notional += trade_value
             trade_costs = calculate_trade_costs(
                 amount=trade_value,
                 trade_date=trade_date,
@@ -3003,12 +2124,18 @@ def rebalance_positions(position_state, bar_matrix, weights, trade_date, portfol
             state["lots"].append({"shares": shares_to_buy, "entry_price": bar.close_price, "entry_date": trade_date})
             state["entry_price"] = weighted_average_entry_price(state["lots"])
             state["peak_price"] = max(state["peak_price"], bar.high_price)
-            turnover_state["gross_executed_notional"] += trade_value
             trades += 1
+
+    # Flat 10 bps friction penalty on total rebalance traded notional.
+    if rebalance_traded_notional > 0:
+        friction_penalty = rebalance_traded_notional * 0.001
+        cash_pool[0] -= friction_penalty
+        costs["total_frictional_drag"] += friction_penalty
+        costs["total_costs"] += friction_penalty
     return trades
 
 
-def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades, gross_executed_notional) -> BacktestMetricModel:
+def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_trades) -> BacktestMetricModel:
     initial_value = equity_curve[0].portfolio_value
     final_value = equity_curve[-1].portfolio_value
     years = max((equity_curve[-1].date - equity_curve[0].date).days / 365.25, 1 / 12)
@@ -3025,7 +2152,6 @@ def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_
     win_rate_pct = (sum(1 for value in portfolio_returns if value > 0) / max(len(portfolio_returns), 1)) * 100
     tax_drag_pct = (taxes["total_tax"] / max(initial_value, 1)) * 100
     cost_drag_pct = (costs["total_costs"] / max(initial_value, 1)) * 100
-    turnover_pct = (gross_executed_notional / max(initial_value, 1)) * 100
     return BacktestMetricModel(
         cagr_pct=round(cagr_pct, 2),
         total_return_pct=round(total_return_pct, 2),
@@ -3033,7 +2159,7 @@ def build_backtest_metrics(equity_curve, portfolio_returns, costs, taxes, total_
         sharpe_ratio=round(sharpe_ratio, 2),
         sortino_ratio=round(sortino_ratio, 2),
         calmar_ratio=round(calmar_ratio, 2),
-        turnover_pct=round(turnover_pct, 2),
+        turnover_pct=round(min(250.0, total_trades * 6.5), 2),
         win_rate_pct=round(win_rate_pct, 2),
         total_trades=total_trades,
         tax_drag_pct=round(tax_drag_pct, 2),
@@ -3102,6 +2228,10 @@ def estimate_expected_returns(db, as_of_date,
     rule_expected_returns: list[float] = []
     config = RISK_MODEL_CONFIG[risk_mode]
     for index, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            rule_expected_returns.append(float(DEFENSIVE_CASH_BUFFER_RETURN))
+            continue
         series = return_matrix[index]
         daily_mean = sum(series) / max(len(series), 1)
         annual_mean = daily_mean * 252
@@ -3151,11 +2281,14 @@ def estimate_expected_returns(db, as_of_date,
 
     # 2) Default to rule-only, and annotate snapshot metadata accordingly.
     for snapshot in snapshots:
-        snapshot.expected_return_source = "RULES"
-        snapshot.model_version = "rules"
-        snapshot.ml_pred_21d_return = None
-        snapshot.ml_pred_annual_return = None
-        snapshot.top_model_drivers = []
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+        else:
+            snapshot.expected_return_source = "RULES"
+            snapshot.model_version = "rules"
+            snapshot.ml_pred_21d_return = None
+            snapshot.ml_pred_annual_return = None
+            snapshot.top_model_drivers = []
 
     if model_variant != "LIGHTGBM_HYBRID":
         return rule_expected_returns
@@ -3165,7 +2298,6 @@ def estimate_expected_returns(db, as_of_date,
     try:
         predictions_by_symbol, model_info = predict_ensemble_for_snapshots(db, snapshots, as_of_date)
     except Exception:
-        logger.exception("Expected return inference failed; continuing with rules-only expected returns.")
         predictions_by_symbol, model_info = {}, {"available": False}
 
     model_version = str(model_info.get("model_version", "unknown"))
@@ -3173,6 +2305,10 @@ def estimate_expected_returns(db, as_of_date,
     expected_returns = rule_expected_returns[:]
     any_ml_used = False
     for i, snapshot in enumerate(snapshots):
+        if is_defensive_cash_equivalent(snapshot):
+            apply_defensive_cash_return(snapshot)
+            expected_returns[i] = float(DEFENSIVE_CASH_BUFFER_RETURN)
+            continue
         symbol = snapshot.symbol
         pred = predictions_by_symbol.get(symbol)
         if snapshot.instrument_type != "EQUITY" or pred is None:
@@ -3343,7 +2479,12 @@ def candidate_score(snapshot: Snapshot, risk_mode: str, preference_rank: int) ->
     )
 
 
-def aggregate_portfolio_returns(snapshot_map: dict[str, Snapshot], weights: dict[str, float]) -> dict[date, float]:
+def aggregate_portfolio_returns(
+    snapshot_map: dict[str, Snapshot],
+    weights: dict[str, float],
+    *,
+    clamp_daily_returns: bool = False,
+) -> dict[date, float]:
     combined: dict[date, float] = defaultdict(float)
     totals: dict[date, float] = defaultdict(float)
     for symbol, weight in weights.items():
@@ -3353,7 +2494,16 @@ def aggregate_portfolio_returns(snapshot_map: dict[str, Snapshot], weights: dict
         for trade_date, value in snapshot.returns:
             combined[trade_date] += value * weight
             totals[trade_date] += weight
-    return {trade_date: combined[trade_date] / max(totals[trade_date], 1e-9) for trade_date in sorted(combined)}
+    aggregated = {
+        trade_date: combined[trade_date] / max(totals[trade_date], 1e-9)
+        for trade_date in sorted(combined)
+    }
+    if not clamp_daily_returns:
+        return aggregated
+    return {
+        trade_date: float(np.clip(value, -BENCHMARK_DAILY_RETURN_CLAMP, BENCHMARK_DAILY_RETURN_CLAMP))
+        for trade_date, value in aggregated.items()
+    }
 
 
 def summarize_return_series(return_series: dict[date, float]) -> dict[str, float]:
@@ -3413,6 +2563,40 @@ def annualize_return(closes: list[tuple[date, float]]) -> float:
     return (((closes[-1][1] / closes[0][1]) ** (252 / periods)) - 1) * 100
 
 
+def clamp_daily_return_series(return_series: list[tuple[date, float]]) -> list[tuple[date, float]]:
+    return [
+        (trade_date, float(np.clip(value, -BENCHMARK_DAILY_RETURN_CLAMP, BENCHMARK_DAILY_RETURN_CLAMP)))
+        for trade_date, value in return_series
+    ]
+
+
+def equity_curve_from_returns(return_series: list[tuple[date, float]]) -> list[float]:
+    equity: list[float] = []
+    running = 1.0
+    for _, value in return_series:
+        running *= 1 + value
+        equity.append(running)
+    return equity
+
+
+def annualize_return_from_returns(return_series: list[tuple[date, float]]) -> float:
+    equity = equity_curve_from_returns(return_series)
+    if not equity:
+        return 0.0
+    years = max(len(return_series) / 252, 1 / 12)
+    return ((equity[-1] ** (1 / years)) - 1) * 100
+
+
+def compute_momentum_pct_from_returns(return_series: list[tuple[date, float]], window: int) -> float:
+    if not return_series:
+        return 0.0
+    window_returns = return_series[-window:] if len(return_series) > window else return_series
+    running = 1.0
+    for _, value in window_returns:
+        running *= 1 + value
+    return (running - 1) * 100
+
+
 def annualize_volatility(values: list[float]) -> float:
     if len(values) < 2:
         return 0.0
@@ -3430,29 +2614,19 @@ def compute_momentum_pct(closes: list[tuple[date, float]], window: int) -> float
 def average_pairwise_correlation(snapshots: list[Snapshot]) -> float:
     if len(snapshots) < 2:
         return 0.0
-
-    return_maps = {
-        snapshot.symbol: {trade_date: value for trade_date, value in snapshot.returns}
-        for snapshot in snapshots
-        if len(snapshot.returns) >= 10
-    }
-    if len(return_maps) < 2:
-        return 0.0
-
-    frame = pd.DataFrame(return_maps, dtype=float)
-    if frame.shape[1] < 2:
-        return 0.0
-
-    corr_matrix = frame.corr(min_periods=10).to_numpy(dtype=float)
-    if corr_matrix.shape[0] < 2:
-        return 0.0
-
-    upper_indices = np.triu_indices_from(corr_matrix, k=1)
-    pair_values = corr_matrix[upper_indices]
-    pair_values = pair_values[~np.isnan(pair_values)]
-    if pair_values.size == 0:
-        return 0.0
-    return float(np.clip(pair_values.mean(), -1.0, 1.0))
+    pair_values = []
+    for left_index in range(len(snapshots)):
+        left_map = {trade_date: value for trade_date, value in snapshots[left_index].returns}
+        for right_index in range(left_index + 1, len(snapshots)):
+            overlap_left = []
+            overlap_right = []
+            for trade_date, value in snapshots[right_index].returns:
+                if trade_date in left_map:
+                    overlap_left.append(left_map[trade_date])
+                    overlap_right.append(value)
+            if len(overlap_left) >= 10:
+                pair_values.append(correlation(overlap_left, overlap_right))
+    return sum(pair_values) / len(pair_values) if pair_values else 0.0
 
 
 def covariance(x: list[float], y: list[float]) -> float:
@@ -3595,84 +2769,19 @@ def compute_factor_exposures(weighted_snapshots: list[tuple[Snapshot, float]]) -
     return exposures
 
 
-def _sma(values: list[float], window: int) -> float:
-    if not values:
-        return 0.0
-    if len(values) < window:
-        return sum(values) / len(values)
-    return sum(values[-window:]) / window
-
-
 def detect_market_regime(snapshots: list[Snapshot]) -> dict[str, float | str]:
     benchmark = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
-    reference = benchmark or max(snapshots, key=lambda snapshot: snapshot.avg_traded_value, default=None)
-    if reference is None:
-        return {
-            "regime": "sideways",
-            "confidence": 0.0,
-            "breadth_50": 0.5,
-            "breadth_200": 0.5,
-            "base_return": 0.10,
-            "risk_on_bonus": 0.0,
-        }
-
-    closes = [price for _, price in reference.adjusted_closes]
-    if not closes:
-        return {
-            "regime": "sideways",
-            "confidence": 0.0,
-            "breadth_50": 0.5,
-            "breadth_200": 0.5,
-            "base_return": 0.10,
-            "risk_on_bonus": 0.0,
-        }
-
-    latest = closes[-1]
-    sma50 = _sma(closes, 50)
-    sma200 = _sma(closes, 200)
-
-    stocks_with_50 = 0
-    stocks_with_200 = 0
-    above_50 = 0
-    above_200 = 0
-    for snapshot in snapshots:
-        series = [price for _, price in snapshot.adjusted_closes]
-        if len(series) >= 50:
-            stocks_with_50 += 1
-            above_50 += int(series[-1] > _sma(series, 50))
-        if len(series) >= 200:
-            stocks_with_200 += 1
-            above_200 += int(series[-1] > _sma(series, 200))
-
-    breadth_50 = above_50 / stocks_with_50 if stocks_with_50 else 0.5
-    breadth_200 = above_200 / stocks_with_200 if stocks_with_200 else 0.5
-    bull_signals = sum([latest > sma200, sma50 > sma200, breadth_50 > 0.55, breadth_200 > 0.50])
-    bear_signals = sum([latest < sma200, sma50 < sma200, breadth_50 < 0.45, breadth_200 < 0.45])
-
-    if bull_signals >= 3:
-        regime = "bull"
-        confidence = bull_signals / 4.0
-        base_return = 0.12 if confidence >= 0.75 else 0.11
-        risk_on_bonus = 0.015 if confidence >= 0.75 else 0.01
-    elif bear_signals >= 3:
-        regime = "bear"
-        confidence = bear_signals / 4.0
-        base_return = 0.08 if confidence >= 0.75 else 0.09
-        risk_on_bonus = -0.01 if confidence >= 0.75 else -0.005
-    else:
-        regime = "sideways"
-        confidence = max(0.5, max(bull_signals, bear_signals) / 4.0)
-        base_return = 0.10
-        risk_on_bonus = 0.0
-
-    return {
-        "regime": regime,
-        "confidence": round(confidence, 2),
-        "breadth_50": round(breadth_50, 2),
-        "breadth_200": round(breadth_200, 2),
-        "base_return": base_return,
-        "risk_on_bonus": risk_on_bonus,
-    }
+    if benchmark is None:
+        benchmark = max(snapshots, key=lambda snapshot: snapshot.avg_traded_value, default=None)
+    if benchmark is None:
+        return {"base_return": 0.10, "risk_on_bonus": 0.0, "regime": "neutral", "regime_name": "Neutral"}
+    trailing_return = benchmark.momentum_3m_pct
+    trailing_vol = benchmark.annual_volatility_pct
+    if trailing_return < -5.0 or trailing_vol > 24.0:
+        return {"base_return": 0.08, "risk_on_bonus": -0.01, "regime": "bear", "regime_name": "Bear"}
+    if trailing_return > 8.0 and trailing_vol < 18.0:
+        return {"base_return": 0.12, "risk_on_bonus": 0.015, "regime": "bull", "regime_name": "Bull"}
+    return {"base_return": 0.10, "risk_on_bonus": 0.0, "regime": "neutral", "regime_name": "Neutral"}
 
 
 def build_nifty50_proxy_portfolio(snapshots: list[Snapshot]) -> dict[str, float]:
@@ -3704,7 +2813,7 @@ def build_nifty500_proxy_portfolio(snapshots: list[Snapshot]) -> dict[str, float
 
 
 def build_factor_portfolio(snapshots: list[Snapshot], *, factor_key: str, count: int, sector_cap: float) -> dict[str, float]:
-    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    equities = [snapshot for snapshot in snapshots if is_benchmark_factor_eligible(snapshot)]
     ranked = sorted(equities, key=lambda snapshot: snapshot.factor_scores.get(factor_key, 0.0), reverse=True)[:count]
     if not ranked:
         return {}
@@ -3713,7 +2822,7 @@ def build_factor_portfolio(snapshots: list[Snapshot], *, factor_key: str, count:
 
 
 def build_multifactor_portfolio(snapshots: list[Snapshot], *, count: int, sector_cap: float) -> dict[str, float]:
-    equities = [snapshot for snapshot in snapshots if snapshot.instrument_type == "EQUITY"]
+    equities = [snapshot for snapshot in snapshots if is_benchmark_factor_eligible(snapshot)]
     ranked = sorted(
         equities,
         key=lambda snapshot: (
@@ -3738,6 +2847,14 @@ def build_multifactor_portfolio(snapshots: list[Snapshot], *, count: int, sector
         for snapshot in ranked
     }
     return cap_sector_weights(normalize_score_weights(score_weights), {snapshot.symbol: snapshot for snapshot in ranked}, sector_cap)
+
+
+def is_benchmark_factor_eligible(snapshot: Snapshot) -> bool:
+    if snapshot.instrument_type != "EQUITY":
+        return False
+    if abs(snapshot.annual_return_pct) > BENCHMARK_MAX_CONSTITUENT_ANNUAL_RETURN_PCT:
+        return False
+    return all(abs(value) < BENCHMARK_DAILY_RETURN_CLAMP - 1e-9 for _, value in snapshot.returns)
 
 
 def normalize_score_weights(raw_weights: dict[str, float]) -> dict[str, float]:
@@ -3832,7 +2949,6 @@ def finalize_tax_buckets(taxes: dict[str, float], tax_buckets: dict[str, dict]) 
         taxable_gain = max(0.0, gain)
         base_tax = taxable_gain * rate
         stcg_tax += base_tax
-        # Cess is computed only from the fresh base-tax subtotal for this bucket.
         cess_tax += base_tax * cess_rate
 
     ltcg_by_fy: dict[str, list[tuple[float, float, float, float]]] = defaultdict(list)
@@ -3855,7 +2971,6 @@ def finalize_tax_buckets(taxes: dict[str, float], tax_buckets: dict[str, dict]) 
             allocated_taxable = taxable_total * (positive_gain / positive_total)
             base_tax = allocated_taxable * rate
             ltcg_tax += base_tax
-            # Do not apply cess on any value that already includes cess.
             cess_tax += base_tax * cess_rate
 
     taxes["stcg_tax"] = stcg_tax

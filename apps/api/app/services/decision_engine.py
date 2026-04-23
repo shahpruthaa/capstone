@@ -1,38 +1,25 @@
 from __future__ import annotations
 
-from collections import OrderedDict, defaultdict
+from collections import defaultdict
 from datetime import datetime, timedelta
 from math import ceil
-from threading import RLock
 
 from sqlalchemy.orm import Session
 
 from app.features.position_sizer import calculate_position_size
 from app.features.price_levels import calculate_price_levels
 from app.ml.lightgbm_alpha.technical_indicators import compute_technical_features
-from app.schemas.portfolio import PortfolioFitSummaryModel
-from app.schemas.trade_idea import CheckResultModel, TenPointChecklistModel, TradeIdeaContextModel, TradeIdeaListResponse, TradeIdeaModel
-from app.services.db_quant_engine import Snapshot, build_portfolio_fit_summary, build_runtime_descriptor, detect_market_regime, get_effective_trade_date, load_snapshots
+from app.schemas.trade_idea import CheckResultModel, TenPointChecklistModel, TradeIdeaModel
+from app.services.db_quant_engine import (
+    Snapshot,
+    get_effective_trade_date,
+    is_defensive_cash_equivalent,
+    load_snapshots,
+)
 from app.services.ensemble_scorer import get_shared_ensemble_scorer
-from app.services.model_runtime import get_model_runtime_status
 
-_TRADE_IDEA_CACHE: "OrderedDict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]]" = OrderedDict()
+_TRADE_IDEA_CACHE: dict[tuple[str, bool, int, int | None], tuple[datetime, list[TradeIdeaModel]]] = {}
 _TRADE_IDEA_CACHE_TTL = timedelta(minutes=5)
-_TRADE_IDEA_CACHE_MAXSIZE = 64
-_TRADE_IDEA_CACHE_LOCK = RLock()
-
-
-def _prune_trade_idea_cache(now: datetime) -> None:
-    with _TRADE_IDEA_CACHE_LOCK:
-        expired_keys = [
-            cache_key
-            for cache_key, (cached_at, _) in list(_TRADE_IDEA_CACHE.items())
-            if now - cached_at > _TRADE_IDEA_CACHE_TTL
-        ]
-        for cache_key in expired_keys:
-            _TRADE_IDEA_CACHE.pop(cache_key, None)
-        while len(_TRADE_IDEA_CACHE) > _TRADE_IDEA_CACHE_MAXSIZE:
-            _TRADE_IDEA_CACHE.popitem(last=False)
 
 
 class DecisionEngine:
@@ -47,32 +34,20 @@ class DecisionEngine:
         max_ideas: int | None = None,
         portfolio_value: float = 1_000_000.0,
         risk_per_trade_pct: float = 1.0,
-        cash_available: float | None = None,
-        sector_exposures: dict[str, float] | None = None,
-        current_holdings: list[TradeIdeaContextModel] | None = None,
-    ) -> TradeIdeaListResponse:
+    ) -> list[TradeIdeaModel]:
         as_of_date = get_effective_trade_date(self.db)
         cache_key = (str(as_of_date), regime_filter, min_checklist_score, max_ideas)
+        cached = _TRADE_IDEA_CACHE.get(cache_key)
         now = datetime.utcnow()
-        with _TRADE_IDEA_CACHE_LOCK:
-            _prune_trade_idea_cache(now)
-            cached = _TRADE_IDEA_CACHE.get(cache_key)
-        if cached is not None and now - cached[0] <= _TRADE_IDEA_CACHE_TTL and not current_holdings and not sector_exposures and cash_available is None:
-            with _TRADE_IDEA_CACHE_LOCK:
-                _TRADE_IDEA_CACHE.move_to_end(cache_key)
-            return TradeIdeaListResponse(
-                runtime=build_runtime_descriptor(get_model_runtime_status()),
-                portfolio_fit_summary=None,
-                notes=["Returned from short-lived trade-idea cache."],
-                ideas=cached[1],
-            )
+        if cached is not None and now - cached[0] <= _TRADE_IDEA_CACHE_TTL:
+            return cached[1]
 
         snapshots = load_snapshots(self.db, as_of_date=as_of_date, min_history=252)
         if len(snapshots) < 10:
             snapshots = load_snapshots(self.db, as_of_date=as_of_date, min_history=90)
 
         predictions, _ = self.ensemble_scorer.score(snapshots, self.db)
-        regime = detect_market_regime(snapshots)
+        regime = self._detect_market_regime(snapshots)
         sector_ranks, sector_scores = self._rank_sectors(snapshots, predictions)
         sector_relative_strength = self._build_sector_relative_strength(snapshots)
 
@@ -80,18 +55,21 @@ class DecisionEngine:
         sector_cutoff = max(3, ceil(max(len(sector_ranks), 1) * 0.4))
 
         for snapshot in snapshots:
-            if snapshot.instrument_type == "ETF":
+            if is_defensive_cash_equivalent(snapshot):
                 continue
 
             prediction = predictions.get(snapshot.symbol)
             if prediction is None:
+                continue
+            expected_return_annual = float(prediction.pred_annual_return)
+            if expected_return_annual <= 0:
                 continue
 
             sector_rank = sector_ranks.get(snapshot.sector, len(sector_ranks) + 1)
             if regime_filter and sector_rank > sector_cutoff:
                 continue
 
-            levels = calculate_price_levels(snapshot, prediction.pred_annual_return)
+            levels = calculate_price_levels(snapshot, expected_return_annual)
             sizing = calculate_position_size(
                 portfolio_value=portfolio_value,
                 risk_per_trade_pct=risk_per_trade_pct,
@@ -125,6 +103,8 @@ class DecisionEngine:
                 checklist.position_sizing,
             ]
             checklist_score = sum(1 for item in checklist_items if item.passed)
+            if expected_return_annual <= 0:
+                checklist_score = 0
             if checklist_score < min_checklist_score:
                 continue
 
@@ -137,7 +117,7 @@ class DecisionEngine:
                     timestamp=datetime.utcnow(),
                     as_of_date=as_of_date,
                     ensemble_score=round(float(prediction.pred_21d_return), 4),
-                    expected_return_annual=round(float(prediction.pred_annual_return), 4),
+                    expected_return_annual=round(expected_return_annual, 4),
                     top_drivers=list(prediction.top_drivers),
                     checklist=checklist,
                     checklist_score=checklist_score,
@@ -162,86 +142,60 @@ class DecisionEngine:
             ),
             reverse=True,
         )
-        holdings = current_holdings or []
-        sector_budget = sector_exposures or {}
-        duplicate_count = 0
-        hedge_count = 0
-        for idea in ideas:
-            overlap = [holding.symbol for holding in holdings if holding.symbol == idea.symbol]
-            sector_weight = float(sector_budget.get(idea.sector, 0.0))
-            duplicate_factor_bets = [driver for driver in idea.top_drivers if any(token in driver.lower() for token in ("momentum", "quality", "low_vol", "beta"))]
-            hedge_factor_bets = [driver for driver in idea.top_drivers if "low_vol" in driver.lower() or "quality" in driver.lower()]
-            if duplicate_factor_bets:
-                duplicate_count += 1
-            if hedge_factor_bets:
-                hedge_count += 1
-            cash_limited_value = min(
-                idea.suggested_allocation_pct * portfolio_value / 100.0,
-                cash_available if cash_available is not None else portfolio_value,
-            )
-            idea.suggested_allocation_value = round(max(0.0, cash_limited_value), 2)
-            idea.suggested_units = int(cash_limited_value // max(idea.entry_price, 1.0))
-            idea.expected_holding_period_days = 21 if idea.regime_alignment == "aligned" else 10
-            idea.liquidity_slippage_bps = round(min(65.0, max(8.0, (sector_weight / 10.0) + (4.0 if idea.suggested_allocation_pct > 10 else 0.0))), 1)
-            idea.liquidity_commentary = (
-                "Sizing is being clipped by available cash and current sector exposure."
-                if cash_available is not None and cash_limited_value < (idea.suggested_allocation_pct * portfolio_value / 100.0)
-                else "Liquidity estimate is based on position size versus local turnover proxy."
-            )
-            idea.event_calendar = [
-                "Next earnings date: feed pending",
-                f"Sector catalyst watch: {idea.sector} momentum and macro regime",
-                "RBI / macro calendar: check weekly ahead of entry",
-            ]
-            idea.overlap_with_holdings = overlap
-            idea.duplicate_factor_bets = duplicate_factor_bets[:2]
-            idea.hedge_factor_bets = hedge_factor_bets[:2]
-            idea.marginal_risk_contribution_pct = round(max(0.5, min(18.0, idea.suggested_allocation_pct * (1.2 if sector_weight >= 25 else 0.8))), 2)
-            fit_bits = []
-            if overlap:
-                fit_bits.append("duplicates an existing holding")
-            if sector_weight >= 25:
-                fit_bits.append(f"pushes {idea.sector} concentration higher")
-            if hedge_factor_bets:
-                fit_bits.append("adds some defensive factor balance")
-            elif duplicate_factor_bets:
-                fit_bits.append("leans into an existing factor bet")
-            if not fit_bits:
-                fit_bits.append("adds new exposure without obvious concentration stress")
-            idea.portfolio_fit_summary = "; ".join(fit_bits).capitalize() + "."
-            idea.realized_hit_rate_by_type_pct = None
-
         final_ideas = ideas[:max_ideas] if max_ideas is not None else ideas
-        with _TRADE_IDEA_CACHE_LOCK:
-            _TRADE_IDEA_CACHE[cache_key] = (now, final_ideas)
-            _TRADE_IDEA_CACHE.move_to_end(cache_key)
-            _prune_trade_idea_cache(now)
-        portfolio_fit_summary: PortfolioFitSummaryModel | None = None
-        if holdings:
-            portfolio_fit_summary = build_portfolio_fit_summary(
-                risk_level=f"{len(holdings)} live holdings with Rs {portfolio_value:,.0f} modeled capital",
-                diversification=f"{len(sector_budget)} sectors in the current book" if sector_budget else "sector exposures not supplied",
-                concentration=f"{duplicate_count} ideas overlap current bets and {hedge_count} ideas hedge them",
-                next_action="Prefer ideas that diversify sector and factor exposure before adding more to crowded sleeves.",
-            )
-        return TradeIdeaListResponse(
-            runtime=build_runtime_descriptor(get_model_runtime_status()),
-            portfolio_fit_summary=portfolio_fit_summary,
-            notes=[
-                "Options, institutional-flow, and fundamentals checks are explicitly marked as proxies until those feeds are wired in.",
-                "Sizing incorporates supplied cash and sector exposure when present.",
-            ],
-            ideas=final_ideas,
-        )
+        _TRADE_IDEA_CACHE[cache_key] = (now, final_ideas)
+        return final_ideas
 
     def build_trade_idea(self, symbol: str) -> TradeIdeaModel | None:
-        response = self.generate_trade_ideas(regime_filter=False, min_checklist_score=0)
-        return next((idea for idea in response.ideas if idea.symbol == symbol), None)
+        ideas = self.generate_trade_ideas(regime_filter=False, min_checklist_score=0)
+        return next((idea for idea in ideas if idea.symbol == symbol), None)
+
+    def _detect_market_regime(self, snapshots: list[Snapshot]) -> dict[str, float | str]:
+        benchmark = next((snapshot for snapshot in snapshots if snapshot.symbol == "NIFTYBEES"), None)
+        reference = benchmark or max(snapshots, key=lambda snapshot: snapshot.avg_traded_value, default=None)
+        if reference is None:
+            return {"regime": "sideways", "confidence": 0.0}
+
+        closes = [price for _, price in reference.adjusted_closes]
+        latest = closes[-1]
+        sma50 = self._sma(closes, 50)
+        sma200 = self._sma(closes, 200)
+
+        stocks_with_50 = 0
+        stocks_with_200 = 0
+        above_50 = 0
+        above_200 = 0
+        for snapshot in snapshots:
+            series = [price for _, price in snapshot.adjusted_closes]
+            if len(series) >= 50:
+                stocks_with_50 += 1
+                above_50 += int(series[-1] > self._sma(series, 50))
+            if len(series) >= 200:
+                stocks_with_200 += 1
+                above_200 += int(series[-1] > self._sma(series, 200))
+
+        breadth_50 = above_50 / stocks_with_50 if stocks_with_50 else 0.5
+        breadth_200 = above_200 / stocks_with_200 if stocks_with_200 else 0.5
+
+        bull_signals = sum([latest > sma200, sma50 > sma200, breadth_50 > 0.55, breadth_200 > 0.50])
+        bear_signals = sum([latest < sma200, sma50 < sma200, breadth_50 < 0.45, breadth_200 < 0.45])
+
+        if bull_signals >= 3:
+            regime = "bull"
+            confidence = bull_signals / 4.0
+        elif bear_signals >= 3:
+            regime = "bear"
+            confidence = bear_signals / 4.0
+        else:
+            regime = "sideways"
+            confidence = max(0.5, max(bull_signals, bear_signals) / 4.0)
+
+        return {"regime": regime, "confidence": round(confidence, 2), "breadth_50": round(breadth_50, 2), "breadth_200": round(breadth_200, 2)}
 
     def _rank_sectors(self, snapshots: list[Snapshot], predictions: dict[str, object]) -> tuple[dict[str, int], dict[str, float]]:
         sector_buckets: dict[str, list[float]] = defaultdict(list)
         for snapshot in snapshots:
-            if snapshot.instrument_type == "ETF":
+            if is_defensive_cash_equivalent(snapshot):
                 continue
             prediction = predictions.get(snapshot.symbol)
             ml_score = float(prediction.pred_21d_return) if prediction is not None else 0.0
@@ -259,7 +213,7 @@ class DecisionEngine:
     def _build_sector_relative_strength(self, snapshots: list[Snapshot]) -> dict[str, float]:
         sector_groups: dict[str, list[Snapshot]] = defaultdict(list)
         for snapshot in snapshots:
-            if snapshot.instrument_type != "ETF":
+            if not is_defensive_cash_equivalent(snapshot):
                 sector_groups[snapshot.sector].append(snapshot)
 
         percentile_by_symbol: dict[str, float] = {}
@@ -295,6 +249,7 @@ class DecisionEngine:
         low_vol = snapshot.factor_scores.get("low_vol", 0.0)
         liquidity = snapshot.factor_scores.get("liquidity", 0.0)
         beta = snapshot.beta_proxy
+        expected_return_annual = float(prediction.pred_annual_return)
 
         if regime_name == "bull":
             regime_score = min(1.0, 0.5 + (0.2 if momentum > 0 else 0.0) + (0.2 if technicals.get("ema_ratio_50", 0.0) > 0 else 0.0) + (0.1 if sector_rank <= sector_cutoff else 0.0))
@@ -347,7 +302,6 @@ class DecisionEngine:
             passed=options_proxy_score >= 0.6,
             score=round(options_proxy_score, 2),
             reason="Bootstrap proxy: volatility compression plus momentum confirmation while NSE options ingestion is still pending.",
-            data_quality="proxy",
         )
 
         flow_score = min(1.0, max(0.0, 0.45 + (0.30 if liquidity > 0 else 0.0) + (0.25 if snapshot.avg_traded_value > 50_000_000 else 0.0)))
@@ -355,7 +309,6 @@ class DecisionEngine:
             passed=flow_score >= 0.65,
             score=round(flow_score, 2),
             reason="Liquidity and turnover are being used as an interim accumulation proxy until FII/DII flow feeds land.",
-            data_quality="proxy",
         )
 
         fundamentals_score = min(1.0, max(0.0, 0.45 + (0.30 if quality > 0 else 0.0) + (0.25 if snapshot.max_drawdown_pct < 45 else 0.0)))
@@ -363,38 +316,25 @@ class DecisionEngine:
             passed=fundamentals_score >= 0.65,
             score=round(fundamentals_score, 2),
             reason="Quality and drawdown behavior look healthy; full fundamentals ingestion is still pending.",
-            data_quality="proxy",
         )
 
         driver_text = prediction.top_drivers[0] if prediction.top_drivers else "No dominant catalyst surfaced"
-        catalyst_score = min(1.0, max(0.0, 0.35 + (0.35 if prediction.pred_21d_return > 0 else 0.0) + (0.30 if prediction.top_drivers else 0.0)))
+        catalyst_score = min(1.0, max(0.0, 0.35 + (0.35 if prediction.pred_21d_return > 0 and expected_return_annual > 0 else 0.0) + (0.30 if prediction.top_drivers else 0.0)))
         news_catalyst = CheckResultModel(
-            passed=catalyst_score >= 0.65,
+            passed=catalyst_score >= 0.65 and expected_return_annual > 0,
             score=round(catalyst_score, 2),
             reason=f"Bootstrap catalyst view uses model drivers until structured news/event ingestion is added: {driver_text}.",
-            data_quality="proxy",
         )
 
-        levels_score = min(
-            1.0,
-            max(
-                0.0,
-                0.20
-                + (0.30 if levels.stop_basis == "atr" else 0.0)
-                + (0.30 if levels.rr_ratio >= 2.0 else 0.0)
-                + (0.20 if levels.risk_pct <= 8.0 else 0.0),
-            ),
-        )
-        levels_passed = levels.stop_basis == "atr" and levels.rr_ratio >= 2.0 and levels.risk_pct <= 12.0
-        level_bits = [f"Entry {levels.entry:.2f}, stop {levels.stop:.2f}, target {levels.target:.2f}, R:R {levels.rr_ratio:.2f}."]
-        if levels.stop_basis == "risk_cap":
-            level_bits.append("ATR stop breached the max-risk cap, so the setup is not being credited as a clean ATR-defined trade.")
-        elif levels.target_basis == "rr_guardrail":
-            level_bits.append("Target was lifted by the minimum reward-to-risk guardrail.")
+        levels_score = min(1.0, max(0.0, 0.45 + (0.35 if levels.rr_ratio >= 2.0 else 0.0) + (0.20 if levels.risk_pct <= 8.0 else 0.0)))
         entry_stop_target = CheckResultModel(
-            passed=levels_passed,
-            score=round(levels_score, 2),
-            reason=" ".join(level_bits),
+            passed=levels_score >= 0.7 and expected_return_annual > 0,
+            score=round(levels_score if expected_return_annual > 0 else 0.0, 2),
+            reason=(
+                f"Entry {levels.entry:.2f}, stop {levels.stop:.2f}, target {levels.target:.2f}, R:R {levels.rr_ratio:.2f}."
+                if expected_return_annual > 0
+                else f"Expected annual return is negative ({expected_return_annual:.1%}), so the long setup is rejected."
+            ),
         )
 
         sizing_score = min(1.0, max(0.0, 0.35 + (0.35 if sizing.units > 0 else 0.0) + (0.30 if 0 < sizing.allocation_pct <= 20 else 0.0)))
@@ -424,3 +364,9 @@ class DecisionEngine:
         lows = [price for _, price in snapshot.adjusted_lows]
         closes = [price for _, price in snapshot.adjusted_closes]
         return compute_technical_features(opens, highs, lows, closes)
+
+    @staticmethod
+    def _sma(values: list[float], window: int) -> float:
+        if len(values) < window:
+            return sum(values) / len(values) if values else 0.0
+        return sum(values[-window:]) / window

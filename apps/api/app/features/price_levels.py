@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from app.ml.lightgbm_alpha.technical_indicators import atr_normalized
 from app.services.db_quant_engine import Snapshot
@@ -13,12 +12,9 @@ class PriceLevels:
     stop: float
     target: float
     atr_14d: float
-    atr_stop: float
     risk_pct: float
     reward_pct: float
     rr_ratio: float
-    stop_basis: Literal["atr", "risk_cap"]
-    target_basis: Literal["model", "rr_guardrail"]
 
 
 def calculate_price_levels(snapshot: Snapshot, expected_return: float) -> PriceLevels:
@@ -29,23 +25,13 @@ def calculate_price_levels(snapshot: Snapshot, expected_return: float) -> PriceL
 
     atr_ratio = atr_normalized(highs, lows, closes) or 0.02
     atr_value = max(entry * atr_ratio, entry * 0.01)
-    atr_stop = entry - (2.0 * atr_value)
-    max_risk_stop = entry * 0.80
-    stop = atr_stop
-    stop_basis = "atr"
-    if atr_stop < max_risk_stop:
-        stop = max_risk_stop
-        stop_basis = "risk_cap"
+    stop = max(entry - (2.0 * atr_value), entry * 0.80)
     risk_per_unit = max(entry - stop, entry * 0.005)
 
-    expected_move = max(0.05, min(0.30, float(expected_return)))
+    expected_move = max(0.0, min(0.30, float(expected_return)))
     model_target = entry * (1.0 + expected_move)
     rr_target = entry + (2.0 * risk_per_unit)
-    target = model_target
-    target_basis = "model"
-    if stop_basis == "atr" and rr_target > model_target:
-        target = rr_target
-        target_basis = "rr_guardrail"
+    target = max(model_target, rr_target) if expected_move > 0 else model_target
 
     risk_pct = (risk_per_unit / entry) * 100.0 if entry else 0.0
     reward_pct = ((target - entry) / entry) * 100.0 if entry else 0.0
@@ -56,10 +42,7 @@ def calculate_price_levels(snapshot: Snapshot, expected_return: float) -> PriceL
         stop=round(stop, 2),
         target=round(target, 2),
         atr_14d=round(atr_value, 2),
-        atr_stop=round(atr_stop, 2),
         risk_pct=round(risk_pct, 2),
         reward_pct=round(reward_pct, 2),
         rr_ratio=round(rr_ratio, 2),
-        stop_basis=stop_basis,
-        target_basis=target_basis,
     )

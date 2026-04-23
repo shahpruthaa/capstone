@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 
 from app.schemas.portfolio import UserMandate
 
@@ -99,7 +100,7 @@ class MandateConfig:
 def derive_mandate_config(mandate: UserMandate) -> MandateConfig:
     horizon = HORIZON_SETTINGS[mandate.investment_horizon_weeks]
     attitude = ATTITUDE_SETTINGS[mandate.risk_attitude]
-    target_positions = mandate.preferred_num_positions
+    target_positions = max(mandate.preferred_num_positions, ceil(1.0 / 0.15))
     candidate_count = max(15, target_positions * 2, int(round(target_positions * attitude["candidate_multiple"])))
     max_position_weight = min(
         {

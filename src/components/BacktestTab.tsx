@@ -192,6 +192,7 @@ export function BacktestTab({ portfolio }: Props) {
                                 ['Stamp Duty', fmtRs(result.costBreakdown.totalStampDuty)],
                                 ['GST', fmtRs(result.costBreakdown.totalGST)],
                                 ['Slippage', fmtRs(result.costBreakdown.totalSlippage)],
+                                ['Friction Drag', `${((result.costBreakdown.totalFrictionalDragPct ?? 0) * 100).toFixed(2)}%`],
                                 ['Total Costs', fmtRs(result.costBreakdown.totalCosts)],
                             ].map(([label, val]) => (
                                 <div key={label} className="stat-row">
@@ -252,7 +253,7 @@ export function BacktestTab({ portfolio }: Props) {
                         )}
 
                         {/* Key metrics */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                             <MetricCard
                                 label="Total Return"
                                 value={`${result.totalReturn >= 0 ? '+' : ''}${fmt(result.totalReturn)}%`}
@@ -266,6 +267,13 @@ export function BacktestTab({ portfolio }: Props) {
                                 sub="Compounded Annual Growth"
                                 color={cagrColor}
                                 trend={result.cagr >= 0 ? 'up' : 'down'}
+                            />
+                            <MetricCard
+                                label="FRICTION DRAG"
+                                value={`${((result?.costBreakdown?.totalFrictionalDragPct ?? 0) * 100).toFixed(2)}%`}
+                                sub="Slippage, STT, brokerage impact"
+                                color="purple"
+                                trend="down"
                             />
                             <MetricCard
                                 label="Sharpe Ratio"
