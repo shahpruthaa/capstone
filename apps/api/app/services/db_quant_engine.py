@@ -651,12 +651,17 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             # If prediction fails for the holdings, keep defaults (rules).
             pass
 
+    largest_sector = max(sector_weights, key=lambda s: sector_weights[s]) if sector_weights else ""
+    largest_sector_weight = round(sector_weights.get(largest_sector, 0.0), 2)
     return AnalyzePortfolioResponse(
         total_holdings=len(payload.holdings),
         portfolio_value=round(total_value, 2),
         current_beta=current_beta,
         diversification_score=diversification_score,
+        avg_pairwise_correlation=round(avg_corr, 4),
         sector_weights=sector_weights,
+        largest_sector=largest_sector,
+        largest_sector_weight=largest_sector_weight,
         factor_exposures={key: round(value, 2) for key, value in factor_exposures.items()},
         correlation_risk=correlation_risk,
         actions=actions,
