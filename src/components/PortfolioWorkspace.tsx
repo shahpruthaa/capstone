@@ -16,47 +16,57 @@ export function PortfolioWorkspace({ onPortfolioGenerated, portfolio }: Props) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
-        <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-4">Portfolio Workflow</p>
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      {/* SLEEK DARK MODE TOGGLE HEADER */}
+      <div className="bg-[#141415] border border-slate-800/60 rounded-2xl p-4 mb-6 flex flex-col md:flex-row justify-between md:items-center gap-4">
+          
+          {/* Left Side: Context */}
           <div>
-            <h2 className="text-xl font-bold text-[#1D1D1F]">Build or analyze with the same decision engine</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-600">
-              Step 1: define the mandate. Step 2: review the recommended portfolio. Step 3: compare it against your real holdings using the same research stack.
-            </p>
+              <h1 className="text-lg font-bold text-slate-100 font-serif tracking-tight">
+                  Decision Engine
+              </h1>
+              <p className="text-[10px] text-slate-500 font-mono mt-1 uppercase tracking-widest">
+                  Unified stack for mandate generation and exposure analysis
+              </p>
           </div>
-          <div className="flex gap-2 rounded-xl border border-slate-200/50 bg-slate-50/50 p-1">
-            <button
-              className={`${view === 'build' ? 'bg-white text-blue-600 shadow-sm border border-slate-200/50 rounded-xl' : 'text-slate-500'} px-4 py-2 text-sm font-semibold transition-all`}
-              onClick={() => setView('build')}
-            >
-              Build Portfolio
-            </button>
-            <button
-              className={`${view === 'analyze' ? 'bg-white text-blue-600 shadow-sm border border-slate-200/50 rounded-xl' : 'text-slate-500'} px-4 py-2 text-sm font-semibold transition-all`}
-              onClick={() => setView('analyze')}
-            >
-              Analyze Holdings
-            </button>
+
+          {/* Right Side: The Toggle Switch */}
+          <div className="flex bg-[#0a0a0a] border border-slate-800 rounded-xl p-1 shrink-0">
+              <button 
+                  onClick={() => setView('build')} 
+                  className={`px-5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                      view === 'build' 
+                      ? 'bg-[#eab308] text-black shadow-sm' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+              >
+                  Build Portfolio
+              </button>
+              <button 
+                  onClick={() => setView('analyze')} 
+                  className={`px-5 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${
+                      view === 'analyze' 
+                      ? 'bg-[#eab308] text-black shadow-sm' 
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+              >
+                  Analyze Holdings
+              </button>
           </div>
-        </div>
+
       </div>
       
       {portfolio?.regimeWarning && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-50/50 p-4">
-          <div className="flex gap-3">
-            <div className="text-amber-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-            <div>
-              <h3 className="font-medium text-amber-700">Bear Market Warning</h3>
-              <p className="mt-1 text-sm text-amber-600/80">
+        <div className="bg-rose-500/10 border border-rose-500/30 rounded-2xl p-5 mb-6 relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>
+            <h3 className="text-[10px] font-bold text-rose-500 uppercase tracking-[0.15em] flex items-center gap-2 mb-2">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Bear Market Warning
+            </h3>
+            <p className="text-[11px] text-rose-400/90 leading-relaxed font-mono italic">
                 {portfolio.regimeWarning}
-              </p>
-            </div>
-          </div>
+            </p>
         </div>
       )}
 
