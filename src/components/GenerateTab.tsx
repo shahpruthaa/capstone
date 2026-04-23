@@ -153,9 +153,9 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
             <div className="lg:col-span-4 space-y-5">
-                <div className="card p-4">
-                    <h2 className="font-mono text-[10px] uppercase tracking-wider font-bold flex items-center gap-2 mb-4">
-                        <Calculator className="w-4 h-4 text-blue-500" /> Investment Parameters
+                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                    <h2 className="font-mono text-[10px] uppercase tracking-[0.08em] font-bold flex items-center gap-2 mb-4 text-[#86868B]">
+                        <Calculator className="w-4 h-4 text-blue-600" /> Investment Parameters
                     </h2>
 
                     <div className="space-y-5">
@@ -184,24 +184,24 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         ) : null}
 
                         <div>
-                            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Investment Amount (Rs)</label>
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">Investment Amount (Rs)</label>
                             <input
                                 type="number"
                                 value={amount}
                                 onChange={e => setAmount(Number(e.target.value))}
-                                className="input-field px-4 py-2.5"
+                                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm"
                                 placeholder="e.g. 500000"
                             />
-                            <p className="text-xs text-slate-400 mt-1">Approx. Rs {(amount / 100000).toFixed(1)}L</p>
+                            <p className="text-xs text-slate-600 mt-1">Approx. Rs {(amount / 100000).toFixed(1)}L</p>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Horizon (weeks)</label>
+                                <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">Horizon (weeks)</label>
                                 <select
                                     value={mandate.investment_horizon_weeks}
                                     onChange={e => updateMandate('investment_horizon_weeks', e.target.value as UserMandate['investment_horizon_weeks'])}
-                                    className="input-field px-4 py-2.5"
+                                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm"
                                 >
                                     {['2-4', '4-8', '8-24'].map(option => (
                                         <option key={option} value={option}>{option}</option>
@@ -209,46 +209,47 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-1.5">Target Positions</label>
+                                <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">Target Positions</label>
                                 <input
                                     type="number"
                                     value={mandate.preferred_num_positions}
                                     onChange={e => updateMandate('preferred_num_positions', Number(e.target.value))}
-                                    className="input-field px-4 py-2.5"
+                                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm"
                                 />
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-[10px] font-mono uppercase tracking-wider text-slate-400 mb-2">Risk Attitude</label>
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-2">Risk Attitude</label>
                             <div className="grid grid-cols-3 gap-2">
                                 {riskOpts.map(risk => (
                                     <button
                                         key={risk.id}
                                         onClick={() => updateMandate('risk_attitude', risk.id)}
-                                        className={`risk-btn ${mandate.risk_attitude === risk.id ? 'active-risk' : ''}`}
+                                        className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${mandate.risk_attitude === risk.id ? 'bg-blue-50 border-blue-600 text-blue-700 shadow-sm' : 'bg-slate-50/50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}
                                     >
                                         {risk.icon}
                                         <span>{risk.label}</span>
-                                        <span className="text-[9px] font-normal normal-case tracking-normal text-slate-400">{risk.desc}</span>
+                                        <span className="text-[9px] font-normal normal-case tracking-normal text-slate-600">{risk.desc}</span>
                                     </button>
                                 ))}
                             </div>
                         </div>
 
-                        <label className="flex items-center justify-between rounded-sm border border-slate-700 bg-slate-800/50 px-4 py-3 text-sm text-slate-300 font-mono text-[11px] uppercase tracking-wide">
+                        <label className="flex items-center justify-between bg-slate-50/50 border border-slate-200/50 rounded-xl p-3 text-sm text-[#1D1D1F] font-mono text-[11px] uppercase tracking-wide">
                             <span>Allow small caps</span>
                             <input
                                 type="checkbox"
                                 checked={mandate.allow_small_caps}
                                 onChange={e => updateMandate('allow_small_caps', e.target.checked)}
+                                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
                             />
                         </label>
 
                         <button
                             onClick={() => void handleGenerate()}
                             disabled={generating || activeModelVariant !== 'LIGHTGBM_HYBRID'}
-                            className="btn btn-primary btn-lg w-full flex items-center justify-center gap-2"
+                            className="bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-sm w-full py-3 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {generating ? 'Generating...' : 'Generate AI Portfolio'} <ArrowRight className="w-4 h-4" />
                         </button>
@@ -257,29 +258,29 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                 {portfolio && (
                     <>
-                        <div className="card p-4">
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
                             <div className="flex items-center justify-between">
-                                <div className="text-[10px] text-slate-400 font-mono tracking-wider uppercase font-medium">MODEL GENERATION SUMMARY</div>
+                                <div className="text-[10px] text-[#86868B] font-mono tracking-[0.08em] uppercase font-bold">MODEL GENERATION SUMMARY</div>
                                 {portfolio.modelSource === 'ENSEMBLE'
-                                    ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">AI Ensemble Active</span>
+                                    ? <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">AI Ensemble Active</span>
                                     : <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">Rules-Based Mode</span>}
                             </div>
                         </div>
 
                         {portfolio.backendNotes && portfolio.backendNotes.length > 0 && (
-                            <div className="card p-4">
-                                <h3 className="font-mono text-xs uppercase tracking-wider font-bold mb-3 text-slate-50">Backend Model Notes</h3>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] font-bold mb-3 text-[#86868B]">Backend Model Notes</h3>
                                 <div className="space-y-2">
                                     {portfolio.backendNotes.map((note, index) => (
-                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
+                                        <p key={index} className="text-xs text-slate-600 leading-relaxed font-mono">{note}</p>
                                     ))}
                                 </div>
                             </div>
                         )}
 
-                        <div className="card p-4">
-                            <h3 className="font-mono text-[10px] uppercase tracking-wider font-bold flex items-center gap-2 mb-4">
-                                <Info className="w-4 h-4 text-blue-500" /> Transaction Costs
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                            <h3 className="font-mono text-[10px] uppercase tracking-[0.08em] font-bold flex items-center gap-2 mb-4 text-[#86868B]">
+                                <Info className="w-4 h-4 text-blue-600" /> Transaction Costs
                             </h3>
                             <div className="space-y-1">
                                 {[
@@ -292,16 +293,16 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                     ['Slippage (0.1%)', `Rs ${costs!.slippage.toFixed(2)}`],
                                 ].map(([label, value]) => (
                                     <div key={label} className="stat-row">
-                                        <span className="stat-label text-xs">{label}</span>
-                                        <span className="stat-value text-xs text-rose-500">{value}</span>
+                                        <span className="stat-label text-xs text-[#86868B]">{label}</span>
+                                        <span className="stat-value text-xs text-rose-600 font-mono">{value}</span>
                                     </div>
                                 ))}
                                 <div className="stat-row" style={{ fontWeight: 700 }}>
-                                    <span className="stat-label text-xs font-bold text-slate-50">Total Charges</span>
-                                    <span className="text-rose-500 font-mono font-bold text-sm">Rs {costs!.total.toFixed(2)}</span>
+                                    <span className="stat-label text-xs font-bold text-[#1D1D1F]">Total Charges</span>
+                                    <span className="text-rose-600 font-mono font-bold text-sm">Rs {costs!.total.toFixed(2)}</span>
                                 </div>
                             </div>
-                            <p className="text-[10px] text-slate-400 mt-3 italic">Stop-loss: 15% trailing, STCG: 20%, LTCG: 12.5%</p>
+                            <p className="text-[10px] text-[#86868B] mt-3 italic">Stop-loss: 15% trailing, STCG: 20%, LTCG: 12.5%</p>
                         </div>
                     </>
                 )}
@@ -309,12 +310,12 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
             <div className="lg:col-span-8 space-y-5">
                 {!portfolio ? (
-                    <div className="card flex flex-col items-center justify-center text-slate-400 p-8 border border-dashed border-slate-600" style={{ minHeight: '400px' }}>
-                        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4">
-                            <TrendingUp className="w-8 h-8 opacity-30 text-blue-500" />
+                    <div className="bg-slate-50/50 flex flex-col items-center justify-center text-[#86868B] p-8 border border-dashed border-slate-200 rounded-2xl" style={{ minHeight: '400px' }}>
+                        <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
+                            <TrendingUp className="w-8 h-8 opacity-30 text-blue-600" />
                         </div>
-                        <p className="font-mono text-[11px] uppercase tracking-wider font-semibold mb-1 text-slate-300">Set the mandate and generate</p>
-                        <p className="text-[10px] font-mono tracking-wide text-slate-500">The ensemble allocator uses horizon, risk attitude, position count, and news context.</p>
+                        <p className="font-mono text-[11px] uppercase tracking-[0.08em] font-bold mb-1 text-slate-500">Set the mandate and generate</p>
+                        <p className="text-[10px] font-mono tracking-wide text-slate-400">The ensemble allocator uses horizon, risk attitude, position count, and news context.</p>
                     </div>
                 ) : (
                     <>
@@ -335,32 +336,32 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                         </div>
 
                         {portfolio.mandate && (
-                            <div className="card p-4">
-                                <p className="section-title">Mandate In Effect</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Mandate In Effect</p>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                                     <div className="stat-row">
-                                        <span className="stat-label">Attitude</span>
-                                        <span className="stat-value">{portfolio.mandate.risk_attitude.replace('_', ' ')}</span>
+                                        <span className="stat-label text-[#86868B]">Attitude</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.risk_attitude.replace('_', ' ')}</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Horizon</span>
-                                        <span className="stat-value">{portfolio.mandate.investment_horizon_weeks} weeks</span>
+                                        <span className="stat-label text-[#86868B]">Horizon</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.investment_horizon_weeks} weeks</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Positions</span>
-                                        <span className="stat-value">{portfolio.mandate.preferred_num_positions}</span>
+                                        <span className="stat-label text-[#86868B]">Positions</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.preferred_num_positions}</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Small Caps</span>
-                                        <span className="stat-value">{portfolio.mandate.allow_small_caps ? 'Allowed' : 'Excluded'}</span>
+                                        <span className="stat-label text-[#86868B]">Small Caps</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.allow_small_caps ? 'Allowed' : 'Excluded'}</span>
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                            <div className="card p-4">
-                                <p className="section-title">Stock Allocation</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Stock Allocation</p>
                                 <div className="h-56">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <PieChart>
@@ -374,8 +375,8 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 </div>
                             </div>
 
-                            <div className="card p-4">
-                                <p className="section-title">Sector Diversification</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Sector Diversification</p>
                                 <div className="h-56">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <BarChart data={sectorData} layout="vertical" margin={{ left: 60 }}>
@@ -383,19 +384,24 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                             <XAxis type="number" hide />
                                             <YAxis dataKey="name" type="category" fontSize={10} width={56} />
                                             <Tooltip formatter={(value: number) => [`Rs ${value.toLocaleString()}`]} />
-                                            <Bar dataKey="value" fill="#D4A843" radius={[0, 6, 6, 0]} />
+                                            <Bar dataKey="value" fill="#2563eb" radius={[0, 6, 6, 0]} />
                                         </BarChart>
                                     </ResponsiveContainer>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="card overflow-hidden">
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] overflow-hidden">
                             <div className="overflow-x-auto">
-                                <table className="data-table">
+                                <table className="w-full text-left border-collapse">
                                     <thead>
-                                        <tr className="bg-slate-800/50">
-                                            <th>Stock</th><th>Sector</th><th>Wt%</th><th>News</th><th className="text-right">Shares</th><th className="text-right">Amount</th>
+                                        <tr className="bg-slate-50/50 border-b border-slate-200">
+                                            <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">Stock</th>
+                                            <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">Sector</th>
+                                            <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Wt%</th>
+                                            <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">News</th>
+                                            <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Shares</th>
+                                            <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Amount</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -411,37 +417,37 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                                         openStockDrawer(allocation.stock.symbol);
                                                     }
                                                 }}
-                                                className="cursor-pointer hover:bg-slate-800/50 even:bg-slate-800/30 border-b border-slate-700/50 last:border-0"
+                                                className="cursor-pointer border-b border-slate-100 even:bg-slate-50/30 text-sm hover:bg-slate-50 transition-colors"
                                                 aria-label={`Open AI stock insights for ${allocation.stock.symbol}`}
                                             >
-                                                <td>
-                                                    <div className="font-semibold font-mono text-sm text-slate-50">
+                                                <td className="p-3">
+                                                    <div className="font-semibold font-mono text-sm text-[#1D1D1F]">
                                                         {allocation.stock.symbol}
                                                     </div>
-                                                    <div className="text-[10px] font-mono tracking-wide text-slate-400">{allocation.stock.name}</div>
+                                                    <div className="text-[10px] font-mono tracking-wide text-slate-500">{allocation.stock.name}</div>
                                                     {allocation.drivers && allocation.drivers.length > 0 && (
-                                                        <div className="text-[10px] text-slate-500 mt-1">
+                                                        <div className="text-[10px] text-[#86868B] mt-1">
                                                             ML drivers: {allocation.drivers.slice(0, 2).join(', ')}
                                                         </div>
                                                     )}
                                                 </td>
-                                                <td><SectorChip sector={allocation.stock.sector} /></td>
-                                                <td>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="progress-bar-track w-12">
-                                                            <div className="progress-bar-fill" style={{ width: `${allocation.weight}%`, background: '#D4A843' }} />
+                                                <td className="p-3"><SectorChip sector={allocation.stock.sector} /></td>
+                                                <td className="p-3 text-right">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <div className="progress-bar-track w-12 hidden md:block">
+                                                            <div className="progress-bar-fill" style={{ width: `${allocation.weight}%`, background: '#2563eb' }} />
                                                         </div>
                                                         <span className="font-mono text-xs">{allocation.weight}%</span>
                                                     </div>
                                                 </td>
-                                                <td>
-                                                    <div className="text-xs text-slate-600">
-                                                        <div className="font-medium">S {allocation.news_sentiment?.toFixed(2) ?? '0.00'} · I {allocation.news_impact?.toFixed(1) ?? '0.0'}</div>
-                                                        <div className="text-[10px] text-slate-400 max-w-52">{allocation.news_explanation ?? 'No mapped news.'}</div>
+                                                <td className="p-3">
+                                                    <div className="text-xs text-slate-500">
+                                                        <div className="font-mono">S {allocation.news_sentiment?.toFixed(2) ?? '0.00'} · I {allocation.news_impact?.toFixed(1) ?? '0.0'}</div>
+                                                        <div className="text-[10px] text-[#86868B] max-w-52 truncate">{allocation.news_explanation ?? 'No mapped news.'}</div>
                                                     </div>
                                                 </td>
-                                                <td className="font-mono text-right">{allocation.shares}</td>
-                                                <td className="text-right font-semibold font-mono">Rs {allocation.amount.toLocaleString()}</td>
+                                                <td className="p-3 font-mono text-right">{allocation.shares}</td>
+                                                <td className="p-3 text-right font-semibold font-mono">Rs {allocation.amount.toLocaleString()}</td>
                                             </tr>
                                         ))}
                                     </tbody>

@@ -50,6 +50,7 @@ from app.services.market_rules import (
 )
 from app.services.model_runtime import get_model_runtime_status
 from app.services.news_signal import compute_stock_news_signals
+from app.services.market_data import get_live_price
 from app.ml.ensemble_alpha.predict import get_ensemble_alpha_predictor
 from app.ml.lightgbm_alpha.artifact_loader import get_lightgbm_model_status
 
@@ -454,6 +455,14 @@ def generate_portfolio(db: Session, payload: GeneratePortfolioRequest) -> Genera
     db.add(run)
     db.flush()
 
+    for snapshot, _ in selected:
+        try:
+            live_price = get_live_price(snapshot.symbol)
+            if live_price > 0:
+                snapshot.latest_price = live_price
+        except Exception:
+            pass
+
     whole_share_plan, residual_cash = allocate_whole_shares_for_capital(selected, payload.capital_amount)
     if residual_cash > 0:
         notes.append(
@@ -557,7 +566,16 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         if snapshot is None:
             missing_symbols.append(requested_symbol)
             continue
-        value = snapshot.latest_price * holding.quantity
+            
+        # 🚨 THE FIX: Force the live price injection here!
+        try:
+            live_price = get_live_price(requested_symbol)
+            if live_price > 0:
+                snapshot.latest_price = live_price
+        except Exception:
+            pass # Fallback to DB if offline
+            
+        value = float(snapshot.latest_price) * holding.quantity
         total_value += value
         sector_value[snapshot.sector] += value
         beta_numerator += snapshot.beta_proxy * value

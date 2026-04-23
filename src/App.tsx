@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Home, PieChart, Lightbulb, FlaskConical, GitCompare, Activity } from "lucide-react";
+
+const isMarketOpen = () => true; // Toggle for demo
 import "./index.css";
 import { Portfolio } from "./services/portfolioService";
 import { BacktestTab } from "./components/BacktestTab";
@@ -64,17 +66,17 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
       </nav>
 
       <div className="sidebar-bottom">
-        <div className="market-status">
-          <div className="status-dot open" />
-          <div className="text-mono text-xs">NSE: Open/Closed</div>
+        <div className="market-status bg-white border border-slate-200 shadow-sm rounded-xl">
+          <div className={`status-dot ${isMarketOpen() ? 'open' : 'closed'}`} />
+          <div className="font-mono uppercase tracking-wider text-[10px] text-slate-500">NSE: {isMarketOpen() ? 'OPEN' : 'CLOSED'}</div>
         </div>
-        <div className="market-status">
+        <div className="market-status bg-white border border-slate-200 shadow-sm rounded-xl">
           <div className="status-dot open" />
-          <div className="text-mono text-xs">Ensemble: Active</div>
+          <div className="font-mono uppercase tracking-wider text-[10px] text-slate-500">Ensemble: Active</div>
         </div>
-        <div className="market-status">
+        <div className="market-status bg-white border border-slate-200 shadow-sm rounded-xl">
           <div className="status-dot closed" />
-          <div className="text-mono text-xs">Data: Apr 2</div>
+          <div className="font-mono uppercase tracking-wider text-[10px] text-slate-500">Data: {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
         </div>
       </div>
     </aside>
@@ -95,8 +97,8 @@ export default function App() {
             <div className="page-title">{PAGE_META[tab].title}</div>
           </div>
           <div className="topbar-right">
-            <span className="badge badge-neutral">{PAGE_META[tab].subtitle}</span>
-            {portfolio && <span className="badge badge-green">{portfolio.allocations.length} live picks</span>}
+            <span className="text-slate-400 font-bold text-[10px] tracking-widest uppercase">{PAGE_META[tab].subtitle}</span>
+            {portfolio && <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200/50 px-2 py-0.5 rounded-full font-semibold">{portfolio.allocations.length} live picks</span>}
           </div>
         </header>
 

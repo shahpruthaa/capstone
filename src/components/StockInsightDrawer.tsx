@@ -62,7 +62,7 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
             <button
                 type="button"
                 onClick={onClose}
-                className="absolute inset-0 bg-slate-900/35"
+                className="absolute inset-0 bg-white/35"
                 aria-label="Close stock insight panel"
             />
             <aside className="absolute right-0 top-0 h-full w-full max-w-2xl overflow-y-auto border-l border-slate-200 bg-white shadow-2xl">
@@ -96,7 +96,7 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                                 ))}
                             </div>
 
-                            <div className="card p-5">
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
                                 <div className="h-4 w-44 rounded bg-slate-200 mb-3" />
                                 <div className="space-y-2">
                                     {Array.from({ length: 4 }).map((_, idx) => (
@@ -105,7 +105,7 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                                 </div>
                             </div>
 
-                            <div className="card p-5">
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
                                 <div className="h-4 w-40 rounded bg-slate-200 mb-3" />
                                 <div className="space-y-2">
                                     <div className="h-3 w-full rounded bg-slate-100" />
@@ -116,7 +116,7 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                                 </div>
                             </div>
 
-                            <div className="card p-5">
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
                                 <div className="h-4 w-36 rounded bg-slate-200 mb-3" />
                                 <div className="space-y-2">
                                     {Array.from({ length: 5 }).map((_, idx) => (
@@ -140,35 +140,35 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                         <>
                             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Sector</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Sector</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.sector}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Annual Forecast</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Annual Forecast</p>
                                     <p className="text-sm font-semibold text-slate-900">{formatPct(detail.pred_annual_return)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Death Risk</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Death Risk</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.death_risk.toFixed(2)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Ensemble Score</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Ensemble Score</p>
                                     <p className="text-sm font-semibold text-slate-900">{formatPct(detail.ensemble_score)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">Beta</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">Beta</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.beta.toFixed(2)}</p>
                                 </div>
                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
-                                    <p className="text-[11px] uppercase tracking-wide text-slate-400">As Of</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-slate-600">As Of</p>
                                     <p className="text-sm font-semibold text-slate-900">{detail.as_of_date}</p>
                                 </div>
                             </div>
 
-                            <div className="card p-5">
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
                                 <div className="flex items-center gap-2 mb-3">
                                     <BrainCircuit className="h-4 w-4 text-blue-600" />
-                                    <h4 className="font-bold text-slate-900">Quantitative Drivers</h4>
+                                    <h4 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]">Quantitative Drivers</h4>
                                 </div>
                                 <div className="space-y-2 text-sm text-slate-700">
                                     {(detail.feature_drivers.length > 0 ? detail.feature_drivers : ['No top drivers provided by the engine.']).map((driver, idx) => (
@@ -182,10 +182,10 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                                 )}
                             </div>
 
-                            <div className="card p-5">
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
                                 <div className="flex items-center gap-2 mb-3">
-                                    <ShieldAlert className="h-4 w-4 text-amber-600" />
-                                    <h4 className="font-bold text-slate-900">Fiduciary Evaluation</h4>
+                                    <ShieldAlert className="h-4 w-4 text-amber-500" />
+                                    <h4 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]">Fiduciary Evaluation</h4>
                                 </div>
                                 <div className="space-y-3 text-sm text-slate-700 leading-relaxed">
                                     {(explanationParagraphs.length > 0 ? explanationParagraphs : ['No narrative explanation returned by the evaluator.']).map((paragraph, index) => (
@@ -194,10 +194,10 @@ export function StockInsightDrawer({ symbol, open, onClose }: Props) {
                                 </div>
                             </div>
 
-                            <div className="card p-5">
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
                                 <div className="flex items-center gap-2 mb-3">
                                     <Network className="h-4 w-4 text-emerald-600" />
-                                    <h4 className="font-bold text-slate-900">Topology Context</h4>
+                                    <h4 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]">Topology Context</h4>
                                 </div>
                                 <p className="text-sm text-slate-700 mb-3">
                                     Sector neighbors: {detail.gnn_sector_neighbors.length > 0 ? detail.gnn_sector_neighbors.join(', ') : 'None available'}
