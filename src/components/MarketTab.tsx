@@ -133,7 +133,12 @@ export function MarketTab() {
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-semibold text-slate-900">{item.tone}</p>
-                    <p className="text-[11px] text-slate-500">{formatSigned(item.movePct, '%')}</p>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <p className="text-[11px] text-slate-500">{formatSigned(item.movePct, '%')}</p>
+                      {item.dataQuality === 'proxy' && (
+                        <span className="badge badge-neutral text-[10px] px-1.5 py-0.5">proxy</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

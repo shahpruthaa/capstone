@@ -6,6 +6,7 @@ import {
   Portfolio,
   RiskProfile,
   analyzePortfolio,
+  generatePortfolio,
 } from './portfolioService';
 import {
   BenchmarkRelativeStats,
@@ -864,118 +865,154 @@ export async function generatePortfolioViaApi(
   mandate: UserMandate,
   modelVariant: ModelVariant = 'LIGHTGBM_HYBRID',
 ): Promise<Portfolio> {
-  const response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
-    method: 'POST',
-    timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 120000 : 90000,
-    body: JSON.stringify({
-      capital_amount: capitalAmount,
-      mandate,
-      model_variant: modelVariant,
-    }),
-  });
+  try {
+    const response = await fetchJson<ApiGeneratePortfolioResponse>('/api/v1/portfolio/generate', {
+      method: 'POST',
+      timeoutMs: modelVariant === 'LIGHTGBM_HYBRID' ? 120000 : 90000,
+      body: JSON.stringify({
+        capital_amount: capitalAmount,
+        mandate,
+        model_variant: modelVariant,
+      }),
+    });
 
-  const allocations = response.allocations
-    .map((allocation) => {
-      const stock = buildStockFromBackend(allocation);
-      const backendShares = Math.max(0, Math.floor(allocation.recommended_shares ?? 0));
-      const backendAmount = Number.isFinite(allocation.recommended_amount) ? allocation.recommended_amount : backendShares * stock.price;
-      const fallbackTargetAmount = (capitalAmount * allocation.weight) / 100;
-      const fallbackShares = Math.max(0, Math.floor(fallbackTargetAmount / stock.price));
-      const shares = backendShares > 0 ? backendShares : fallbackShares;
-      const amount = backendAmount > 0 ? backendAmount : shares * stock.price;
-      return {
-        stock,
-        weight: allocation.weight,
-        shares,
-        amount,
-        drivers: allocation.top_model_drivers ?? [],
-        rationale: allocation.rationale,
-        ml_pred_21d_return: allocation.ml_pred_21d_return ?? null,
-        ml_pred_annual_return: allocation.ml_pred_annual_return ?? null,
-        death_risk: allocation.death_risk ?? null,
-        lstm_signal: allocation.lstm_signal ?? null,
-        news_risk_score: allocation.news_risk_score,
-        news_opportunity_score: allocation.news_opportunity_score,
-        news_sentiment: allocation.news_sentiment,
-        news_impact: allocation.news_impact,
-        news_explanation: allocation.news_explanation,
-      };
-    }) as Portfolio['allocations'];
+    const allocations = response.allocations
+      .map((allocation) => {
+        const stock = buildStockFromBackend(allocation);
+        const backendShares = Math.max(0, Math.floor(allocation.recommended_shares ?? 0));
+        const backendAmount = Number.isFinite(allocation.recommended_amount) ? allocation.recommended_amount : backendShares * stock.price;
+        const fallbackTargetAmount = (capitalAmount * allocation.weight) / 100;
+        const fallbackShares = Math.max(0, Math.floor(fallbackTargetAmount / stock.price));
+        const shares = backendShares > 0 ? backendShares : fallbackShares;
+        const amount = backendAmount > 0 ? backendAmount : shares * stock.price;
+        return {
+          stock,
+          weight: allocation.weight,
+          shares,
+          amount,
+          drivers: allocation.top_model_drivers ?? [],
+          rationale: allocation.rationale,
+          ml_pred_21d_return: allocation.ml_pred_21d_return ?? null,
+          ml_pred_annual_return: allocation.ml_pred_annual_return ?? null,
+          death_risk: allocation.death_risk ?? null,
+          lstm_signal: allocation.lstm_signal ?? null,
+          news_risk_score: allocation.news_risk_score,
+          news_opportunity_score: allocation.news_opportunity_score,
+          news_sentiment: allocation.news_sentiment,
+          news_impact: allocation.news_impact,
+          news_explanation: allocation.news_explanation,
+        };
+      }) as Portfolio['allocations'];
 
-  const totalInvested = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
-  const sectorCount = new Set(allocations.map((allocation) => allocation.stock.sector)).size;
-  const cashRemaining = Math.max(0, capitalAmount - totalInvested);
+    const totalInvested = allocations.reduce((sum, allocation) => sum + allocation.amount, 0);
+    const sectorCount = new Set(allocations.map((allocation) => allocation.stock.sector)).size;
+    const cashRemaining = Math.max(0, capitalAmount - totalInvested);
 
-  return {
-    allocations,
-    totalInvested,
-    requestedCapital: capitalAmount,
-    cashRemaining,
-    investmentUtilizationPct: capitalAmount > 0 ? (totalInvested / capitalAmount) * 100 : 0,
-    riskProfile: fromRiskAttitude(response.mandate.risk_attitude),
-    mandate: response.mandate,
-    backendNotes: response.notes ?? [],
-    modelVariant: response.model_variant,
-    modelSource: response.model_source,
-    modelVersion: response.model_version,
-    predictionHorizonDays: response.prediction_horizon_days,
-    lookbackWindowDays: response.lookback_window_days,
-    expectedHoldingPeriodDays: response.expected_holding_period_days,
-    runtime: mapRuntimeDescriptor(response.runtime),
-    standardMetrics: mapStandardMetrics(response.standard_metrics),
-    factorExposures: response.factor_exposures ?? {},
-    positionRiskContributions: (response.position_risk_contributions ?? []).map((item) => ({
-      name: item.name,
-      weightPct: item.weight_pct,
-      contributionPct: item.contribution_pct,
-      detail: item.detail,
-    })),
-    sectorRiskContributions: (response.sector_risk_contributions ?? []).map((item) => ({
-      name: item.name,
-      weightPct: item.weight_pct,
-      contributionPct: item.contribution_pct,
-      detail: item.detail,
-    })),
-    constraints: response.constraints
-      ? {
-          maxPositionCapPct: response.constraints.max_position_cap_pct,
-          maxSectorCapPct: response.constraints.max_sector_cap_pct,
-          largestPositionPct: response.constraints.largest_position_pct,
-          largestPositionName: response.constraints.largest_position_name,
-          largestSectorWeightPct: response.constraints.largest_sector_weight_pct,
-          largestSectorName: response.constraints.largest_sector_name,
-          nearPositionCap: response.constraints.near_position_cap,
-          nearSectorCap: response.constraints.near_sector_cap,
-        }
-      : undefined,
-    turnoverEstimatePct: response.turnover_estimate_pct,
-    deploymentEfficiencyPct: response.deployment_efficiency_pct,
-    scenarioTests: (response.scenario_tests ?? []).map((item) => ({
-      name: item.name,
-      pnlPct: item.pnl_pct,
-      commentary: item.commentary,
-    })),
-    benchmarkRelative: response.benchmark_relative
-      ? {
-          benchmarkName: response.benchmark_relative.benchmark_name,
-          activeSharePct: response.benchmark_relative.active_share_pct,
-          trackingErrorPct: response.benchmark_relative.tracking_error_pct,
-          exAnteAlphaPct: response.benchmark_relative.ex_ante_alpha_pct,
-          informationRatio: response.benchmark_relative.information_ratio,
-        }
-      : undefined,
-    portfolioFitSummary: mapPortfolioFitSummary(response.portfolio_fit_summary),
-    metrics: {
-      avgBeta: response.metrics.beta,
-      estimatedAnnualReturn: response.metrics.estimated_return_pct,
-      estimatedVolatility: response.metrics.estimated_volatility_pct,
-      sharpeRatio: (response.metrics.estimated_return_pct - 7) / Math.max(response.metrics.estimated_volatility_pct, 1),
-      divScore: Math.min(100, sectorCount * 10 + (allocations.length > 8 ? 20 : 0)),
-      correlationScore: response.metrics.diversification_score,
-      sectorCount,
-    },
-    regimeWarning: response.regime_warning || undefined,
-  };
+    return {
+      allocations,
+      totalInvested,
+      requestedCapital: capitalAmount,
+      cashRemaining,
+      investmentUtilizationPct: capitalAmount > 0 ? (totalInvested / capitalAmount) * 100 : 0,
+      riskProfile: fromRiskAttitude(response.mandate.risk_attitude),
+      mandate: response.mandate,
+      backendNotes: response.notes ?? [],
+      modelVariant: response.model_variant,
+      modelSource: response.model_source,
+      modelVersion: response.model_version,
+      predictionHorizonDays: response.prediction_horizon_days,
+      lookbackWindowDays: response.lookback_window_days,
+      expectedHoldingPeriodDays: response.expected_holding_period_days,
+      runtime: mapRuntimeDescriptor(response.runtime),
+      standardMetrics: mapStandardMetrics(response.standard_metrics),
+      factorExposures: response.factor_exposures ?? {},
+      positionRiskContributions: (response.position_risk_contributions ?? []).map((item) => ({
+        name: item.name,
+        weightPct: item.weight_pct,
+        contributionPct: item.contribution_pct,
+        detail: item.detail,
+      })),
+      sectorRiskContributions: (response.sector_risk_contributions ?? []).map((item) => ({
+        name: item.name,
+        weightPct: item.weight_pct,
+        contributionPct: item.contribution_pct,
+        detail: item.detail,
+      })),
+      constraints: response.constraints
+        ? {
+            maxPositionCapPct: response.constraints.max_position_cap_pct,
+            maxSectorCapPct: response.constraints.max_sector_cap_pct,
+            largestPositionPct: response.constraints.largest_position_pct,
+            largestPositionName: response.constraints.largest_position_name,
+            largestSectorWeightPct: response.constraints.largest_sector_weight_pct,
+            largestSectorName: response.constraints.largest_sector_name,
+            nearPositionCap: response.constraints.near_position_cap,
+            nearSectorCap: response.constraints.near_sector_cap,
+          }
+        : undefined,
+      turnoverEstimatePct: response.turnover_estimate_pct,
+      deploymentEfficiencyPct: response.deployment_efficiency_pct,
+      scenarioTests: (response.scenario_tests ?? []).map((item) => ({
+        name: item.name,
+        pnlPct: item.pnl_pct,
+        commentary: item.commentary,
+      })),
+      benchmarkRelative: response.benchmark_relative
+        ? {
+            benchmarkName: response.benchmark_relative.benchmark_name,
+            activeSharePct: response.benchmark_relative.active_share_pct,
+            trackingErrorPct: response.benchmark_relative.tracking_error_pct,
+            exAnteAlphaPct: response.benchmark_relative.ex_ante_alpha_pct,
+            informationRatio: response.benchmark_relative.information_ratio,
+          }
+        : undefined,
+      portfolioFitSummary: mapPortfolioFitSummary(response.portfolio_fit_summary),
+      metrics: {
+        avgBeta: response.metrics.beta,
+        estimatedAnnualReturn: response.metrics.estimated_return_pct,
+        estimatedVolatility: response.metrics.estimated_volatility_pct,
+        sharpeRatio: (response.metrics.estimated_return_pct - 7) / Math.max(response.metrics.estimated_volatility_pct, 1),
+        divScore: Math.min(100, sectorCount * 10 + (allocations.length > 8 ? 20 : 0)),
+        correlationScore: response.metrics.diversification_score,
+        sectorCount,
+      },
+      regimeWarning: response.regime_warning || undefined,
+    };
+  } catch (error) {
+    const fallback = generatePortfolio(capitalAmount, fromRiskAttitude(mandate.risk_attitude));
+    const fallbackNotes = [
+      ...(fallback.backendNotes ?? []),
+      `Using local portfolio generator because backend generation failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
+    ];
+
+    return {
+      ...fallback,
+      requestedCapital: capitalAmount,
+      cashRemaining: Math.max(0, capitalAmount - fallback.totalInvested),
+      investmentUtilizationPct: capitalAmount > 0 ? (fallback.totalInvested / capitalAmount) * 100 : 0,
+      mandate: {
+        investment_horizon_weeks: mandate.investment_horizon_weeks,
+        preferred_num_positions: mandate.preferred_num_positions,
+        allow_small_caps: mandate.allow_small_caps,
+        risk_attitude: mandate.risk_attitude,
+      },
+      backendNotes: fallbackNotes,
+      modelVariant: 'RULES',
+      modelSource: 'RULES',
+      modelVersion: 'local-rules',
+      predictionHorizonDays: 21,
+      lookbackWindowDays: 63,
+      expectedHoldingPeriodDays: 21,
+      runtime: defaultRuntimeDescriptor(),
+      standardMetrics: {
+        returnPct: fallback.metrics.estimatedAnnualReturn,
+        volatilityPct: fallback.metrics.estimatedVolatility,
+        sharpeRatio: fallback.metrics.sharpeRatio,
+        diversificationScore: fallback.metrics.divScore,
+        beta: fallback.metrics.avgBeta,
+      },
+    };
+  }
 }
 
 export async function fetchTradeIdeasViaApi(params: {
@@ -1025,6 +1062,7 @@ export async function fetchTradeIdeasViaApi(params: {
 export async function analyzePortfolioViaApi(
   holdings: { symbol: string; shares: number }[],
   targetRisk: RiskProfile = 'LOW_RISK',
+  modelVariant: ModelVariant = 'RULES',
 ): Promise<AnalysisResult> {
   try {
     const response = await fetchJson<ApiAnalyzePortfolioResponse>('/api/v1/analysis/portfolio', {
@@ -1032,15 +1070,13 @@ export async function analyzePortfolioViaApi(
       timeoutMs: 120000,
       body: JSON.stringify({
         holdings: holdings.map((holding) => {
-          const stock = ALL_STOCKS.find((candidate) => candidate.symbol === holding.symbol);
           return {
             symbol: holding.symbol,
             quantity: holding.shares,
-            average_price: stock?.price,
           };
         }),
         target_risk_mode: toApiRiskMode(targetRisk),
-        model_variant: 'RULES',
+        model_variant: modelVariant,
       }),
     });
 

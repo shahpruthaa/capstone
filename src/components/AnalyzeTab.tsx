@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Plus, Search, Trash2, Info, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { AnalysisResult } from '../services/portfolioService';
-import { analyzePortfolioViaApi } from '../services/backendApi';
+import { analyzePortfolioViaApi, getCurrentModelStatusViaApi, ModelVariant } from '../services/backendApi';
 import { NSE_STOCKS, LIQUID_ASSETS, SECTOR_CORRELATIONS } from '../data/stocks';
 import { MetricCard, SectorChip } from './MetricCard';
 import { PortfolioFitBanner } from './PortfolioFitBanner';
@@ -108,6 +108,19 @@ export function AnalyzeTab() {
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [analysisNotice, setAnalysisNotice] = useState<{ tone: 'info'; text: string } | null>(null);
     const [holdingsText, setHoldingsText] = useState('');
+    const [activeModelVariant, setActiveModelVariant] = useState<ModelVariant>('RULES');
+
+    useEffect(() => {
+        const loadModelStatus = async () => {
+            try {
+                const status = await getCurrentModelStatusViaApi();
+                setActiveModelVariant(status.available ? 'LIGHTGBM_HYBRID' : 'RULES');
+            } catch {
+                setActiveModelVariant('RULES');
+            }
+        };
+        void loadModelStatus();
+    }, []);
 
     const filtered = ALL_STOCKS.filter(s =>
         search && (s.symbol.toLowerCase().includes(search.toLowerCase()) || s.name.toLowerCase().includes(search.toLowerCase()))
@@ -117,7 +130,7 @@ export function AnalyzeTab() {
         setLoadingAnalysis(true);
         setAnalysisNotice(null);
         try {
-            setResult(await analyzePortfolioViaApi(updated));
+            setResult(await analyzePortfolioViaApi(updated, 'LOW_RISK', activeModelVariant));
             setAnalysisNotice({ tone: 'info', text: 'Risk analysis is being computed from backend market data.' });
         } catch (error) {
             setResult(null);
@@ -272,7 +285,7 @@ export function AnalyzeTab() {
                                     type="number"
                                     min={1}
                                     value={shares}
-                                    onChange={e => setShares(Number(e.target.value))}
+                                    onChange={e => setShares(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
                                     className="input-field px-3 py-2 text-sm"
                                     placeholder="Shares"
                                 />
@@ -288,12 +301,11 @@ export function AnalyzeTab() {
                             <p className="text-sm text-slate-400 text-center py-4">No holdings added yet</p>
                         )}
                         {holdings.map(h => {
-                            const stock = ALL_STOCKS.find(s => s.symbol === h.symbol);
                             return (
                                 <div key={h.symbol} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
                                     <div>
                                         <div className="font-bold text-sm">{h.symbol}</div>
-                                        <div className="text-xs text-slate-400">{h.shares} shares · Rs {((stock?.price || 0) * h.shares).toLocaleString()}</div>
+                                        <div className="text-xs text-slate-400">{h.shares} shares</div>
                                     </div>
                                     <button onClick={() => { void removeHolding(h.symbol); }} className="text-slate-300 hover:text-rose-500 transition-colors p-1">
                                         <Trash2 className="w-4 h-4" />

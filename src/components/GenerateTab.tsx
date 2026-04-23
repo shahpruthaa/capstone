@@ -65,7 +65,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
     const handleGenerate = async (capitalOverride?: number, riskOverride?: RiskAttitude) => {
         const capitalAmount = capitalOverride ?? amount;
-        const requestMandate = riskOverride ? { ...mandate, risk_attitude: riskOverride } : mandate;
+        const requestMandate = {
+            ...(riskOverride ? { ...mandate, risk_attitude: riskOverride } : mandate),
+            preferred_num_positions: Math.min(50, Math.max(1, Math.floor(mandate.preferred_num_positions))),
+        };
 
         setGenerating(true);
         setGenerationNotice(null);
@@ -168,8 +171,10 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                 <label className="block text-xs font-600 text-slate-500 mb-1.5">Target Positions</label>
                                 <input
                                     type="number"
+                                    min={1}
+                                    max={50}
                                     value={mandate.preferred_num_positions}
-                                    onChange={e => updateMandate('preferred_num_positions', Number(e.target.value))}
+                                    onChange={e => updateMandate('preferred_num_positions', Math.min(50, Math.max(1, Number(e.target.value))))}
                                     className="input-field px-4 py-2.5"
                                 />
                             </div>
