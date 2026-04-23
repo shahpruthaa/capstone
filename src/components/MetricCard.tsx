@@ -17,16 +17,16 @@ export function MetricCard({ label, value, sub, color = 'slate', trend, icon }: 
         blue: 'text-blue-600',
         amber: 'text-amber-600',
         purple: 'text-violet-600',
-        slate: 'text-slate-50',
+        slate: 'text-[#1D1D1F]',
     };
 
     const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus;
     const trendColor = trend === 'up' ? 'text-emerald-500' : trend === 'down' ? 'text-rose-500' : 'text-slate-600';
 
     return (
-        <div className="metric-card animate-fade-in">
+        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4 animate-fade-in">
             <div className="flex items-start justify-between mb-2">
-                <p className="section-title" style={{ marginBottom: 0 }}>{label}</p>
+                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]" style={{ marginBottom: 0 }}>{label}</p>
                 <div className="flex items-center gap-1">
                     {trend && <TrendIcon className={`w-4 h-4 ${trendColor}`} />}
                     {icon && <span className="text-slate-600">{icon}</span>}

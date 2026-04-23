@@ -21,10 +21,10 @@ function CorrelationMatrix({ sectors }: { sectors: string[] }) {
     }
 
     return (
-        <div className="card p-4">
-            <p className="section-title">Sector Correlation Matrix</p>
+        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+            <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Sector Correlation Matrix</p>
             <div className="overflow-x-auto">
-                <table style={{ borderSpacing: '3px', borderCollapse: 'separate' }}>
+                <table className="w-full text-left border-collapse" style={{ borderSpacing: '3px' }}>
                     <thead>
                         <tr>
                             <th className="w-16" />
@@ -200,9 +200,9 @@ export function AnalyzeTab() {
     return (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
             <div className="lg:col-span-4 space-y-5">
-                <div className="card p-4">
-                    <h2 className="font-mono text-[10px] uppercase tracking-wider font-bold flex items-center gap-2 mb-4">
-                        <Plus className="w-4 h-4 text-blue-500" /> Add Holdings
+                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                    <h2 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-4 flex items-center gap-2">
+                        <Plus className="w-4 h-4 text-blue-600" /> Add Holdings
                     </h2>
 
                     {analysisNotice && (
@@ -212,9 +212,9 @@ export function AnalyzeTab() {
                     )}
 
                     <div className="mb-4">
-                        <label className="block font-mono text-[10px] uppercase tracking-wider text-slate-600 mb-1">Paste portfolio (SYMBOL SHARES)</label>
+                        <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Paste portfolio (SYMBOL SHARES)</label>
                         <textarea
-                            className="input-field px-3 py-2 text-xs h-24"
+                            className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-xs h-24"
                             placeholder={'INFY 10\nHDFCBANK 8\nTCS,5'}
                             value={holdingsText}
                             onChange={(event) => {
@@ -225,29 +225,29 @@ export function AnalyzeTab() {
                                 setAnalysisNotice(null);
                             }}
                         />
-                        <button onClick={() => { void parseAndLoadHoldings(); }} className="btn-secondary mt-2 px-3 py-1.5 text-xs">
+                        <button onClick={() => { void parseAndLoadHoldings(); }} className="bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-all mt-2 px-4 py-2.5 text-xs font-semibold">
                             Analyze Posted Portfolio
                         </button>
                     </div>
 
                     <div className="relative w-full mb-3">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#86868B]" />
                         <input
                             type="text"
-                            className="w-full input-field pl-9 pr-4 py-2.5 text-sm"
+                            className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 pl-9 pr-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all text-sm font-mono"
                             placeholder="Search NSE stock..."
                             value={search}
                             onChange={e => { setSearch(e.target.value); setSelectedSym(''); }}
                         />
                         {filtered.length > 0 && (
-                            <div className="absolute top-full left-0 mt-1 w-full z-50 bg-slate-800 border border-slate-700 rounded-sm max-h-60 overflow-y-auto">
+                            <div className="absolute top-full left-0 mt-1 w-full z-50 bg-white border border-slate-200 shadow-[0_2px_8px_rgb(0,0,0,0.04)] rounded-xl max-h-60 overflow-y-auto">
                                 {filtered.map(s => (
                                     <button
                                         key={s.symbol}
                                         onClick={() => { setSelectedSym(s.symbol); setSearch(s.symbol); }}
-                                        className="w-full text-left px-4 py-2.5 hover:bg-slate-700/50 border-b border-slate-700 last:border-0"
+                                        className="w-full text-left px-4 py-2.5 hover:bg-slate-50 border-b border-slate-100 last:border-0"
                                     >
-                                        <span className="font-bold text-sm text-slate-50">{s.symbol}</span>
+                                        <span className="font-semibold text-sm text-[#1D1D1F] font-mono">{s.symbol}</span>
                                         <span className="text-xs text-slate-600 ml-2">{s.name}</span>
                                         <span className="float-right"><SectorChip sector={s.sector} /></span>
                                     </button>
@@ -264,11 +264,11 @@ export function AnalyzeTab() {
                                     min={1}
                                     value={shares}
                                     onChange={e => setShares(Number(e.target.value))}
-                                    className="input-field px-3 py-2 text-sm"
+                                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm"
                                     placeholder="Shares"
                                 />
                             </div>
-                            <button onClick={addHolding} className="btn-primary px-4 py-2 text-sm">
+                            <button onClick={addHolding} className="bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-sm px-4 py-2 text-sm flex items-center justify-center">
                                 <Plus className="w-4 h-4" />
                             </button>
                         </div>
@@ -284,10 +284,10 @@ export function AnalyzeTab() {
                             const displayValue = result ? (((result as any).portfolioValue || result.totalValue || 0) * (stockData?.price || 1) / 10000) : 0;
                             
                             return (
-                                <div key={h.symbol} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-xl mb-2">
+                                <div key={h.symbol} className="flex items-center justify-between bg-slate-50/50 border border-slate-200/50 rounded-xl p-3 mb-2">
                                     <div>
-                                        <div className="font-bold text-sm text-slate-900">{h.symbol}</div>
-                                        <div className="text-xs text-slate-500 font-mono">
+                                        <div className="font-semibold text-sm text-[#1D1D1F] font-mono">{h.symbol}</div>
+                                        <div className="text-xs text-[#86868B] font-mono">
                                             {h.shares} shares · Rs {displayValue > 0 ? displayValue.toLocaleString(undefined, { maximumFractionDigits: 2 }) : 'Loading live price...'}
                                         </div>
                                     </div>
@@ -304,9 +304,9 @@ export function AnalyzeTab() {
 
             <div className="lg:col-span-8 space-y-5">
                 {!result ? (
-                    <div className="card flex flex-col items-center justify-center text-slate-600 p-8 border border-dashed border-slate-600" style={{ minHeight: '400px' }}>
+                    <div className="bg-slate-50/50 flex flex-col items-center justify-center text-[#86868B] p-8 border border-dashed border-slate-200 rounded-2xl" style={{ minHeight: '400px' }}>
                         <Info className="w-12 h-12 mb-4 opacity-20" />
-                        <p className="text-sm font-mono uppercase tracking-wider mb-1">{loadingAnalysis ? 'Analyzing holdings...' : 'Add your NSE holdings'}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.08em] mb-1">{loadingAnalysis ? 'Analyzing holdings...' : 'Add your NSE holdings'}</p>
                         <p className="text-xs">We will assess risk, diversification, and sector correlation.</p>
                     </div>
                 ) : (
@@ -328,40 +328,40 @@ export function AnalyzeTab() {
                             />
                         </div>
 
-                        <div className="card p-4">
-                            <p className="section-title">Model Runtime</p>
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                            <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Model Runtime</p>
                             <div className="runtime-grid grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
                                 <div className="stat-row">
-                                    <span className="stat-label">Variant Applied</span>
-                                    <span className="stat-value">{result.modelVariantApplied || 'RULES'}</span>
+                                    <span className="stat-label text-[#86868B]">Variant Applied</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.modelVariantApplied || 'RULES'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Source</span>
-                                    <span className="stat-value">{result.modelSource || 'RULES'}</span>
+                                    <span className="stat-label text-[#86868B]">Source</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.modelSource || 'RULES'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Mode</span>
-                                    <span className="stat-value">{result.activeMode || 'rules_only'}</span>
+                                    <span className="stat-label text-[#86868B]">Mode</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.activeMode || 'rules_only'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">ML Scores</span>
-                                    <span className="stat-value">{Object.keys(result.mlPredictions || {}).length}</span>
+                                    <span className="stat-label text-[#86868B]">ML Scores</span>
+                                    <span className="stat-value text-[#1D1D1F]">{Object.keys(result.mlPredictions || {}).length}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Version</span>
-                                    <span className="stat-value">{result.modelVersion || 'rules'}</span>
+                                    <span className="stat-label text-[#86868B]">Version</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.modelVersion || 'rules'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Artifact</span>
-                                    <span className="stat-value">{result.artifactClassification || 'missing'}</span>
+                                    <span className="stat-label text-[#86868B]">Artifact</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.artifactClassification || 'missing'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Review Cadence</span>
-                                    <span className="stat-value">{result.holdingPeriodDaysRecommended || result.predictionHorizonDays || 21}D</span>
+                                    <span className="stat-label text-[#86868B]">Review Cadence</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.holdingPeriodDaysRecommended || result.predictionHorizonDays || 21}D</span>
                                 </div>
                             </div>
                             {result.holdingPeriodReason && (
-                                <p className="text-xs text-slate-500 mt-3">{result.holdingPeriodReason}</p>
+                                <p className="text-xs text-[#86868B] mt-3">{result.holdingPeriodReason}</p>
                             )}
                         </div>
 
@@ -379,18 +379,18 @@ export function AnalyzeTab() {
                         </div>
 
                         {result.backendNotes && result.backendNotes.length > 0 && (
-                            <div className="card p-4">
-                                <p className="section-title">Analysis Notes</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Analysis Notes</p>
                                 <div className="space-y-2">
                                     {result.backendNotes.map((note, index) => (
-                                        <p key={index} className="text-[11px] font-mono tracking-wide text-slate-300 leading-relaxed">{note}</p>
+                                        <p key={index} className="text-[11px] font-mono tracking-wide text-[#86868B] leading-relaxed">{note}</p>
                                     ))}
                                 </div>
                             </div>
                         )}
 
-                        <div className="card p-4">
-                            <p className="section-title">Sector Exposure</p>
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                            <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Sector Exposure</p>
                             <div className="h-52">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <BarChart data={sectorChartData}>
@@ -400,7 +400,7 @@ export function AnalyzeTab() {
                                         <Tooltip formatter={(v: number) => [`${v}%`, 'Weight']} />
                                         <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                                             {sectorChartData.map((_, i) => (
-                                                <Cell key={i} fill={i % 2 === 0 ? '#14b8a6' : '#3b82f6'} />
+                                                <Cell key={i} fill={i % 2 === 0 ? '#14b8a6' : '#2563eb'} />
                                             ))}
                                         </Bar>
                                     </BarChart>
@@ -409,21 +409,21 @@ export function AnalyzeTab() {
                         </div>
 
                         {factorChartData.length > 0 && (
-                            <div className="card p-4">
-                                <p className="section-title">Factor Exposures</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Factor Exposures</p>
                                 <div className="space-y-3">
                                     {factorChartData.map((item) => (
                                         <div key={item.name}>
                                             <div className="flex items-center justify-between text-[10px] mb-1">
-                                                <span className="font-mono text-slate-600 uppercase tracking-wider">{item.name.replace('_', ' ')}</span>
-                                                <span className={`font-mono ${item.value >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}</span>
+                                                <span className="font-mono text-[#86868B] uppercase tracking-wider">{item.name.replace('_', ' ')}</span>
+                                                <span className={`font-mono ${item.value >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{item.value >= 0 ? '+' : ''}{item.value.toFixed(2)}</span>
                                             </div>
                                             <div className="progress-bar-track">
                                                 <div
                                                     className="progress-bar-fill"
                                                     style={{
                                                         width: `${Math.min(100, Math.abs(item.value) * 35)}%`,
-                                                        background: item.value >= 0 ? '#14b8a6' : '#ef4444',
+                                                        background: item.value >= 0 ? '#10b981' : '#e11d48',
                                                     }}
                                                 />
                                             </div>
@@ -434,22 +434,22 @@ export function AnalyzeTab() {
                         )}
 
                         {result.mlPredictions && Object.keys(result.mlPredictions).length > 0 && (
-                            <div className="card p-4">
-                                <p className="section-title">ML Scores By Holding</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">ML Scores By Holding</p>
                                 <div className="space-y-2">
                                     {(Object.entries(result.mlPredictions) as [string, number][])
                                         .sort((left, right) => right[1] - left[1])
                                         .map(([symbol, score]) => (
-                                            <div key={symbol} className="flex items-center justify-between p-3 bg-slate-800/50 rounded-sm border border-slate-700">
+                                            <div key={symbol} className="flex items-center justify-between bg-slate-50/50 border border-slate-200/50 rounded-xl p-3 mb-2">
                                                 <div>
-                                                    <div className="font-bold text-sm font-mono text-slate-50">{symbol}</div>
+                                                    <div className="font-semibold text-sm font-mono text-[#1D1D1F]">{symbol}</div>
                                                     {(result.topModelDriversBySymbol?.[symbol] || []).length > 0 && (
-                                                        <div className="text-[9px] font-mono tracking-wider uppercase text-slate-600 mt-1">
+                                                        <div className="text-[9px] font-mono tracking-wider uppercase text-[#86868B] mt-1">
                                                             {(result.topModelDriversBySymbol?.[symbol] || []).slice(0, 2).join(', ')}
                                                         </div>
                                                     )}
                                                 </div>
-                                                <span className={`font-mono text-sm ${score >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                <span className={`font-mono text-sm ${score >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                                     {score >= 0 ? '+' : ''}{score.toFixed(3)}
                                                 </span>
                                             </div>

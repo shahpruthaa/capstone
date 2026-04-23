@@ -12,18 +12,6 @@
 }
 
 @layer components {
-  .card {
-    /* Pure white cards with a sharp 1px border. No muddy shadows. */
-    @apply bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden;
-  }
-  
-  .input-field {
-    @apply bg-white border border-slate-300 rounded-lg text-slate-900 focus:ring-2 focus:ring-blue-600 focus:border-transparent transition-all;
-  }
-
-  .section-title {
-    @apply text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-4;
-  }
 }
 
 :root {
@@ -91,14 +79,19 @@ a {
   color: inherit;
 }
 
+/* Apple-style subtle scrollbars */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
 }
-
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.22);
-  border-radius: 999px;
+  @apply bg-slate-200 rounded-full;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-300;
 }
 
 .app-shell {
@@ -273,47 +266,7 @@ a {
   letter-spacing: 0.05em;
 }
 
-.card,
-.metric-card {
-  background: var(--bg-elev);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--text);
-}
 
-.metric-card {
-  padding: 12px;
-}
-
-.section-title {
-  margin-bottom: 14px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 6px;
-  border-radius: 2px;
-  border: 1px solid transparent;
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.badge-neutral { background: var(--bg-elev-2); border-color: var(--line-strong); color: var(--text-muted); }
-.badge-green { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); color: #34d399; }
-.badge-red { background: rgba(244, 63, 94, 0.1); border-color: rgba(244, 63, 94, 0.3); color: #fb7185; }
-.badge-blue { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); color: #93c5fd; }
-.badge-amber { background: rgba(245, 158, 11, 0.1); border-color: rgba(245, 158, 11, 0.3); color: #fcd34d; }
-.badge-purple { background: rgba(139, 92, 246, 0.1); border-color: rgba(139, 92, 246, 0.3); color: #c4b5fd; }
 
 .alert-info,
 .alert-warning,
@@ -362,25 +315,7 @@ a {
   color: var(--text);
 }
 
-.input-field {
-  width: 100%;
-  border-radius: 4px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  outline: none;
-  transition: 160ms ease;
-}
 
-.input-field::placeholder {
-  color: var(--text-dim);
-}
-
-.input-field:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
 
 .risk-btn {
   border-radius: 4px;

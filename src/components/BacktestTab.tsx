@@ -99,9 +99,9 @@ export function BacktestTab({ portfolio }: Props) {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in">
             {/* Config sidebar */}
             <div className="lg:col-span-3 space-y-5">
-                <div className="card p-5">
-                    <h2 className="font-bold text-sm flex items-center gap-2 mb-5">
-                        <Settings className="w-4 h-4 text-teal-600" /> Simulation Config
+                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
+                    <h2 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] flex items-center gap-2 mb-5">
+                        <Settings className="w-4 h-4 text-blue-600" /> Simulation Config
                     </h2>
 
                     {!portfolio && (
@@ -127,31 +127,31 @@ export function BacktestTab({ portfolio }: Props) {
                             </div>
                         )}
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">Start Date</label>
-                            <input type="date" value={config.startDate} onChange={e => setConfig(c => ({ ...c, startDate: e.target.value }))} className="input-field px-3 py-2 text-sm" />
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">Start Date</label>
+                            <input type="date" value={config.startDate} onChange={e => setConfig(c => ({ ...c, startDate: e.target.value }))} className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm" />
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">End Date</label>
-                            <input type="date" value={config.endDate} onChange={e => setConfig(c => ({ ...c, endDate: e.target.value }))} className="input-field px-3 py-2 text-sm" />
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">End Date</label>
+                            <input type="date" value={config.endDate} onChange={e => setConfig(c => ({ ...c, endDate: e.target.value }))} className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm" />
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">
                                 Stop Loss: {(config.stopLossPct * 100).toFixed(0)}%
                             </label>
-                            <input type="range" min={5} max={30} step={1} value={config.stopLossPct * 100} onChange={e => setConfig(c => ({ ...c, stopLossPct: +e.target.value / 100 }))} className="w-full" />
+                            <input type="range" min={5} max={30} step={1} value={config.stopLossPct * 100} onChange={e => setConfig(c => ({ ...c, stopLossPct: +e.target.value / 100 }))} className="w-full accent-blue-600" />
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">
                                 Take Profit: {(config.takeProfitPct * 100).toFixed(0)}%
                             </label>
-                            <input type="range" min={10} max={80} step={5} value={config.takeProfitPct * 100} onChange={e => setConfig(c => ({ ...c, takeProfitPct: +e.target.value / 100 }))} className="w-full" />
+                            <input type="range" min={10} max={80} step={5} value={config.takeProfitPct * 100} onChange={e => setConfig(c => ({ ...c, takeProfitPct: +e.target.value / 100 }))} className="w-full accent-blue-600" />
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">Rebalancing</label>
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">Rebalancing</label>
                             <select
                                 value={config.rebalanceFreq}
                                 onChange={e => setConfig(c => ({ ...c, rebalanceFreq: e.target.value as BacktestConfig['rebalanceFreq'] }))}
-                                className="input-field px-3 py-2 text-sm"
+                                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm"
                             >
                                 {(['Monthly', 'Quarterly', 'Annually', 'None'] as const).map(f => (
                                     <option key={f} value={f}>{f}</option>
@@ -160,23 +160,23 @@ export function BacktestTab({ portfolio }: Props) {
                         </div>
 
                         <div>
-                            <label className="block text-xs font-semibold text-slate-500 mb-1">
+                            <label className="block text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-1.5">
                                 Expected-Return Engine
                             </label>
                             <select
                                 value={selectedModelVariant}
                                 onChange={e => setSelectedModelVariant(e.target.value as ModelVariant)}
-                                className="input-field px-3 py-2 text-sm"
+                                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl text-slate-900 px-4 py-2.5 focus:bg-white focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-600 transition-all font-mono text-sm"
                             >
                                 <option value="RULES">Rules only</option>
                                 <option value="LIGHTGBM_HYBRID">Ensemble runtime</option>
                             </select>
                             {activeModelVariant === 'LIGHTGBM_HYBRID' && selectedModelVariant === 'LIGHTGBM_HYBRID' && (
-                                <p className="text-[10px] text-slate-600 mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
+                                <p className="text-[10px] text-[#86868B] mt-1 italic">Uses full or degraded ensemble runtime depending on artifact readiness; falls back to rules if the core artifact is missing.</p>
                             )}
                         </div>
 
-                        <button onClick={handleRun} disabled={!portfolio || running} className="btn-primary w-full py-2.5 text-sm flex items-center justify-center gap-2">
+                        <button onClick={handleRun} disabled={!portfolio || running} className="bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-sm w-full py-3 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                             {running ? (
                                 <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full spin" /> Running...</>
                             ) : (
@@ -188,9 +188,9 @@ export function BacktestTab({ portfolio }: Props) {
 
                 {/* Indian Tax Summary */}
                 {result && (
-                    <div className="card p-5">
-                        <h3 className="font-bold text-sm flex items-center gap-2 mb-4">
-                            <IndianRupee className="w-4 h-4 text-amber-600" /> Tax Liability
+                    <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
+                        <h3 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] flex items-center gap-2 mb-4">
+                            <IndianRupee className="w-4 h-4 text-amber-500" /> Tax Liability
                         </h3>
                         <div className="space-y-1">
                             {[
@@ -207,10 +207,10 @@ export function BacktestTab({ portfolio }: Props) {
                                 </div>
                             ))}
                         </div>
-                        <p className="text-[10px] text-slate-600 mt-2 italic">LTCG exempt up to ₹1.25L pa. Budget 2024 rates.</p>
+                        <p className="text-[10px] text-[#86868B] mt-2 italic">LTCG exempt up to ₹1.25L pa. Budget 2024 rates.</p>
 
                         <div className="mt-4 pt-3 border-t border-slate-100">
-                            <p className="text-xs font-semibold text-slate-500 mb-2">Transaction Costs</p>
+                            <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-2">Transaction Costs</p>
                             {[
                                 ['Brokerage', fmtRs(result.costBreakdown.totalBrokerage)],
                                 ['STT', fmtRs(result.costBreakdown.totalSTT)],
@@ -235,75 +235,75 @@ export function BacktestTab({ portfolio }: Props) {
             {/* Main results area */}
             <div className="lg:col-span-9 space-y-5">
                 {!result ? (
-                    <div className="card flex flex-col items-center justify-center text-slate-600 p-16 border-2 border-dashed" style={{ minHeight: '480px' }}>
+                    <div className="bg-slate-50/50 flex flex-col items-center justify-center text-[#86868B] p-16 border border-dashed border-slate-200 rounded-2xl" style={{ minHeight: '480px' }}>
                         <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-4">
-                            <TrendingUp className="w-8 h-8 opacity-30" />
+                            <TrendingUp className="w-8 h-8 opacity-30 text-blue-600" />
                         </div>
-                        <p className="text-base font-semibold mb-1">{portfolio ? 'Configure & run backtest' : 'Generate a portfolio first'}</p>
-                        <p className="text-sm">Historical replay with Indian market frictions, taxes, and benchmark comparison.</p>
+                        <p className="font-mono text-[11px] uppercase tracking-[0.08em] font-bold mb-1 text-slate-500">{portfolio ? 'Configure & run backtest' : 'Generate a portfolio first'}</p>
+                        <p className="text-[10px] font-mono tracking-wide text-slate-400">Historical replay with Indian market frictions, taxes, and benchmark comparison.</p>
                     </div>
                 ) : (
                     <>
                         {result.notes && result.notes.length > 0 && (
-                            <div className="card p-5">
-                                <p className="section-title">Backend Simulation Notes</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Backend Simulation Notes</p>
                                 <div className="space-y-2">
                                     {result.notes.map((note, index) => (
-                                        <p key={index} className="text-xs text-slate-600 leading-relaxed">{note}</p>
+                                        <p key={index} className="text-xs text-[#86868B] font-mono leading-relaxed">{note}</p>
                                     ))}
                                 </div>
                             </div>
                         )}
 
-                        <div className="card p-5">
-                            <p className="section-title">Model Runtime</p>
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
+                            <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Model Runtime</p>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                                 <div className="stat-row">
-                                    <span className="stat-label">Variant</span>
-                                    <span className="stat-value">{result.modelVariant || selectedModelVariant}</span>
+                                    <span className="stat-label text-[#86868B]">Variant</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.modelVariant || selectedModelVariant}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Source</span>
-                                    <span className="stat-value">{result.modelSource || 'RULES'}</span>
+                                    <span className="stat-label text-[#86868B]">Source</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.modelSource || 'RULES'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Mode</span>
-                                    <span className="stat-value">{result.activeMode || 'rules_only'}</span>
+                                    <span className="stat-label text-[#86868B]">Mode</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.activeMode || 'rules_only'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Version</span>
-                                    <span className="stat-value">{result.modelVersion || 'rules'}</span>
+                                    <span className="stat-label text-[#86868B]">Version</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.modelVersion || 'rules'}</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Horizon</span>
-                                    <span className="stat-value">{result.predictionHorizonDays || 21}D</span>
+                                    <span className="stat-label text-[#86868B]">Horizon</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.predictionHorizonDays || 21}D</span>
                                 </div>
                                 <div className="stat-row">
-                                    <span className="stat-label">Artifact</span>
-                                    <span className="stat-value">{result.artifactClassification || 'missing'}</span>
+                                    <span className="stat-label text-[#86868B]">Artifact</span>
+                                    <span className="stat-value text-[#1D1D1F]">{result.artifactClassification || 'missing'}</span>
                                 </div>
                             </div>
                         </div>
 
                         {portfolio?.mandate && (
-                            <div className="card p-5">
-                                <p className="section-title">Mandate Replay</p>
+                            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
+                                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Mandate Replay</p>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                                     <div className="stat-row">
-                                        <span className="stat-label">Attitude</span>
-                                        <span className="stat-value">{portfolio.mandate.risk_attitude.replace('_', ' ')}</span>
+                                        <span className="stat-label text-[#86868B]">Attitude</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.risk_attitude.replace('_', ' ')}</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Horizon</span>
-                                        <span className="stat-value">{portfolio.mandate.investment_horizon_weeks} weeks</span>
+                                        <span className="stat-label text-[#86868B]">Horizon</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.investment_horizon_weeks} weeks</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Positions</span>
-                                        <span className="stat-value">{portfolio.mandate.preferred_num_positions}</span>
+                                        <span className="stat-label text-[#86868B]">Positions</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.preferred_num_positions}</span>
                                     </div>
                                     <div className="stat-row">
-                                        <span className="stat-label">Small Caps</span>
-                                        <span className="stat-value">{portfolio.mandate.allow_small_caps ? 'Allowed' : 'Excluded'}</span>
+                                        <span className="stat-label text-[#86868B]">Small Caps</span>
+                                        <span className="stat-value text-[#1D1D1F]">{portfolio.mandate.allow_small_caps ? 'Allowed' : 'Excluded'}</span>
                                     </div>
                                 </div>
                             </div>
@@ -355,8 +355,8 @@ export function BacktestTab({ portfolio }: Props) {
                         </div>
 
                         {/* Equity Curve */}
-                        <div className="card p-5">
-                            <p className="section-title">Equity Curve vs Nifty 50 Benchmark</p>
+                        <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5">
+                            <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Equity Curve vs Nifty 50 Benchmark</p>
                             <div className="h-72">
                                 <ResponsiveContainer width="100%" height="100%">
                                     <LineChart data={result.equityCurve} margin={{ right: 20 }}>
@@ -369,7 +369,7 @@ export function BacktestTab({ portfolio }: Props) {
                                         />
                                         <Legend />
                                         <ReferenceLine y={result.initialInvestment} stroke="#94a3b8" strokeDasharray="4 4" label={{ value: 'Invested', fill: '#94a3b8', fontSize: 10 }} />
-                                        <Line type="monotone" dataKey="value" name="AI Portfolio" stroke="#14b8a6" strokeWidth={2.5} dot={false} />
+                                        <Line type="monotone" dataKey="value" name="AI Portfolio" stroke="#2563eb" strokeWidth={2.5} dot={false} />
                                         <Line type="monotone" dataKey="benchmark" name="Nifty Benchmark" stroke="#94a3b8" strokeWidth={1.5} dot={false} strokeDasharray="5 5" />
                                     </LineChart>
                                 </ResponsiveContainer>
