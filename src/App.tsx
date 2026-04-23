@@ -66,17 +66,17 @@ function Sidebar({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
       </nav>
 
       <div className="sidebar-bottom">
-        <div className="market-status bg-white border border-slate-200 shadow-sm rounded-xl">
+        <div className="market-status bg-[#141415] border border-[#2d2d2d] rounded-xl">
           <div className={`status-dot ${isMarketOpen() ? 'open' : 'closed'}`} />
-          <div className="font-mono uppercase tracking-wider text-[10px] text-slate-500">NSE: {isMarketOpen() ? 'OPEN' : 'CLOSED'}</div>
+          <div className="font-mono uppercase tracking-wider text-[10px] text-[#6e6e73]">NSE: {isMarketOpen() ? 'OPEN' : 'CLOSED'}</div>
         </div>
-        <div className="market-status bg-white border border-slate-200 shadow-sm rounded-xl">
+        <div className="market-status bg-[#141415] border border-[#2d2d2d] rounded-xl">
           <div className="status-dot open" />
-          <div className="font-mono uppercase tracking-wider text-[10px] text-slate-500">Ensemble: Active</div>
+          <div className="font-mono uppercase tracking-wider text-[10px] text-[#6e6e73]">Ensemble: Active</div>
         </div>
-        <div className="market-status bg-white border border-slate-200 shadow-sm rounded-xl">
+        <div className="market-status bg-[#141415] border border-[#2d2d2d] rounded-xl">
           <div className="status-dot closed" />
-          <div className="font-mono uppercase tracking-wider text-[10px] text-slate-500">Data: {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
+          <div className="font-mono uppercase tracking-wider text-[10px] text-[#6e6e73]">Data: {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</div>
         </div>
       </div>
     </aside>
@@ -97,8 +97,8 @@ export default function App() {
             <div className="page-title">{PAGE_META[tab].title}</div>
           </div>
           <div className="topbar-right">
-            <span className="text-slate-400 font-bold text-[10px] tracking-widest uppercase">{PAGE_META[tab].subtitle}</span>
-            {portfolio && <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200/50 px-2 py-0.5 rounded-full font-semibold">{portfolio.allocations.length} live picks</span>}
+            <span className="text-[#86868b] font-bold text-[10px] tracking-widest uppercase">{PAGE_META[tab].subtitle}</span>
+            {portfolio && <span className="text-[10px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 px-2 py-0.5 rounded-full font-semibold">{portfolio.allocations.length} live picks</span>}
           </div>
         </header>
 

@@ -1039,8 +1039,13 @@ def get_benchmark_summary(db: Session) -> BenchmarkSummaryResponse:
     for year in range(0, 11):
         values = {}
         for strategy in strategies:
-            net_return = max(-0.95, (strategy.annual_return_pct - strategy.expense_ratio_pct) / 100.0)
-            values[strategy.name] = round(initial_amount * ((1 + net_return) ** year), 2)
+            # Fix the Linear Projection Fallacy: include volatility drag
+            # adjusted_cagr = cagr - (Math.pow(volatility, 2) / 2)
+            net_return = (strategy.annual_return_pct - strategy.expense_ratio_pct) / 100.0
+            vol_drag = ((strategy.volatility_pct / 100.0) ** 2) / 2.0
+            adjusted_cagr = max(-0.95, net_return - vol_drag)
+            
+            values[strategy.name] = round(initial_amount * ((1 + adjusted_cagr) ** year), 2)
         projected_growth.append(BenchmarkGrowthPointModel(year=year, values=values))
 
     notes = [
@@ -1093,7 +1098,7 @@ def load_snapshots(
             row.symbol,
             {
                 "name": row.name or row.symbol,
-                "sector": row.sector or "Unknown",
+                "sector": (row.sector or "Miscellaneous").replace('Unknown', 'Miscellaneous').replace(' ', 'Miscellaneous') or "Miscellaneous",
                 "instrument_type": row.instrument_type or ("ETF" if row.symbol.endswith("BEES") else "EQUITY"),
                 "market_cap_bucket": row.market_cap_bucket,
                 "closes": [],
@@ -1717,15 +1722,26 @@ def project_weights_for_mandate(
 
         excess_pool = 0.0
         for index in range(len(w)):
-            capped = min(max_weight_per_equity, w[index])
+            limit = max_weight_per_equity
+            s_sector = str(snapshots[index].sector or "Unknown").strip().title()
+            if s_sector in ["Unknown", "", "None"]:
+                limit = min(limit, 0.05)
+
+            capped = min(limit, w[index])
             excess_pool += max(0.0, w[index] - capped)
             w[index] = capped
 
         sector_totals = compute_sector_totals(w, snapshots)
         for sector, total in sector_totals.items():
-            if total <= sector_cap_weight:
+            # Fix the "Unknown Sector Blackhole"
+            effective_cap = sector_cap_weight
+            normalized_sector = str(sector or "Unknown").strip().title()
+            if normalized_sector in ["Unknown", "", "None"]:
+                effective_cap = 0.05
+
+            if total <= effective_cap:
                 continue
-            scale = sector_cap_weight / max(total, 1e-9)
+            scale = effective_cap / max(total, 1e-9)
             for index, snapshot in enumerate(snapshots):
                 if snapshot.sector != sector:
                     continue
@@ -1913,8 +1929,12 @@ def build_rationale_for_mandate(snapshot: Snapshot, mandate, mandate_config: Man
                 else ""
             )
         )
+    sector_display = str(snapshot.sector or "Unknown").strip().title()
+    if sector_display in ["Unknown", "", "None"]:
+        sector_display = "Unclassified (Capped 5%)"
+
     return (
-        f"{snapshot.sector} allocation for a {mandate.risk_attitude.replace('_', ' ')} mandate with a {mandate_config.holding_period_days}-day target hold; "
+        f"{sector_display} allocation for a {mandate.risk_attitude.replace('_', ' ')} mandate with a {mandate_config.holding_period_days}-day target hold; "
         f"momentum {snapshot.factor_scores.get('momentum', 0):+.2f}, quality {snapshot.factor_scores.get('quality', 0):+.2f}, "
         f"beta {snapshot.beta_proxy:.2f}{ensemble_text}, {risk_text}. {snapshot.news_explanation}"
     )
@@ -2409,15 +2429,31 @@ def build_prior_weights(snapshots: list[Snapshot], risk_mode: str) -> list[float
 
 def project_weights(weights: list[float], snapshots: list[Snapshot], risk_mode: str, prior: list[float]) -> list[float]:
     config = RISK_MODEL_CONFIG[risk_mode]
-    projected = [min(config["max_weight"], max(0.0, weight)) for weight in weights]
+    
+    # 1. Individual Position Capping (with Unknown Sector constraint)
+    projected = []
+    for index, weight in enumerate(weights):
+        limit = config["max_weight"]
+        s_sector = str(snapshots[index].sector or "Miscellaneous").strip().title()
+        if s_sector in ["Miscellaneous", "Unknown", "", "None"]:
+            limit = min(limit, 0.05)
+        projected.append(min(limit, max(0.0, weight)))
+        
     projected = renormalize(projected)
+    
+    # 2. Iterative Sector Capping
     for _ in range(6):
         sector_totals = compute_sector_totals(projected, snapshots)
         excess_pool = 0.0
         for sector, total in sector_totals.items():
-            if total <= config["sector_cap"]:
+            effective_cap = config["sector_cap"]
+            normalized_sector = str(sector or "Unknown").strip().title()
+            if normalized_sector in ["Unknown", "", "None"]:
+                effective_cap = 0.05  # Enforce 5% sector cap for unclassified assets
+                
+            if total <= effective_cap:
                 continue
-            scale = config["sector_cap"] / max(total, 1e-9)
+            scale = effective_cap / max(total, 1e-9)
             for index, snapshot in enumerate(snapshots):
                 if snapshot.sector == sector:
                     reduced = projected[index] * (1 - scale)
@@ -2426,7 +2462,17 @@ def project_weights(weights: list[float], snapshots: list[Snapshot], risk_mode: 
         if excess_pool <= 1e-9:
             break
         projected = redistribute_weight(projected, snapshots, risk_mode, prior, excess_pool)
-    return renormalize([min(config["max_weight"], max(0.0, weight)) for weight in projected])
+    
+    # Final cleanup pass
+    final = []
+    for index, weight in enumerate(projected):
+        limit = config["max_weight"]
+        s_sector = str(snapshots[index].sector or "Unknown").strip().title()
+        if s_sector in ["Unknown", "", "None"]:
+            limit = min(limit, 0.05)
+        final.append(min(limit, max(0.0, weight)))
+        
+    return renormalize(final)
 
 
 def redistribute_weight(weights: list[float], snapshots: list[Snapshot], risk_mode: str, prior: list[float], excess_pool: float) -> list[float]:

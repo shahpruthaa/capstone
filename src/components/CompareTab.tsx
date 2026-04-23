@@ -7,51 +7,51 @@ import { Award, TrendingUp } from 'lucide-react';
 import { BenchmarkStrategy, ComparisonResult } from '../services/benchmarkService';
 import { getBenchmarkComparisonViaApi } from '../services/backendApi';
 
-const TYPE_BADGES: Record<string, string> = { AI: 'bg-emerald-50 text-emerald-600 border border-emerald-200/50', INDEX: 'bg-blue-50 text-blue-600 border border-blue-200/50', FACTOR: 'bg-violet-50 text-violet-600 border border-violet-200/50', AMC_STYLE: 'bg-slate-100 text-slate-600 border border-slate-200/50' };
+const TYPE_BADGES: Record<string, string> = { AI: 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20', INDEX: 'bg-slate-500/10 text-slate-400 border border-slate-500/20', FACTOR: 'bg-violet-500/10 text-violet-400 border border-violet-500/20', AMC_STYLE: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' };
 const TYPE_LABELS: Record<string, string> = { AI: 'AI', INDEX: 'Index', FACTOR: 'Factor', AMC_STYLE: 'AMC Style' };
 
 const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s, isWinner }) => {
     return (
-        <div className={`bg-white border ${isWinner ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200/80'} rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4 transition-all`}>
+        <div className={`bg-[#141415] border ${isWinner ? 'border-yellow-500/50 ring-1 ring-yellow-500/20' : 'border-[#2d2d2d]'} rounded-2xl p-4 transition-all`}>
             <div className="flex items-start justify-between mb-3">
                 <div>
                     <div className="flex items-center gap-2">
-                        <p className="font-semibold text-sm text-[#1D1D1F] font-mono">{s.name}</p>
+                        <p className="font-semibold text-sm text-[#f5f5f7] font-mono">{s.name}</p>
                         {isWinner && <Award className="w-4 h-4 text-amber-500" />}
-                        {s.isProxy && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">Proxy</span>}
+                        {s.isProxy && <span className="text-[10px] bg-[#1d1d1f] text-[#86868b] px-2 py-0.5 rounded-full font-semibold">Proxy</span>}
                     </div>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider mt-1 inline-block ${TYPE_BADGES[s.type]}`}>{TYPE_LABELS[s.type]}</span>
                 </div>
                 <div className="text-right">
-                    <p className="text-xl font-bold text-emerald-600">+{s.annualReturn}%</p>
-                    <p className="text-xs text-slate-600">Annual Return</p>
+                    <p className="text-xl font-bold text-emerald-500">+{s.annualReturn}%</p>
+                    <p className="text-xs text-[#6e6e73]">Annual Return</p>
                 </div>
             </div>
             <p className="text-xs text-[#86868B] mb-4 leading-relaxed">{s.description}</p>
             <div className="mb-4 space-y-1">
-                <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider"><span className="font-semibold text-[#1D1D1F]">Construction:</span> {s.constructionMethod}</p>
-                <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider"><span className="font-semibold text-[#1D1D1F]">Constituents:</span> {s.constituentMethod}</p>
-                <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider"><span className="font-semibold text-[#1D1D1F]">Source Window:</span> {s.sourceWindow}</p>
+                <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider"><span className="font-semibold text-[#f5f5f7]">Construction:</span> {s.constructionMethod}</p>
+                <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider"><span className="font-semibold text-[#f5f5f7]">Constituents:</span> {s.constituentMethod}</p>
+                <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider"><span className="font-semibold text-[#f5f5f7]">Source Window:</span> {s.sourceWindow}</p>
                 <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider">
-                    <span className="font-semibold text-[#1D1D1F]">Data Source:</span> {s.sourceProvider || 'local_research'}
+                    <span className="font-semibold text-[#f5f5f7]">Data Source:</span> {s.sourceProvider || 'local_research'}
                     {s.sourceType === 'THIRD_PARTY' ? ' (3rd-party)' : ' (local proxy)'}
                 </p>
                 <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider">
-                    <span className="font-semibold text-[#1D1D1F]">Benchmark Beat Rate:</span> {(s.relativeAccuracyScorePct || 0).toFixed(1)}%
+                    <span className="font-semibold text-[#f5f5f7]">Benchmark Beat Rate:</span> {(s.relativeAccuracyScorePct || 0).toFixed(1)}%
                 </p>
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div className="grid grid-cols-2 gap-4">
                 {[
-                    ['Volatility', `${s.volatility}%`],
-                    ['Max Drawdown', `${s.maxDrawdown}%`],
+                    ['Volatility', `${s.volatility.toFixed(2)}%`],
+                    ['Max Drawdown', `${s.maxDrawdown.toFixed(2)}%`],
                     ['Sharpe', s.sharpe.toFixed(2)],
                     ['Sortino', s.sortino.toFixed(2)],
-                    ['5Y CAGR', `${s.cagr5Y}%`],
-                    ['Expense', `${s.expenseRatio}%`],
+                    ['5Y CAGR', `${s.cagr5Y.toFixed(2)}%`],
+                    ['Expense', `${s.expenseRatio.toFixed(2)}%`],
                 ].map(([k, v]) => (
-                    <div key={k} className="stat-row">
-                        <span className="stat-label text-xs">{k}</span>
-                        <span className="stat-value text-xs font-mono">{v}</span>
+                    <div key={k} className="flex flex-col">
+                        <span className="text-[10px] font-bold text-[#86868B] uppercase tracking-tight">{k}</span>
+                        <span className="text-[#f5f5f7] font-mono text-2xl">{v}</span>
                     </div>
                 ))}
             </div>
@@ -101,7 +101,7 @@ export function CompareTab() {
     if (!cmp && loading) {
         return (
             <div className="space-y-8 animate-fade-in">
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4 text-sm font-mono text-slate-600">
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4 text-sm font-mono text-[#6e6e73]">
                     Loading benchmark comparison from the local backend research service...
                 </div>
             </div>
@@ -111,10 +111,10 @@ export function CompareTab() {
     if (!cmp) {
         return (
             <div className="space-y-8 animate-fade-in">
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4">
                     <div className="flex items-center gap-3 mb-2">
-                        <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center">
-                            <TrendingUp className="w-4 h-4 text-blue-600" />
+                        <div className="w-8 h-8 rounded-xl bg-[#0a0a0a] border border-[#2d2d2d] flex items-center justify-center">
+                            <TrendingUp className="w-4 h-4 text-yellow-500" />
                         </div>
                         <div>
                             <h2 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]">Industry Benchmark Comparison</h2>
@@ -122,7 +122,7 @@ export function CompareTab() {
                         </div>
                     </div>
                     {compareNotice && (
-                        <p className="mt-3 text-xs text-slate-500">
+                        <p className="mt-3 text-xs text-[#86868b]">
                             {compareNotice.text}
                         </p>
                     )}
@@ -146,10 +146,10 @@ export function CompareTab() {
     return (
         <div className="space-y-8 animate-fade-in">
             {/* Header */}
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+            <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4">
                 <div className="flex items-center gap-3 mb-2">
-                    <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center">
-                        <TrendingUp className="w-4 h-4 text-blue-600" />
+                    <div className="w-8 h-8 rounded-xl bg-[#0a0a0a] border border-[#2d2d2d] flex items-center justify-center">
+                        <TrendingUp className="w-4 h-4 text-yellow-500" />
                     </div>
                     <div>
                         <h2 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]">Industry Benchmark Comparison</h2>
@@ -160,7 +160,7 @@ export function CompareTab() {
                     This comparison view measures realized strategy performance against industry-style proxies and shows how often each strategy matched or beat the Nifty 50 proxy on overlapping trading days.
                 </p>
                 {compareNotice && (
-                    <p className="mt-3 text-xs text-slate-500">
+                    <p className="mt-3 text-xs text-[#86868b]">
                         {compareNotice.text}
                     </p>
                 )}
@@ -174,7 +174,7 @@ export function CompareTab() {
             </div>
 
             {loading && (
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4 text-[10px] font-mono text-slate-600">
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4 text-[10px] font-mono text-[#6e6e73]">
                     Loading benchmark comparison from the backend research service...
                 </div>
             )}
@@ -188,7 +188,7 @@ export function CompareTab() {
 
             {/* Bar comparison charts */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4">
                     <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Annual Return vs Max Drawdown</p>
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
@@ -205,7 +205,7 @@ export function CompareTab() {
                     </div>
                 </div>
 
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4">
                     <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Sharpe Ratio × 10 (Risk-Adjusted)</p>
                     <div className="h-64">
                         <ResponsiveContainer width="100%" height="100%">
@@ -227,16 +227,20 @@ export function CompareTab() {
             </div>
 
             {/* Projected Growth Curve */}
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
-                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">₹5L Projected Growth over 10 Years (Net of Expenses)</p>
+            <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5">
+                <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-4">₹5L Theoretical Unadjusted Compounding (Net of Expenses)</p>
                 <div className="h-80">
                     <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={growthCurve}>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                            <XAxis dataKey="year" fontSize={11} label={{ value: 'Years', position: 'insideBottom', offset: -5, fontSize: 11 }} />
-                            <YAxis fontSize={10} tickFormatter={v => `₹${(v / 100000).toFixed(0)}L`} />
-                            <Tooltip formatter={(v: number) => [`₹${(v / 100000).toFixed(2)}L`]} labelFormatter={l => `Year ${l}`} />
-                            <Legend />
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2d2d2d" />
+                            <XAxis dataKey="year" fontSize={11} stroke="#86868b" label={{ value: 'Years', position: 'insideBottom', offset: -5, fontSize: 11, fill: '#86868b' }} />
+                            <YAxis fontSize={10} stroke="#86868b" tickFormatter={v => `₹${(v / 100000).toFixed(0)}L`} />
+                            <Tooltip 
+                                contentStyle={{ background: '#141415', border: '1px solid #2d2d2d', color: '#f5f5f7' }}
+                                formatter={(v: number) => [`₹${(v / 100000).toFixed(2)}L`]} 
+                                labelFormatter={l => `Year ${l}`} 
+                            />
+                            <Legend iconType="circle" />
                             {KEY_STRATEGIES.map((name, i) => (
                                 <Line
                                     key={name}
@@ -258,7 +262,7 @@ export function CompareTab() {
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
                         <thead>
-                            <tr className="bg-slate-50/50 border-b border-slate-200">
+                            <tr className="bg-[#0a0a0a] border-b border-[#2d2d2d]">
                                 <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">Strategy</th>
                                 <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">Type</th>
                                 <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Annual Ret%</th>
@@ -268,30 +272,30 @@ export function CompareTab() {
                                 <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Max DD%</th>
                                 <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">5Y CAGR%</th>
                                 <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Expense%</th>
-                                <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">Source</th>
-                                <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Beat Rate%</th>
+                                {cmp.strategies.some(s => s.sourceType) && <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3">Source</th>}
+                                {cmp.strategies.some(s => s.relativeAccuracyScorePct) && <th className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] p-3 text-right">Beat Rate%</th>}
                             </tr>
                         </thead>
                         <tbody>
                             {cmp.strategies.map(s => (
-                                <tr key={s.name} className={`border-b border-slate-100 text-sm hover:bg-slate-50 transition-colors ${s.name === cmp.winner ? 'bg-blue-50/50' : 'even:bg-slate-50/30'}`}>
+                                <tr key={s.name} className={`border-b border-[#2d2d2d] text-sm hover:bg-[#1d1d1f] transition-colors ${s.name === cmp.winner ? 'bg-yellow-500/5' : 'even:bg-[#0a0a0a]/30'}`}>
                                     <td className="p-3">
-                                        <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#1D1D1F]">
+                                        <div className="flex items-center gap-2 font-mono text-xs font-bold text-[#f5f5f7]">
                                             {s.name === cmp.winner && <Award className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
                                             {s.name}
-                                            {s.isProxy && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">Proxy</span>}
+                                            {s.isProxy && <span className="text-[10px] bg-[#1d1d1f] text-[#86868b] px-2 py-0.5 rounded-full font-semibold">Proxy</span>}
                                         </div>
                                     </td>
                                     <td className="p-3"><span className={`badge ${TYPE_BADGES[s.type]}`}>{TYPE_LABELS[s.type]}</span></td>
-                                    <td className="p-3 text-emerald-600 font-mono font-semibold text-right">{s.annualReturn}%</td>
-                                    <td className="p-3 font-mono text-right">{s.volatility}%</td>
-                                    <td className={`p-3 font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-600' : s.sharpe > 1 ? 'text-blue-600' : 'text-slate-600'}`}>{s.sharpe.toFixed(2)}</td>
+                                    <td className="p-3 text-emerald-500 font-mono font-semibold text-right">{s.annualReturn.toFixed(2)}%</td>
+                                    <td className="p-3 font-mono text-right">{s.volatility.toFixed(2)}%</td>
+                                    <td className={`p-3 font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-500' : s.sharpe > 1 ? 'text-yellow-500' : 'text-[#86868b]'}`}>{s.sharpe.toFixed(2)}</td>
                                     <td className="p-3 font-mono text-right">{s.sortino.toFixed(2)}</td>
-                                    <td className="p-3 text-rose-600 font-mono text-right">{s.maxDrawdown}%</td>
-                                    <td className="p-3 font-mono text-right">{s.cagr5Y}%</td>
-                                    <td className="p-3 font-mono text-[#86868B] text-right">{s.expenseRatio}%</td>
-                                    <td className="p-3 font-mono text-[10px]">{s.sourceType === 'THIRD_PARTY' ? '3P Ref' : 'Local'}</td>
-                                    <td className="p-3 font-mono text-right">{(s.relativeAccuracyScorePct || 0).toFixed(1)}%</td>
+                                    <td className="p-3 text-rose-500 font-mono text-right">{s.maxDrawdown.toFixed(2)}%</td>
+                                    <td className="p-3 font-mono text-right">{s.cagr5Y.toFixed(2)}%</td>
+                                    <td className="p-3 font-mono text-[#86868B] text-right">{s.expenseRatio.toFixed(2)}%</td>
+                                    {cmp.strategies.some(s2 => s2.sourceType) && <td className="p-3 font-mono text-[10px]">{s.sourceType === 'THIRD_PARTY' ? '3P Ref' : 'Local'}</td>}
+                                    {cmp.strategies.some(s2 => s2.relativeAccuracyScorePct) && <td className="p-3 font-mono text-right">{(s.relativeAccuracyScorePct || 0).toFixed(2)}%</td>}
                                 </tr>
                             ))}
                         </tbody>
@@ -299,18 +303,18 @@ export function CompareTab() {
                 </div>
             </div>
 
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+            <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4">
                 <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-3">Benchmark Construction Notes</p>
                 <div className="space-y-3">
                     {cmp.strategies.map((strategy) => (
-                        <div key={`${strategy.name}-notes`} className="bg-slate-50/50 border border-slate-200/50 rounded-xl p-3">
+                        <div key={`${strategy.name}-notes`} className="bg-[#0a0a0a] border border-[#2d2d2d] rounded-xl p-3">
                             <div className="flex items-center gap-2 mb-2">
-                                <p className="font-mono text-xs uppercase tracking-wider font-bold text-[#1D1D1F]">{strategy.name}</p>
-                                {strategy.isProxy && <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold">Proxy</span>}
+                                <p className="font-mono text-xs uppercase tracking-wider font-bold text-[#f5f5f7]">{strategy.name}</p>
+                                {strategy.isProxy && <span className="text-[10px] bg-[#1d1d1f] text-[#86868b] px-2 py-0.5 rounded-full font-semibold">Proxy</span>}
                             </div>
-                            <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-[#1D1D1F]">Method:</span> {strategy.constructionMethod}</p>
-                            <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-[#1D1D1F]">Constituent Policy:</span> {strategy.constituentMethod}</p>
-                            <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider mb-2"><span className="font-semibold text-[#1D1D1F]">Source Window:</span> {strategy.sourceWindow}</p>
+                            <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-[#f5f5f7]">Method:</span> {strategy.constructionMethod}</p>
+                            <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider mb-1"><span className="font-semibold text-[#f5f5f7]">Constituent Policy:</span> {strategy.constituentMethod}</p>
+                            <p className="text-[10px] text-[#86868B] font-mono uppercase tracking-wider mb-2"><span className="font-semibold text-[#f5f5f7]">Source Window:</span> {strategy.sourceWindow}</p>
                             {strategy.limitations.length > 0 && (
                                 <div className="space-y-1">
                                     {strategy.limitations.map((limitation) => (

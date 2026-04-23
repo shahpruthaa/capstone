@@ -25,7 +25,7 @@ function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbo
 
     return (
         <div
-            className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5 cursor-pointer transition-colors hover:bg-slate-50 focus-visible:bg-slate-50"
+            className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5 cursor-pointer transition-colors hover:bg-[#1d1d1f] focus-visible:bg-[#1d1d1f]"
             role="button"
             tabIndex={0}
             onClick={() => onInspect(idea.symbol)}
@@ -40,13 +40,13 @@ function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbo
             <div className="flex items-start justify-between gap-4 mb-3">
                 <div>
                     <div className="flex items-center gap-2">
-                        <h3 className="font-bold text-lg text-[#1D1D1F] font-mono">
+                        <h3 className="font-bold text-lg text-[#f5f5f7] font-mono">
                             {idea.symbol}
                         </h3>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">{idea.sector}</span>
+                        <span className="text-[10px] bg-[#1d1d1f] text-[#86868b] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider">{idea.sector}</span>
                         <span
                             className="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider"
-                            style={idea.regime_alignment === 'aligned' ? { background: '#ecfdf5', borderColor: 'rgba(16, 185, 129, 0.45)', color: '#059669', borderWidth: 1 } : { background: '#f8fafc', borderColor: '#e2e8f0', color: '#64748b', borderWidth: 1 }}
+                            style={idea.regime_alignment === 'aligned' ? { background: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.3)', color: '#10b981', borderWidth: 1 } : { background: 'rgba(148, 163, 184, 0.1)', borderColor: 'rgba(148, 163, 184, 0.3)', color: '#94a3b8', borderWidth: 1 }}
                         >
                             {idea.regime_alignment}
                         </span>
@@ -56,42 +56,42 @@ function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbo
                     </p>
                 </div>
                 <div className="text-right">
-                    <div className="text-2xl font-bold font-mono text-[#1D1D1F]">{idea.checklist_score}/10</div>
+                    <div className="text-2xl font-bold font-mono text-[#f5f5f7]">{idea.checklist_score}/10</div>
                     <div className="text-[10px] uppercase tracking-[0.08em] font-bold text-[#86868B]">Checklist score</div>
                 </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div className="rounded-xl border border-slate-200/50 bg-slate-50/50 px-3 py-2">
+                <div className="rounded-xl border border-[#2d2d2d] bg-[#0a0a0a] px-3 py-2">
                     <div className="text-[10px] uppercase tracking-[0.08em] font-bold text-[#86868B]">Entry</div>
-                    <div className="font-semibold text-[#1D1D1F] font-mono">Rs {idea.entry_price.toFixed(2)}</div>
+                    <div className="font-semibold text-[#f5f5f7] font-mono">Rs {idea.entry_price.toFixed(2)}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200/50 bg-slate-50/50 px-3 py-2">
+                <div className="rounded-xl border border-[#2d2d2d] bg-[#0a0a0a] px-3 py-2">
                     <div className="text-[10px] uppercase tracking-[0.08em] font-bold text-[#86868B]">Stop</div>
-                    <div className="font-semibold text-[#1D1D1F] font-mono">Rs {idea.stop_loss.toFixed(2)}</div>
+                    <div className="font-semibold text-[#f5f5f7] font-mono">Rs {idea.stop_loss.toFixed(2)}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200/50 bg-slate-50/50 px-3 py-2">
+                <div className="rounded-xl border border-[#2d2d2d] bg-[#0a0a0a] px-3 py-2">
                     <div className="text-[10px] uppercase tracking-[0.08em] font-bold text-[#86868B]">Target</div>
-                    <div className="font-semibold text-[#1D1D1F] font-mono">Rs {idea.target_price.toFixed(2)}</div>
+                    <div className="font-semibold text-[#f5f5f7] font-mono">Rs {idea.target_price.toFixed(2)}</div>
                 </div>
-                <div className="rounded-xl border border-slate-200/50 bg-slate-50/50 px-3 py-2">
+                <div className="rounded-xl border border-[#2d2d2d] bg-[#0a0a0a] px-3 py-2">
                     <div className="text-[10px] uppercase tracking-[0.08em] font-bold text-[#86868B]">Risk / Reward</div>
-                    <div className="font-semibold text-[#1D1D1F] font-mono">{idea.risk_reward_ratio.toFixed(2)}:1</div>
+                    <div className="font-semibold text-[#f5f5f7] font-mono">{idea.risk_reward_ratio.toFixed(2)}:1</div>
                 </div>
             </div>
 
             <div className="flex flex-wrap gap-3 text-[10px] font-mono text-[#86868B] mb-4">
-                <span className="flex items-center gap-1.5 px-2 py-1 bg-slate-50 border border-slate-200/50 rounded-lg">
-                    <Target className="w-3 h-3 text-emerald-600" />
+                <span className="flex items-center gap-1.5 px-2 py-1 bg-[#1d1d1f] border border-[#2d2d2d] rounded-lg">
+                    <Target className="w-3 h-3 text-emerald-500" />
                     Size {idea.suggested_allocation_pct.toFixed(2)}% of portfolio
                 </span>
-                <span className="flex items-center gap-1.5 px-2 py-1 bg-slate-50 border border-slate-200/50 rounded-lg">
-                    <ShieldCheck className="w-3 h-3 text-amber-500" />
+                <span className="flex items-center gap-1.5 px-2 py-1 bg-[#1d1d1f] border border-[#2d2d2d] rounded-lg">
+                    <ShieldCheck className="w-3 h-3 text-yellow-500" />
                     Max loss per unit Rs {idea.max_loss_per_unit.toFixed(2)}
                 </span>
                 {idea.catalyst && (
-                    <span className="flex items-center gap-1.5 px-2 py-1 bg-slate-50 border border-slate-200/50 rounded-lg">
-                        <TrendingUp className="w-3 h-3 text-blue-600" />
+                    <span className="flex items-center gap-1.5 px-2 py-1 bg-[#1d1d1f] border border-[#2d2d2d] rounded-lg">
+                        <TrendingUp className="w-3 h-3 text-yellow-500" />
                         Driver: {idea.catalyst}
                     </span>
                 )}
@@ -100,13 +100,13 @@ function TradeIdeaCard({ idea, onInspect }: { idea: TradeIdea; onInspect: (symbo
             <div className="space-y-2">
                 {checklistItems.map(item => (
                     <div key={item.name} className="flex items-start gap-2 text-[10px] font-mono">
-                        <span className={`mt-0.5 ${item.check.passed ? 'text-emerald-600' : 'text-amber-500'}`}>
+                        <span className={`mt-0.5 ${item.check.passed ? 'text-emerald-500' : 'text-amber-500'}`}>
                             {item.check.passed ? '✓' : '⚠'}
                         </span>
                         <div>
-                            <div className={`font-semibold ${item.check.passed ? 'text-[#1D1D1F]' : 'text-[#86868B]'}`}>
+                            <div className={`font-semibold ${item.check.passed ? 'text-[#f5f5f7]' : 'text-[#86868B]'}`}>
                                 {item.name}
-                                <span className="ml-2 text-[10px] text-slate-400">({Math.round(item.check.score * 100)}%)</span>
+                                <span className="ml-2 text-[10px] text-[#6e6e73]">({Math.round(item.check.score * 100)}%)</span>
                             </div>
                             <div className="text-[10px] leading-relaxed text-[#86868B] mt-0.5">{item.check.reason}</div>
                         </div>
@@ -155,11 +155,11 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
 
     return (
         <div className="space-y-5">
-            <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-4">
+            <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-4">
                 <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center">
-                            <Target className="w-4 h-4 text-blue-600" />
+                        <div className="w-8 h-8 rounded-xl bg-[#0a0a0a] border border-[#2d2d2d] flex items-center justify-center">
+                            <Target className="w-4 h-4 text-yellow-500" />
                         </div>
                         <div>
                             <h2 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em]">Decision Engine</h2>
@@ -168,26 +168,26 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
                             </p>
                         </div>
                     </div>
-                    <button onClick={loadIdeas} disabled={loading} className="bg-white border border-slate-200 rounded-xl font-semibold hover:bg-slate-50 transition-all shadow-sm px-4 py-2 text-[10px] uppercase tracking-[0.08em] flex items-center gap-2 text-slate-700 disabled:opacity-50">
-                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'spin' : ''}`} />
+                    <button onClick={loadIdeas} disabled={loading} className="bg-[#1d1d1f] border border-[#2d2d2d] rounded-xl font-bold hover:bg-[#2d2d2d] transition-all px-4 py-2 text-[10px] uppercase tracking-[0.08em] flex items-center gap-2 text-[#f5f5f7] disabled:opacity-50">
+                        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                         Refresh
                     </button>
                 </div>
             </div>
 
             {error && (
-                <div className="alert-warning text-sm flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 mt-0.5" />
+                <div className="bg-red-900/20 border border-red-900/50 text-red-200 p-4 rounded-2xl text-sm flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 text-red-500" />
                     <span>{error}</span>
                 </div>
             )}
 
             {loading && ideas.length === 0 && (
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5 text-[10px] font-mono text-[#86868B]">Scanning the universe and assembling trade ideas...</div>
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5 text-[10px] font-mono text-[#86868B]">Scanning the universe and assembling trade ideas...</div>
             )}
 
             {!loading && !error && ideas.length === 0 && (
-                <div className="bg-white border border-slate-200/80 rounded-2xl shadow-[0_2px_8px_rgb(0,0,0,0.04)] p-5 text-[10px] font-mono text-[#86868B]">
+                <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5 text-[10px] font-mono text-[#86868B]">
                     No trade ideas cleared the current 7/10 checklist threshold. Try again after more market data is ingested or relax the filter in the API.
                 </div>
             )}
