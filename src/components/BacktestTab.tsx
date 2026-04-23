@@ -400,8 +400,8 @@ export function BacktestTab({ portfolio }: Props) {
                                             contentStyle={{ background: '#141415', border: '1px solid #2d2d2d', color: '#f5f5f7' }}
                                             formatter={(v: number) => [`₹${v.toLocaleString()}`, 'Equity']} 
                                         />
-                                        <Line type="monotone" dataKey="equity" stroke="#eab308" strokeWidth={2.5} dot={false} />
-                                        <Line type="monotone" dataKey="benchmark" stroke="#86868b" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                                        <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={2} dot={false} name="AI Portfolio" />
+                                        <Line type="monotone" dataKey="benchmark" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="4 4" dot={false} name="Nifty Benchmark" />
                                     </LineChart>
                                 </ResponsiveContainer>
                             </div>

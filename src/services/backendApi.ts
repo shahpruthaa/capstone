@@ -185,6 +185,7 @@ interface ApiAnalyzePortfolioResponse {
   factor_exposures?: Record<string, number>;
   correlation_risk: 'LOW' | 'MODERATE' | 'HIGH';
   actions: { symbol: string; action: 'BUY' | 'SELL' | 'HOLD'; target_weight: number; current_weight: number; reason: string }[];
+  analyzed_holdings?: { symbol: string; shares: number; value: number; weight: number; sector: string }[];
   model_variant_applied: ModelVariant;
   model_source?: 'RULES' | 'ENSEMBLE';
   active_mode?: string;
@@ -541,6 +542,13 @@ export async function analyzePortfolioViaApi(
         targetWeight: action.target_weight,
         currentWeight: action.current_weight,
         reason: action.reason,
+      })),
+      analyzedHoldings: response.analyzed_holdings?.map(h => ({
+        symbol: h.symbol,
+        shares: h.shares,
+        value: h.value,
+        weight: h.weight,
+        sector: h.sector
       })),
       sectorWeights: response.sector_weights,
       factorExposures: response.factor_exposures ?? {},

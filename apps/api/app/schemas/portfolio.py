@@ -109,6 +109,14 @@ class RebalanceActionModel(BaseModel):
     reason: str
 
 
+class AnalyzedHoldingModel(BaseModel):
+    symbol: str
+    shares: int
+    value: float
+    weight: float
+    sector: str
+
+
 class AnalyzePortfolioRequest(BaseModel):
     holdings: list[HoldingModel]
     target_risk_mode: RiskMode
@@ -124,6 +132,7 @@ class AnalyzePortfolioResponse(BaseModel):
     factor_exposures: dict[str, float] = Field(default_factory=dict)
     correlation_risk: Literal["LOW", "MODERATE", "HIGH"]
     actions: list[RebalanceActionModel]
+    analyzed_holdings: list[AnalyzedHoldingModel] = Field(default_factory=list)
     model_variant_applied: ModelVariant
     model_source: Literal["RULES", "ENSEMBLE"] = "RULES"
     active_mode: str = "rules_only"

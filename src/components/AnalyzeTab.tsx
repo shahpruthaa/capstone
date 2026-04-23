@@ -49,36 +49,35 @@ function AnalysisSummarizer({ result }: { result: AnalysisResult }) {
     );
 }
 
-function CorrelationMatrix({ sectors }: { sectors: string[] }) {
-    if (sectors.length < 2) return null;
+
+function AnalyzedHoldingsTable({ holdings }: { holdings: any[] }) {
+    if (!holdings || holdings.length === 0) return null;
+
     return (
-        <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5 mt-5">
-            <h3 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.1em] mb-4">
-                Sector-Level Correlation Proxy
-            </h3>
+        <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl overflow-hidden mt-5">
+            <div className="p-4 border-b border-[#2d2d2d] bg-[#0a0a0a]/50 flex items-center justify-between">
+                <h3 className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.1em]">Analyzed Assets & Exposures</h3>
+                <span className="text-[10px] font-mono text-[#6e6e73]">{holdings.length} Instruments</span>
+            </div>
             <div className="overflow-x-auto">
-                <table className="w-full text-center border-collapse">
+                <table className="w-full text-left border-collapse">
                     <thead>
-                        <tr>
-                            <th className="p-2 border-b border-[#2d2d2d]"></th>
-                            {sectors.slice(0, 8).map(s => (
-                                <th key={s} className="p-2 border-b border-[#2d2d2d] text-[9px] font-mono text-[#86868B]">{s}</th>
-                            ))}
+                        <tr className="border-b border-[#2d2d2d] bg-[#0a0a0a]/30">
+                            <th className="p-4 text-[10px] text-[#86868B] uppercase tracking-widest font-bold">Asset</th>
+                            <th className="p-4 text-[10px] text-[#86868B] uppercase tracking-widest font-bold">Sector</th>
+                            <th className="p-4 text-[10px] text-[#86868B] uppercase tracking-widest font-bold text-right">Shares</th>
+                            <th className="p-4 text-[10px] text-[#86868B] uppercase tracking-widest font-bold text-right">Weight</th>
+                            <th className="p-4 text-[10px] text-[#86868B] uppercase tracking-widest font-bold text-right">Value</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {sectors.slice(0, 8).map((rowS, i) => (
-                            <tr key={rowS}>
-                                <td className="p-2 border-r border-[#2d2d2d] text-[9px] font-mono text-[#86868B] text-left whitespace-nowrap">{rowS}</td>
-                                {sectors.slice(0, 8).map((colS, j) => {
-                                    const corr = i === j ? 1.0 : (Math.random() * 0.4 + 0.3); // Mocking for UI
-                                    const color = corr > 0.6 ? 'text-rose-500' : 'text-emerald-500';
-                                    return (
-                                        <td key={colS} className="p-2 border-b border-[#2d2d2d]/30 text-[9px] font-mono">
-                                            <span className={color}>{corr.toFixed(2)}</span>
-                                        </td>
-                                    );
-                                })}
+                        {holdings.map((h, i) => (
+                            <tr key={h.symbol} className="border-b border-[#2d2d2d]/50 hover:bg-[#1d1d1f] transition-colors">
+                                <td className="p-4 font-mono text-sm text-[#f5f5f7] font-bold">{h.symbol}</td>
+                                <td className="p-4"><SectorChip sector={h.sector} /></td>
+                                <td className="p-4 font-mono text-sm text-[#86868b] text-right">{h.shares.toLocaleString()}</td>
+                                <td className="p-4 font-mono text-sm text-yellow-500 font-bold text-right">{h.weight.toFixed(2)}%</td>
+                                <td className="p-4 font-mono text-sm text-[#86868b] text-right">₹{(h.value / 100000).toFixed(2)}L</td>
                             </tr>
                         ))}
                     </tbody>
@@ -135,6 +134,7 @@ function AssetCorrelationMatrix({ holdings }: { holdings: any[] }) {
             <p className="text-[10px] text-[#6e6e73] font-mono mt-3 italic">
                 * Note: Matrix displays trailing 1-year daily log-return Pearson correlations.
             </p>
+            <p className="text-[10px] text-slate-500 italic mt-2">* Staging Environment: Matrix displays visualized proxy correlations.</p>
         </div>
     );
 }
@@ -201,44 +201,56 @@ export function AnalyzeTab() {
     };
 
     const parseAndLoadHoldings = async () => {
-        analysisRequestId.current += 1;
-        setResult(null);
-        setHoldings([]);
-        setAnalysisNotice(null);
-        const parsed = holdingsText.split('\n').map(line => {
-            const trimmedLine = line.trim();
-            if (!trimmedLine) return null;
+        if (!holdingsText.trim()) return;
 
-            // 1. Convert any commas to spaces to normalize the string
-            const normalizedLine = trimmedLine.replace(/,/g, ' ');
-            
-            // 2. Split by any amount of whitespace
-            const parts = normalizedLine.split(/\s+/);
-            
-            if (parts.length < 1 || !parts[0]) return null;
-            
-            // 3. First part is always the symbol
-            const symbol = parts[0].toUpperCase();
-            
-            // 4. Second part is shares (default to 1 if missing or unreadable)
-            let shares = 1;
-            if (parts.length > 1) {
-                shares = parseInt(parts[1], 10);
-                if (isNaN(shares) || shares <= 0) shares = 1;
+        // 1. Strict Parsing Logic
+        const lines = holdingsText.trim().split('\n');
+        const parsedHoldings: { symbol: string; shares: number }[] = [];
+        
+        lines.forEach(line => {
+            // Split by spaces, tabs, or commas
+            const parts = line.trim().split(/[\s,]+/); 
+            if (parts.length >= 2) {
+                const symbol = parts[0].toUpperCase();
+                // Extract the last chunk as the number, stripping non-numeric chars
+                const sharesStr = parts[parts.length - 1].replace(/[^0-9.]/g, '');
+                const shares = parseFloat(sharesStr);
+                
+                if (symbol && !isNaN(shares) && shares > 0) {
+                    parsedHoldings.push({ symbol, shares });
+                }
+            } else if (parts.length === 1 && parts[0]) {
+                parsedHoldings.push({ symbol: parts[0].toUpperCase(), shares: 1 });
             }
+        });
 
-            return { symbol, shares };
-        }).filter(Boolean) as { symbol: string; shares: number }[];
-        if (!parsed.length) {
-            setAnalysisNotice({
-                tone: 'info',
-                text: 'No valid rows found. Use one row per holding like: INFY 10 or INFY,10',
-            });
+        if (parsedHoldings.length === 0) {
+            alert("Failed to parse. Please use format: SYMBOL [SHARES] (e.g., RELIANCE 50)");
             return;
         }
-        setHoldings(parsed);
-        await refreshAnalysis(parsed);
-        setHoldingsText('');
+
+        setLoadingAnalysis(true);
+        try {
+            // 2. FORCE the state to match the parsed text immediately
+            setHoldings(parsedHoldings); 
+            
+            // 3. Clear the text box to prevent Ghost State confusion
+            setHoldingsText('');
+
+            // 4. Send ONLY the freshly parsed holdings to the engine
+            const nextResult = await analyzePortfolioViaApi(parsedHoldings);
+            setResult(nextResult);
+            setAnalysisNotice({ tone: 'info', text: 'Risk analysis is being computed from backend market data.' });
+        } catch (error) {
+            console.error(error);
+            setResult(null);
+            setAnalysisNotice({
+                tone: 'info',
+                text: `Analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            });
+        } finally {
+            setLoadingAnalysis(false);
+        }
     };
 
     const removeHolding = async (sym: string) => {
@@ -431,6 +443,7 @@ export function AnalyzeTab() {
                         </div>
 
                         <AnalysisSummarizer result={result} />
+                        <AnalyzedHoldingsTable holdings={result.analyzedHoldings || []} />
                         <AssetCorrelationMatrix holdings={result.rebalancingActions} />
 
                         <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5">
@@ -454,21 +467,20 @@ export function AnalyzeTab() {
                             <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5">
                                 <p className="text-[10px] font-bold text-[#86868B] uppercase tracking-[0.08em] mb-4">Rebalancing Recommendations</p>
                                 <div className="space-y-3">
-                                    {result.rebalancingActions.map((item, idx) => (
-                                        <div key={idx} className="flex items-center justify-between gap-4 p-3 bg-[#0a0a0a] rounded-xl border border-[#2d2d2d]">
-                                            <div className="flex-1">
-                                                <div className="text-xs font-bold text-[#f5f5f7] font-mono">{item.symbol}</div>
-                                                <div className="text-[10px] text-[#86868b] mt-0.5">{item.action}</div>
+                                    {result.rebalancingActions.map((action, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-3 border-b border-[#2d2d2d] bg-[#0a0a0a] hover:bg-[#1d1d1f] transition-colors">
+                                            <div>
+                                                <div className="font-mono text-sm text-[#f5f5f7] font-bold">{action.symbol}</div>
+                                                <div className={`text-[10px] font-bold uppercase tracking-widest mt-1 ${action.action === 'SELL' ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                                    {action.action}
+                                                </div>
                                             </div>
-                                            <div className="w-24">
-                                                <div className="h-1 bg-[#1d1d1f] rounded-full overflow-hidden">
-                                                    <div 
-                                                        className="h-full" 
-                                                        style={{ 
-                                                            width: `${Math.min(100, Math.abs(item.value) * 35)}%`,
-                                                            background: item.value >= 0 ? '#10b981' : '#e11d48',
-                                                        }} 
-                                                    />
+                                            <div className="text-right">
+                                                <div className="text-xs text-[#86868b] font-mono">
+                                                    Current: {(action.currentWeight).toFixed(1)}% <span className="mx-1">→</span> Target: {(action.targetWeight).toFixed(1)}%
+                                                </div>
+                                                <div className="text-[10px] text-[#6e6e73] mt-1 max-w-xs truncate">
+                                                    {action.reason}
                                                 </div>
                                             </div>
                                         </div>
@@ -502,7 +514,6 @@ export function AnalyzeTab() {
                             </div>
                         )}
 
-                        <CorrelationMatrix sectors={uniqueSectors} />
 
                     </>
                 )}

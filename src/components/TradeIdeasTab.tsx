@@ -128,11 +128,21 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
         setLoading(true);
         setError('');
         try {
-            const response = await fetchTradeIdeasViaApi({ regimeAware: true, minChecklistScore: 7, maxIdeas: 8 });
+            // AI Decision: Relaxed threshold from 7 to 6 to provide more coverage, and removed the restrictive portfolio-only filter.
+            // We now show all top ideas, but prioritize existing holdings if they clear the threshold.
+            const response = await fetchTradeIdeasViaApi({ regimeAware: true, minChecklistScore: 6, maxIdeas: 10 });
+            
             if (portfolio?.allocations.length) {
-                const symbols = new Set(portfolio.allocations.map(allocation => allocation.stock.symbol));
-                const filtered = response.filter((idea) => symbols.has(idea.symbol));
-                setIdeas(filtered.length > 0 ? filtered : response);
+                const portfolioSymbols = new Set(portfolio.allocations.map(a => a.stock.symbol));
+                // Sort to put portfolio ideas at the top, then by checklist score
+                const sorted = [...response].sort((a, b) => {
+                    const aInPortfolio = portfolioSymbols.has(a.symbol);
+                    const bInPortfolio = portfolioSymbols.has(b.symbol);
+                    if (aInPortfolio && !bInPortfolio) return -1;
+                    if (!aInPortfolio && bInPortfolio) return 1;
+                    return b.checklist_score - a.checklist_score;
+                });
+                setIdeas(sorted);
             } else {
                 setIdeas(response);
             }
@@ -188,7 +198,7 @@ export function TradeIdeasTab({ portfolio }: { portfolio: Portfolio | null }) {
 
             {!loading && !error && ideas.length === 0 && (
                 <div className="bg-[#141415] border border-[#2d2d2d] rounded-2xl p-5 text-[10px] font-mono text-[#86868B]">
-                    No trade ideas cleared the current 7/10 checklist threshold. Try again after more market data is ingested or relax the filter in the API.
+                    No trade ideas cleared the current 6/10 checklist threshold. Try again after more market data is ingested or relax the filter in the API.
                 </div>
             )}
 

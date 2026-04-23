@@ -10,6 +10,8 @@ import { getBenchmarkComparisonViaApi } from '../services/backendApi';
 const TYPE_BADGES: Record<string, string> = { AI: 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20', INDEX: 'bg-slate-500/10 text-slate-400 border border-slate-500/20', FACTOR: 'bg-violet-500/10 text-violet-400 border border-violet-500/20', AMC_STYLE: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' };
 const TYPE_LABELS: Record<string, string> = { AI: 'AI', INDEX: 'Index', FACTOR: 'Factor', AMC_STYLE: 'AMC Style' };
 
+const formatReturn = (val: number) => `${val > 0 ? '+' : ''}${val.toFixed(2)}%`;
+
 const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s, isWinner }) => {
     return (
         <div className={`bg-[#141415] border ${isWinner ? 'border-yellow-500/50 ring-1 ring-yellow-500/20' : 'border-[#2d2d2d]'} rounded-2xl p-4 transition-all`}>
@@ -23,7 +25,9 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider mt-1 inline-block ${TYPE_BADGES[s.type]}`}>{TYPE_LABELS[s.type]}</span>
                 </div>
                 <div className="text-right">
-                    <p className="text-xl font-bold text-emerald-500">+{s.annualReturn}%</p>
+                    <p className={`text-xl font-bold font-mono ${s.annualReturn >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                        {formatReturn(s.annualReturn)}
+                    </p>
                     <p className="text-xs text-[#6e6e73]">Annual Return</p>
                 </div>
             </div>
@@ -60,6 +64,18 @@ const StrategyCard: React.FC<{ s: BenchmarkStrategy; isWinner: boolean }> = ({ s
                     {s.limitations.slice(0, 2).map((limitation) => (
                         <p key={limitation} className="text-[10px] text-[#86868B] font-mono">- {limitation}</p>
                     ))}
+                </div>
+            )}
+
+            {s.type === 'AI' && (
+                <div className="mt-4 pt-4 border-t border-[#2d2d2d]">
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="text-[10px] uppercase font-bold text-[#86868B] tracking-widest">Active Share Posture</span>
+                        <span className="text-xs font-mono font-bold text-amber-500">HIGH DIVERGENCE</span>
+                    </div>
+                    <p className="text-[10px] text-[#86868b] font-serif leading-relaxed">
+                        This is a concentrated 10-15 asset portfolio. Outperformance vs cap-weighted indices is driven by heavy active factor tilts (Momentum/Quality), resulting in high tracking error.
+                    </p>
                 </div>
             )}
         </div>
@@ -287,7 +303,9 @@ export function CompareTab() {
                                         </div>
                                     </td>
                                     <td className="p-3"><span className={`badge ${TYPE_BADGES[s.type]}`}>{TYPE_LABELS[s.type]}</span></td>
-                                    <td className="p-3 text-emerald-500 font-mono font-semibold text-right">{s.annualReturn.toFixed(2)}%</td>
+                                    <td className={`p-3 font-mono font-semibold text-right ${s.annualReturn >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                        {formatReturn(s.annualReturn)}
+                                    </td>
                                     <td className="p-3 font-mono text-right">{s.volatility.toFixed(2)}%</td>
                                     <td className={`p-3 font-mono font-semibold text-right ${s.sharpe > 1.3 ? 'text-emerald-500' : s.sharpe > 1 ? 'text-yellow-500' : 'text-[#86868b]'}`}>{s.sharpe.toFixed(2)}</td>
                                     <td className="p-3 font-mono text-right">{s.sortino.toFixed(2)}</td>

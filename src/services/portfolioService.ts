@@ -56,11 +56,20 @@ export interface PortfolioMetrics {
   sectorCount: number;
 }
 
+export interface AnalyzedHolding {
+  symbol: string;
+  shares: number;
+  value: number;
+  weight: number;
+  sector: string;
+}
+
 export interface AnalysisResult {
   riskScore: number;
   diversificationScore: number;
   suggestions: string[];
   rebalancingActions: RebalancingAction[];
+  analyzedHoldings?: AnalyzedHolding[];
   sectorWeights: { [key: string]: number };
   factorExposures?: { [key: string]: number };
   correlationWarnings: string[];

@@ -182,25 +182,29 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
 
                     <div className="space-y-5">
                         {generationNotice && (
-                            <div className={generationNotice.tone === 'info' ? 'alert-info text-xs' : 'alert-warning text-xs'}>
+                            <div className={generationNotice.tone === 'info' 
+                                ? 'bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs p-3 rounded-xl font-mono leading-relaxed' 
+                                : 'bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3 rounded-xl font-mono leading-relaxed'}>
                                 {generationNotice.text}
                             </div>
                         )}
 
-                        <div className="alert-info text-xs">
+                        <div className="bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs p-3 rounded-xl font-mono leading-relaxed">
                             Active generation engine: {activeModelVariant === 'LIGHTGBM_HYBRID' ? `Ensemble runtime${activeModelVersion ? ` ${activeModelVersion}` : ''}` : 'Unavailable'}
                             {activeModelVariant !== 'LIGHTGBM_HYBRID' && modelStatusReason ? ` (${modelStatusReason})` : ''}
                         </div>
 
                         {activeModelVariant === 'LIGHTGBM_HYBRID' ? (
-                            <div className={artifactClassification === 'bootstrap' ? 'alert-warning text-xs' : 'alert-success text-xs'}>
+                            <div className={artifactClassification === 'bootstrap' 
+                                ? 'bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3 rounded-xl font-mono leading-relaxed' 
+                                : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs p-3 rounded-xl font-mono leading-relaxed'}>
                                 Ensemble training mode: {activeTrainingMode || 'unknown'}.
                                 {artifactClassification === 'bootstrap'
                                     ? ' This is still a bootstrap artifact and should be treated as a development/demo model.'
                                     : ' This artifact passed the standard local validation flow.'}
                             </div>
                         ) : runtimeLoaded.current ? (
-                            <div className="alert-warning text-xs">
+                            <div className="bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs p-3 rounded-xl font-mono leading-relaxed">
                                 Ensemble runtime is unavailable, so generation stays blocked instead of silently switching to rules.
                             </div>
                         ) : null}
@@ -459,7 +463,7 @@ export function GenerateTab({ onPortfolioGenerated, portfolio }: Props) {
                                                         <div className="progress-bar-track w-12 hidden md:block bg-[#2d2d2d]">
                                                             <div className="progress-bar-fill" style={{ width: `${allocation.weight}%`, background: '#eab308' }} />
                                                         </div>
-                                                        <span className="font-mono text-xs text-[#f5f5f7]">{allocation.weight}%</span>
+                                                        <span className="font-mono text-xs text-[#f5f5f7]">{(allocation.weight).toFixed(2)}%</span>
                                                     </div>
                                                 </td>
                                                 <td className="p-3">

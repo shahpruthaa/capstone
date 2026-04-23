@@ -191,6 +191,44 @@ class Snapshot:
     news_explanation: str = ""
 
 
+def intelligent_sector_mapping(symbol: str, sector: str | None) -> str:
+    symbol = str(symbol).upper().strip()
+    
+    # If the sector is already valid and specific, keep it
+    if sector and str(sector).strip() not in ['', 'Unknown', ' ', 'Miscellaneous', 'None', 'null']:
+        return str(sector).strip().title()
+        
+    # 1. Exact Ticker Matches (Hardcoded Overrides for missing DB metadata)
+    exact_matches = {
+        'EGOLD': 'Commodity',
+        'GOLDBEES': 'Gold',
+        'LIQUIDBEES': 'Liquid',
+        'LIQUID1': 'Liquid',
+        'LIQUIDPLUS': 'Liquid',
+        'CASHIETF': 'Liquid',
+        'GROWWLIQID': 'Liquid',
+        'AXISBPSETF': 'Liquid',
+        'TMB': 'Banking',
+        'ASIANPAINT': 'Consumer',
+        'LT': 'Infra',
+        'NATIONALUM': 'Materials',
+        'HINDALCO': 'Materials',
+        'PASHUPATI': 'Textiles',
+        'SBC': 'IT'
+    }
+    if symbol in exact_matches:
+        return exact_matches[symbol]
+        
+    # 2. Heuristic Substring Matching for ETFs and standard names
+    if 'BANK' in symbol: return 'Banking'
+    if 'PHARMA' in symbol: return 'Pharma'
+    if 'GOLD' in symbol or 'SILVER' in symbol: return 'Commodity'
+    if 'BEES' in symbol or 'LIQUID' in symbol: return 'Liquid'
+    if 'NIFTY' in symbol: return 'Index'
+    
+    return 'Miscellaneous'
+
+
 @dataclass(frozen=True)
 class BarRecord:
     trade_date: date
@@ -587,7 +625,16 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
     sector_weights = {sector: round((value / total_value) * 100, 2) for sector, value in sector_value.items()}
     current_beta = round(beta_numerator / total_value, 2)
     avg_corr = average_pairwise_correlation([snapshot for _, snapshot, _ in priced_holdings])
-    diversification_score = round(max(20.0, min(95.0, len(sector_weights) * 10 + (1 - avg_corr) * 45)), 1)
+    
+    # Base diversification score
+    diversification_score = max(20.0, min(95.0, len(sector_weights) * 10 + (1 - avg_corr) * 45))
+    
+    # ⚖️ CONCENTRATION PENALTY: Institutional rule penalizing heavy single-sector tilts
+    max_sector_weight = max(sector_weights.values()) if sector_weights else 0
+    if max_sector_weight > 40.0:
+        diversification_score = max(0, diversification_score - 30)
+        
+    diversification_score = round(diversification_score, 1)
 
     correlation_risk = "LOW"
     if avg_corr >= 0.6:
@@ -651,6 +698,19 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
             # If prediction fails for the holdings, keep defaults (rules).
             pass
 
+    from app.schemas.portfolio import AnalyzedHoldingModel
+    analyzed_holdings = []
+    for holding, snapshot, value in priced_holdings:
+        analyzed_holdings.append(
+            AnalyzedHoldingModel(
+                symbol=snapshot.symbol,
+                shares=int(holding.quantity),
+                value=round(value, 2),
+                weight=round((value / total_value) * 100, 2),
+                sector=snapshot.sector
+            )
+        )
+
     return AnalyzePortfolioResponse(
         total_holdings=len(payload.holdings),
         portfolio_value=round(total_value, 2),
@@ -660,6 +720,7 @@ def analyze_portfolio(db: Session, payload: AnalyzePortfolioRequest) -> AnalyzeP
         factor_exposures={key: round(value, 2) for key, value in factor_exposures.items()},
         correlation_risk=correlation_risk,
         actions=actions,
+        analyzed_holdings=analyzed_holdings,
         model_variant_applied=model_variant_applied,
         model_source="ENSEMBLE" if ml_predictions else "RULES",
         active_mode=str(runtime_status.get("active_mode", "rules_only")),
@@ -1098,7 +1159,7 @@ def load_snapshots(
             row.symbol,
             {
                 "name": row.name or row.symbol,
-                "sector": (row.sector or "Miscellaneous").replace('Unknown', 'Miscellaneous').replace(' ', 'Miscellaneous') or "Miscellaneous",
+                "sector": intelligent_sector_mapping(row.symbol, row.sector),
                 "instrument_type": row.instrument_type or ("ETF" if row.symbol.endswith("BEES") else "EQUITY"),
                 "market_cap_bucket": row.market_cap_bucket,
                 "closes": [],
@@ -1236,10 +1297,20 @@ def build_weighted_statistics(selected: list[tuple[Snapshot, float]]) -> Portfol
     snapshot_map = {snapshot.symbol: snapshot for snapshot, _ in selected}
     metrics = summarize_return_series(aggregate_portfolio_returns(snapshot_map, weights))
     weighted_beta = sum(snapshot.beta_proxy * (weight / 100.0) for snapshot, weight in selected)
+    # Base diversification score
     diversification_score = max(
         30.0,
         min(95.0, len({snapshot.sector for snapshot, _ in selected}) * 8 + (1 - average_pairwise_correlation([snapshot for snapshot, _ in selected])) * 40),
     )
+    
+    # ⚖️ CONCENTRATION PENALTY: Penalty for excessive single-sector weight (>40%)
+    sector_weights_map: dict[str, float] = defaultdict(float)
+    for snapshot, weight in selected:
+        sector_weights_map[snapshot.sector] += weight
+        
+    max_sector_weight = max(sector_weights_map.values()) if sector_weights_map else 0
+    if max_sector_weight > 40.0:
+        diversification_score = max(0, diversification_score - 30)
     return PortfolioMetricsModel(
         estimated_return_pct=round(metrics["annual_return_pct"], 2),
         estimated_volatility_pct=round(metrics["volatility_pct"], 2),
