@@ -4,107 +4,75 @@ Local-first AI portfolio research, backtesting, and trade intelligence for India
 
 ## What This Repo Contains
 
-- `src/`: React + Vite frontend
-- `apps/api/`: FastAPI backend, quant engine, model runtime, and artifacts
-- `docs/`: architecture and technical notes
-- `scripts/`: local validation and maintenance helpers
-- `infra/docker/`: Docker support
+- `src/`: React + Vite frontend (Institutional Design System)
+- `apps/api/`: FastAPI backend, ensemble runtime, and quant engine
+- `docs/`: Technical architecture, proof notes, and roadmap
+- `scripts/`: Validation and ingestion helpers
+- `infra/docker/`: Full orchestration support
 
 ## Product Surface
 
-The current app shell exposes these primary tabs:
+The system exposes a data-dense, institutional-grade research interface with these primary workspaces:
 
-- `Overview`
-- `Market`
-- `Portfolio`
-- `Trade Ideas`
-- `Backtest`
-- `Compare`
+- **Overview**: System health, ensemble readiness, and market regime metrics.
+- **Market**: Factor weather, sector heatmaps, and news-driven context.
+- **Portfolio**: Mandate-driven generation and manual holdings analysis.
+- **Trade Ideas**: Quantitative entry/exit checklists and AI rationales.
+- **Backtest**: High-fidelity historical replay with Indian taxes and fees.
+- **Compare**: Strategy benchmarking against Nifty and factor proxies.
 
-The `Portfolio` workspace has two flows:
+**Removed from the current product:**
+- Chatbot / AI chat widget
+- Events tab
+- Rebalance portfolio tab
+- Generate AI analysis panel (standalone)
 
-- `Build Portfolio`
-- `Analyze Holdings`
+## Architecture Highlights
 
-Removed from the current product:
+### Frontend (React 19)
+- **Local-First**: Graceful degradation to local logic when the API is unavailable.
+- **Design System**: Matte-black "Apple x Bloomberg" aesthetic for high information density.
+- **State**: Centralized `backendApi.ts` adapter for contract parity.
 
-- chatbot / AI chat
-- events tab
-- rebalance portfolio tab
-- generate AI analysis panel
-
-## Frontend Highlights
-
-- `src/App.tsx` owns the top-level shell and tab routing.
-- `src/components/GenerateTab.tsx` builds portfolios from mandate inputs.
-- `src/components/AnalyzeTab.tsx` analyzes pasted or manually entered holdings.
-- `src/components/BacktestTab.tsx` runs historical replay with costs and taxes.
-- `src/components/CompareTab.tsx` compares strategies and benchmarks.
-- `src/services/backendApi.ts` is the shared frontend API adapter.
-
-## Backend Highlights
-
-- `apps/api/app/api/router.py` wires the active API routes.
-- `apps/api/app/services/db_quant_engine.py` handles portfolio generation, holdings analysis, and backtests.
-- `apps/api/app/services/model_runtime.py` reports ensemble readiness and artifact status.
-- `apps/api/app/services/ensemble_scorer.py` combines component model predictions.
-- `apps/api/app/api/routes/stock_detail.py` exposes stock-level analysis surfaces.
+### Backend (FastAPI + Python)
+- **Ensemble Scorer**: Heterogeneous blend of LightGBM, LSTM, and GNN signals.
+- **Quant Engine**: Mean-variance inspired optimizer with whole-share allocation.
+- **Market Fidelity**: Integrated tax (Budget 2024) and SEBI fee schedules.
+- **Persistence**: TimescaleDB for high-performance time-series ingestion.
 
 ## Active API Endpoints
 
 | Method | Endpoint | Purpose |
 | ------ | -------- | ------- |
-| `GET` | `/api/v1/models/current` | Runtime readiness and model status |
-| `GET` | `/api/v1/market-data/summary` | Local market data coverage |
-| `POST` | `/api/v1/portfolio/generate` | Generate a portfolio |
-| `POST` | `/api/v1/analysis/portfolio` | Analyze holdings |
-| `POST` | `/api/v1/backtests/run` | Run a backtest |
-| `GET` | `/api/v1/benchmarks/summary` | Benchmark comparison summary |
-| `GET` | `/api/v1/trade-ideas` | Trade-idea shortlist |
-| `GET` | `/api/v1/stock/...` | Stock detail surfaces |
-
-## Runtime Notes
-
-- Portfolio generation is ensemble-first and no longer silently falls back during generation.
-- Mandate horizon controls portfolio decision logic, not model feature history depth.
-- Holdings analysis has a backend-first path with a local fallback when the API is unavailable.
-- Portfolio construction now applies stronger diversification controls across names and sectors.
+| `GET` | `/api/v1/models/current` | Model runtime and artifact readiness |
+| `GET` | `/api/v1/market-data/summary` | Coverage and regime status |
+| `POST` | `/api/v1/portfolio/generate` | Build ensemble-optimized baskets |
+| `POST` | `/api/v1/backtests/run` | Execute friction-aware replay |
+| `GET` | `/api/v1/trade-ideas` | High-conviction shortlist |
+| `GET` | `/api/v1/news/market-context` | Real-time news sentiment and pulse |
 
 ## Local Setup
 
 ### Frontend
-
 ```bash
 npm install
 npm run dev
 ```
 
 ### Backend
-
 ```bash
 cd apps/api
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\uvicorn app.main:app --reload --port 8000
+# Activate venv and then:
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
-### Docker
+## Validation & Quality
 
-```bash
-docker compose up -d api postgres redis
-```
+- `npm run build`: Enforces frontend production standards.
+- `python -m py_compile ...`: Validates backend service integrity.
+- `scripts/ui-smoke.py`: Automates cross-tab functional verification.
 
-## Validation
-
-Useful local checks:
-
-- `npm run build`
-- `python -m py_compile apps/api/app/services/db_quant_engine.py`
-- `python -m py_compile apps/api/app/services/mandate.py`
-- `python -m py_compile apps/api/app/services/ensemble_scorer.py`
-
-## Notes
-
-- The app is designed for local-first research workflows, not broker execution.
-- PostgreSQL availability is still required for live backend generation and holdings analysis.
-- Benchmark reconstruction remains partially proxy-based for demo continuity.
+---
+*NSE Atlas is designed for research and educational purposes. It does not provide financial advice or brokerage execution.*
